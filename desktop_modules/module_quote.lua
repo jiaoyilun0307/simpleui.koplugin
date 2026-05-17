@@ -834,8 +834,10 @@ local function buildWidget(inner_w, text_str, attr_str, face_quote, face_attr, v
 
     local vg = VerticalGroup:new{ align = "center" }
     vg[#vg+1] = makeTBW(text_str, face_quote, clr_quote or _CLR_TEXT_QUOTE, nil)
-    vg[#vg+1] = vspan_gap
-    vg[#vg+1] = makeTBW(attr_str, face_attr,  clr_attr  or CLR_TEXT_SUB,    true)
+    if attr_str and attr_str ~= "" then
+        vg[#vg+1] = vspan_gap
+        vg[#vg+1] = makeTBW(attr_str, face_attr,  clr_attr  or CLR_TEXT_SUB,    true)
+    end
     return vg
 
 end
@@ -866,11 +868,11 @@ local function buildFromCustomQuote(inner_w, face_quote, face_attr, vspan_gap, p
 
     end
 
-    local attr = "— " .. (q.a or "?")
+    local attr = q.a and (“— “ .. q.a) or “”
 
-    if q.b and q.b ~= "" then attr = attr .. ",  " .. q.b end
+    if q.b and q.b ~= “” then attr = attr .. (attr ~= “” and “,  “ or “”) .. q.b end
 
-    return buildWidget(inner_w, "“" .. q.q .. "”", attr, face_quote, face_attr, vspan_gap, has_wallpaper, clr_quote, clr_attr, alignment)
+    return buildWidget(inner_w, “”” .. q.q .. “””, attr, face_quote, face_attr, vspan_gap, has_wallpaper, clr_quote, clr_attr, alignment)
 
 end
 
@@ -900,9 +902,9 @@ local function buildFromQuote(inner_w, face_quote, face_attr, vspan_gap, has_wal
 
     end
 
-    local attr = "— " .. (q.a or "?")
+    local attr = q.a and ("— " .. q.a) or ""
 
-    if q.b and q.b ~= "" then attr = attr .. ",  " .. q.b end
+    if q.b and q.b ~= "" then attr = attr .. (attr ~= "" and ",  " or "") .. q.b end
 
     return buildWidget(inner_w, "\u{201C}" .. q.q .. "\u{201D}", attr, face_quote, face_attr, vspan_gap, has_wallpaper, clr_quote, clr_attr, alignment)
 
