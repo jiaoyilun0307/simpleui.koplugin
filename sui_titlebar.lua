@@ -1165,11 +1165,57 @@ function M.applyToSub(widget)
         widget._titlebar_sub_lb = _snapBtn(lb)
         if show_menu then
             placeBtn("sub_menu", lb)
-            do
+            -- Apply the custom menu icon only when the button is currently
+            -- showing the hamburger (not "check" or another select-mode icon).
+            -- On a fresh applyToSub the button is always in menu state, but on
+            -- a reapply triggered while select-mode is active we must not
+            -- overwrite the "check" icon that KOReader just set.
+            -- We read lb.icon (the IconButton field, kept in sync by setIcon)
+            -- rather than lb.image.icon, because applyIconToBtn clears image.icon.
+            local _is_menu_state = (lb.icon == nil or lb.icon == "appbar.menu")
+            if _is_menu_state then
                 local _ss = SUIStyle()
-                if _ss then 
-                    _ss.applyIconToBtn("sui_menu", lb) 
+                if _ss then
+                    _ss.applyIconToBtn("sui_menu", lb)
                 end
+            end
+
+            -- Patch TitleBar:setLeftIcon so the custom menu icon survives
+            -- icon changes made by the host widget (e.g. collections toggles
+            -- the left button between "appbar.menu" and "check" when entering
+            -- or leaving select mode). We must:
+            --   • let "check" (and any non-menu icon) pass through unchanged;
+            --   • re-apply the custom icon when the host restores "appbar.menu".
+            -- The original icon name used by KOReader for the hamburger menu in
+            -- BookList / Menu widgets is "appbar.menu".
+            --
+            -- _sub_lb_is_menu: tracks whether the left button is currently in
+            -- hamburger-menu state (true) or in some other state like "check"
+            -- (false).  Used by reapply to avoid overwriting the check icon.
+            widget._titlebar_sub_lb_is_menu = true
+            local orig_setLeftIcon = tb.setLeftIcon
+            widget._titlebar_sub_orig_setLeftIcon = orig_setLeftIcon
+            tb.setLeftIcon = function(tb_self, icon, ...)
+                local result = orig_setLeftIcon(tb_self, icon, ...)
+                if icon == "appbar.menu" then
+                    -- Host is restoring the hamburger — re-apply custom icon.
+                    widget._titlebar_sub_lb_is_menu = true
+                    if tb_self.left_button and tb_self.left_button.image then
+                        local _ss2 = SUIStyle()
+                        local _custom = _ss2 and _ss2.getIcon("sui_menu")
+                        if _custom then
+                            tb_self.left_button.image.icon = nil
+                            tb_self.left_button.image.file = _custom
+                            _reloadImage(tb_self.left_button.image)
+                            UIManager:setDirty(tb_self.show_parent or widget, "ui", tb_self.dimen)
+                        end
+                    end
+                else
+                    -- Any other icon (e.g. "check"): record that we are NOT in
+                    -- menu state so a concurrent reapply does not overwrite it.
+                    widget._titlebar_sub_lb_is_menu = false
+                end
+                return result
             end
         else
             lb.overlap_align  = nil
@@ -1336,9 +1382,17 @@ function M.restoreSub(widget)
     if not widget._titlebar_sub_patched then return end
     if tb.left_button  then _restoreBtn(tb.left_button,  widget._titlebar_sub_lb) end
     if tb.right_button then _restoreBtn(tb.right_button, widget._titlebar_sub_rb) end
+
+    -- Restore the setLeftIcon patch.
+    if widget._titlebar_sub_orig_setLeftIcon ~= nil then
+        tb.setLeftIcon = widget._titlebar_sub_orig_setLeftIcon
+        widget._titlebar_sub_orig_setLeftIcon = nil
+    end
+
     widget._titlebar_sub_lb      = nil
     widget._titlebar_sub_rb      = nil
     widget._titlebar_sub_patched = nil
+    widget._titlebar_sub_lb_is_menu = nil
 
     if widget._titlebar_sub_back_btn then
         local btn = widget._titlebar_sub_back_btn
