@@ -1149,7 +1149,11 @@ end
 function M.getNonFavoritesCollections()
     local rc = M.getReadCollection()
     if not rc then return {} end
-    if rc._read then pcall(function() rc:_read() end) end
+    if rc._read then
+        pcall(function()
+            rc:_read()
+        end)
+    end
     local fav = rc.default_collection_name or "favorites"
     local names = {}
     local seen = {}

@@ -1471,7 +1471,7 @@ end
 
 local function _buildRectBadgeWidget(text, bold, cell_min, dark, new_badge, badge_scale)
     badge_scale = badge_scale or 1.0
-    local eff_size = math.max(8, math.floor((cell_min or 40) * 0.14 * badge_scale))
+    local eff_size = math.max(8, math.floor((cell_min or 40) * 0.15 * badge_scale))
     local font_sz  = math.max(7, math.floor(eff_size * 0.24))
     local pad_h    = math.max(1, math.floor(eff_size * 0.10))
     local pad_v    = math.max(1, math.floor(eff_size * 0.06))
@@ -1597,7 +1597,7 @@ local function _buildBadge(mandatory, cover_dimen, cv_scale, cell_dimen)
     local nb_count       = tonumber(nb_text)
     local size_dimen     = cell_dimen or cover_dimen
     local cell_min       = math.min(size_dimen.w, size_dimen.h)
-    local nb_size        = math.max(8, math.floor(cell_min * 0.12 * badge_scale))
+    local nb_size        = math.max(8, math.floor(cell_min * 0.13 * badge_scale))
     local nb_font_size   = math.max(7, math.floor(nb_size * 0.28))
     local badge_margin   = math.max(1, math.floor(_BADGE_MARGIN_BASE   * cv_scale))
     local badge_margin_r = math.max(1, math.floor(_BADGE_MARGIN_R_BASE * cv_scale))
@@ -2243,8 +2243,8 @@ function M.install()
                 local has_progress = (self.percent_finished ~= nil and self.percent_finished >= 0.01)
                     or (self.status == "complete") or (self.status == "abandoned")
                 if has_progress then
-                    local eff_size = math.max(8, math.floor(
-                        math.min(self.width or 40, self.height or 40) * 0.13 * badge_scale))
+                local eff_size = math.max(8, math.floor(
+                    math.min(self.width or 40, self.height or 40) * 0.14 * badge_scale))
                     local dark = M.getBadgeColorProgress() == "dark"
                     local prog_desc = _buildProgressBadgeDesc(
                         eff_size, self.status, self.percent_finished,
