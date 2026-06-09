@@ -183,9 +183,14 @@ end
 -- Called once at module load time (bottom of this file).
 local function _registerBuiltins()
     local function _simpleui_plugin()
-        -- Resolve the live plugin instance via the FM.
+        -- Resolve the live plugin instance via the FM first.
         local fm = _liveFM()
-        return fm and fm._simpleui_plugin
+        if fm and fm._simpleui_plugin then return fm._simpleui_plugin end
+        -- Inside the reader the FM may not be the active instance.
+        -- The plugin is registered on ReaderUI as readerui.simpleui.
+        local RUI = package.loaded["apps/reader/readerui"]
+        local rui = RUI and RUI.instance
+        return rui and rui.simpleui
     end
 
     local builtins = {

@@ -283,9 +283,13 @@ local function buildPanel(touch_menu)
                     
                     local RUI = package.loaded["apps/reader/readerui"]
                     local in_reader = RUI and RUI.instance
-                    
+                    -- Inside the reader, FM.instance may be nil, so fall back to
+                    -- the plugin instance registered on ReaderUI.
+                    local plugin_resolved = plugin
+                        or (in_reader and in_reader.simpleui)
+
                     if stay_open then
-                        local ctx = { plugin = plugin, fm = fm }
+                        local ctx = { plugin = plugin_resolved, fm = fm }
                         local ok, err = pcall(QA.execute, _aid, ctx)
                         if not ok then
                             logger.warn("simpleui QSBar: execute error", _aid, tostring(err))
