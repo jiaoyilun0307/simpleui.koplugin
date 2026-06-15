@@ -3083,6 +3083,50 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
                                     },
                                 },
                             },
+                            -- ── Finished Books ────────────────────────────────────────────────
+                            {
+                                text_func  = function() return _("Finished Books") end,
+                                value_func = function()
+                                    if not FC.getFadeFinished() then return _("Off") end
+                                    return FC.getFadeAmountPct() .. "%"
+                                end,
+                                sub_item_table = {
+                                    {
+                                        text           = _("Fade Finished Books"),
+                                        checked_func   = function() return FC.getFadeFinished() end,
+                                        keep_menu_open = true,
+                                        callback       = function()
+                                            FC.setFadeFinished(not FC.getFadeFinished())
+                                            _refreshFC()
+                                        end,
+                                    },
+                                    {
+                                        text_func    = function() return _("Intensity") end,
+                                        value_func   = function() return FC.getFadeAmountPct() .. "%" end,
+                                        enabled_func = function() return FC.getFadeFinished() end,
+                                        keep_menu_open = true,
+                                        callback = function()
+                                            local SpinWidget = require("ui/widget/spinwidget")
+                                            UIManager:show(SpinWidget:new{
+                                                title_text    = _("Fade Intensity"),
+                                                info_text     = _("Fades finished book covers towards white.\n50% is the default."),
+                                                value         = FC.getFadeAmountPct(),
+                                                value_min     = FC.FADE_AMOUNT_MIN,
+                                                value_max     = FC.FADE_AMOUNT_MAX,
+                                                value_step    = FC.FADE_AMOUNT_STEP,
+                                                unit          = "%",
+                                                ok_text       = _("Apply"),
+                                                cancel_text   = _("Cancel"),
+                                                default_value = FC.FADE_AMOUNT_DEF,
+                                                callback = function(spin)
+                                                    FC.setFadeAmountPct(spin.value)
+                                                    _refreshFC()
+                                                end,
+                                            })
+                                        end,
+                                    },
+                                },
+                            },
                             -- ── Folder Name ───────────────────────────────────────────────────
                             {
                                 text         = _("Folder Name"),

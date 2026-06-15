@@ -70,6 +70,8 @@ local SK = {
     new_mode             = "simpleui_fc_new_mode",
     badge_color_folder   = "simpleui_fc_badge_color_folder",
     badge_scale          = "simpleui_fc_badge_scale",
+    fade_finished        = "simpleui_fc_fade_finished",
+    fade_amount          = "simpleui_fc_fade_amount",
 }
 
 -- ---------------------------------------------------------------------------
@@ -196,6 +198,33 @@ function M.getBadgeColorNew()       return SUISettings:readSetting(SK.badge_colo
 function M.setBadgeColorNew(v)      SUISettings:saveSetting(SK.badge_color_new, v)                     end
 function M.getBadgeColorFolder()    return SUISettings:readSetting(SK.badge_color_folder)   or "dark"  end
 function M.setBadgeColorFolder(v)   SUISettings:saveSetting(SK.badge_color_folder, v)                  end
+
+-- Fade finished books: dim the cover of completed books in mosaic view.
+-- Default ON — consistent with "~= false" pattern used by other default-true flags.
+function M.getFadeFinished()  return SUISettings:readSetting(SK.fade_finished) ~= false end
+function M.setFadeFinished(v) SUISettings:saveSetting(SK.fade_finished, v) end
+
+-- Fade intensity: integer percentage 10–90, default 50.
+-- Stored and exposed as an integer % so SpinWidget needs no unit conversion.
+local _FADE_AMOUNT_MIN = 10
+local _FADE_AMOUNT_MAX = 90
+local _FADE_AMOUNT_DEF = 50
+local _FADE_AMOUNT_STEP = 5
+M.FADE_AMOUNT_MIN  = _FADE_AMOUNT_MIN
+M.FADE_AMOUNT_MAX  = _FADE_AMOUNT_MAX
+M.FADE_AMOUNT_DEF  = _FADE_AMOUNT_DEF
+M.FADE_AMOUNT_STEP = _FADE_AMOUNT_STEP
+
+function M.getFadeAmountPct()
+    local v = SUISettings:readSetting(SK.fade_amount)
+    return (v and tonumber(v)) or _FADE_AMOUNT_DEF
+end
+function M.setFadeAmountPct(v)
+    v = math.max(_FADE_AMOUNT_MIN, math.min(_FADE_AMOUNT_MAX, math.floor(tonumber(v) or _FADE_AMOUNT_DEF)))
+    SUISettings:saveSetting(SK.fade_amount, v)
+end
+-- lightenRect expects a 0.0–1.0 float.
+function M.getFadeAmount() return M.getFadeAmountPct() / 100 end
 
 -- Folder label text scale: integer %, clamped to [50, 200], default 100.
 local _FC_SCALE_MIN  = 50
@@ -3075,6 +3104,25 @@ function M.install()
                         bb:paintRect(cover_right - brd, fy, brd, fh, bclr)  -- right edge
                     end
                 end
+            end
+        end
+
+        -- Fade overlay for finished books.
+        -- Applied last so it dims everything already painted (cover + badges).
+        if M.getFadeFinished() and self.status == "complete" and not self.is_directory then
+            local tgt = self._cover_frame or (self[1] and self[1][1] and self[1][1][1])
+            if tgt and tgt.dimen then
+                local tw2 = tgt.dimen.w
+                local th2 = tgt.dimen.h
+                local fx2, fy2
+                if tgt.dimen.x and tgt.dimen.x ~= 0 then
+                    fx2 = tgt.dimen.x
+                    fy2 = tgt.dimen.y
+                else
+                    fx2 = x + _round((self.width  - tw2) / 2)
+                    fy2 = y + _round((self.height - th2) / 2)
+                end
+                bb:lightenRect(fx2, fy2, tw2, th2, M.getFadeAmount())
             end
         end
 

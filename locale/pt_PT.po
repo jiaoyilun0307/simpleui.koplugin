@@ -1708,6 +1708,26 @@ msgstr "Novo"
 msgid "New Book"
 msgstr "Livro Novo"
 
+#: sui_menu.lua:3088
+msgid "Finished Books"
+msgstr "Livros Concluídos"
+
+#: sui_menu.lua:3095
+msgid "Fade Finished Books"
+msgstr "Desvanecer Livros Concluídos"
+
+#: sui_menu.lua:3104
+msgid "Intensity"
+msgstr "Intensidade"
+
+#: sui_menu.lua:3110
+msgid "Fade Intensity"
+msgstr "Intensidade do Desvanecer"
+
+#: sui_menu.lua:3111
+msgid "Fades finished book covers towards white.\n50% is the default."
+msgstr "Desvanece as capas dos livros concluídos em direção ao branco.\n50% é o valor predefinido."
+
 #: desktop_modules/module_new_books.lua:50 desktop_modules/module_new_books.lua:51
 #: desktop_modules/module_new_books.lua:130 desktop_modules/module_new_books.lua:381
 msgid "New Books"
