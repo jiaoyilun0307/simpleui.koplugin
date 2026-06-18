@@ -3428,6 +3428,70 @@ function M.patchDeleteFile(FileManager, plugin)
     end
 end
 
+-- patchHistoryMenuHold
+-- Wraps FileManagerHistory.onMenuHold so that CoverBrowser's injected
+-- "Refresh cached book information" (and sibling) buttons do not crash when
+-- booklist_menu has been nilled by its close_callback before the button fires.
+--
+-- Root cause: CoverBrowser.addFileDialogButtons captures the FileManagerHistory
+-- *class* as `widget` and calls widget.getMenuInstance() inside each button
+-- callback.  getMenuInstance() resolves ui.history.booklist_menu at call time,
+-- which is nil if the close_callback already ran (SimpleUI's altered widget
+-- lifecycle can trigger this earlier than stock KOReader does).
+--
+-- Fix: override getMenuInstance() to return the booklist_menu instance that was
+-- live at the moment of the hold.  We install a thin wrapper around onMenuHold
+-- that captures `self` (= booklist_menu, valid at hold time) and temporarily
+-- replaces getMenuInstance with a closure over that reference for the duration
+-- of the dialog's lifetime.  The original is restored when the dialog closes.
+-- A session guard prevents double-patching across FM lifecycle cycles.
+function M.patchHistoryMenuHold()
+    local ok, FMH = pcall(require, "apps/filemanager/filemanagerhistory")
+    if not (ok and FMH) then return end
+    if FMH._sui_onMenuHold_patched then return end
+    FMH._sui_onMenuHold_patched = true
+
+    local orig_getMenuInstance = FMH.getMenuInstance
+    local orig_onMenuHold      = FMH.onMenuHold
+
+    FMH.onMenuHold = function(bm_self, item)
+        -- bm_self is the booklist_menu instance (valid here, may be nil later).
+        -- Temporarily override the class-level getMenuInstance so CoverBrowser's
+        -- button callbacks resolve to this specific instance instead of going
+        -- through ui.history.booklist_menu (which may be nil by then).
+        local overridden = false
+        if bm_self and orig_getMenuInstance then
+            overridden = true
+            FMH.getMenuInstance = function()
+                return bm_self
+            end
+        end
+
+        local result = orig_onMenuHold(bm_self, item)
+
+        -- Restore after the dialog is shown.  We do this via a close hook on
+        -- the file_dialog so getMenuInstance remains valid for as long as the
+        -- dialog is on screen, and is restored the moment it closes.
+        if overridden then
+            local dlg = bm_self and bm_self.file_dialog
+            if dlg then
+                local orig_on_close = dlg.onCloseWidget
+                dlg.onCloseWidget = function(dlg_self, ...)
+                    FMH.getMenuInstance = orig_getMenuInstance
+                    if orig_on_close then
+                        return orig_on_close(dlg_self, ...)
+                    end
+                end
+            else
+                -- No dialog was created (e.g. hold on a non-file item); restore now.
+                FMH.getMenuInstance = orig_getMenuInstance
+            end
+        end
+
+        return result
+    end
+end
+
 -- Called from patchUIManagerShow after a fullscreen overlay (Collections,
 -- History, etc.) has been wrapped with wrapWithNavbar and shown.
 function M.injectWallpaperIntoFullscreenWidget(widget)
@@ -3448,6 +3512,7 @@ function M.installAll(plugin)
     M.patchFileManagerClass(plugin)
     M.patchStartWithMenu()
     M.patchBookList(plugin)
+    M.patchHistoryMenuHold()
     M.patchCollections(plugin)
     M.patchFullscreenWidgets(plugin)
     M.patchUIManagerShow(plugin)
@@ -3628,6 +3693,13 @@ function M.teardownAll(plugin)
         fmutil._simpleui_bookinfo_nav_patched = nil
     end
     M.unpatchStatusButtons(plugin)
+
+    local FMH = package.loaded["apps/filemanager/filemanagerhistory"]
+    if FMH and FMH._sui_onMenuHold_patched then
+        FMH._sui_onMenuHold_patched = nil
+        -- The patched onMenuHold and its getMenuInstance override restore
+        -- themselves on dialog close; clearing the guard suffices for re-enable.
+    end
 
     local FileManagerMenu = package.loaded["apps/filemanager/filemanagermenu"]
     if FileManagerMenu and FileManagerMenu._simpleui_startwith_patched then
