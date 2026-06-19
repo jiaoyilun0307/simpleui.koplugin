@@ -3982,7 +3982,7 @@ msgid "The maximum of %d quick action has been reached. Delete one first."
 msgid_plural ""
 "The maximum of %d quick actions has been reached. Delete one first."
 msgstr[0] "最多 %d 个快捷操作。请先删除一个。"
-msgstr[0] "最多 %d 个快捷操作。请先删除一个。"
+msgstr[1] "最多 %d 个快捷操作。请先删除一个。"
 
 #: desktop_modules/module_reading_stats.lua:542
 #: desktop_modules/module_reading_stats.lua:624
