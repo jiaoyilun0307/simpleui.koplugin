@@ -165,6 +165,261 @@ local function _goHome(target_fm)
     return true
 end
 
+-- ---------------------------------------------------------------------------
+-- Action implementations — self-contained, no bottombar dependency
+-- ---------------------------------------------------------------------------
+
+-- doWifiToggle: toggle Wi-Fi and immediately refresh all indicators with the
+-- optimistic state before broadcastEvent clears it.
+local function _doWifiToggle(plugin)
+    local ok_hw, has_wifi = pcall(function() return Device:hasWifiToggle() end)
+    if not (ok_hw and has_wifi) then
+        UIManager:show(require("ui/widget/infomessage"):new{ text = _("WiFi not available on this device."), timeout = 2 })
+        return
+    end
+    local ok_nm, NetworkMgr = pcall(require, "ui/network/manager")
+    if not ok_nm or not NetworkMgr then
+        UIManager:show(require("ui/widget/infomessage"):new{ text = _("Network manager unavailable."), timeout = 2 })
+        return
+    end
+    local ok_state, wifi_on = pcall(function() return NetworkMgr:isWifiOn() end)
+    if not ok_state then wifi_on = false end
+    if wifi_on then
+        Config.wifi_optimistic = false
+        pcall(function() NetworkMgr:turnOffWifi() end)
+        UIManager:show(require("ui/widget/infomessage"):new{ text = _("Wi-Fi off"), timeout = 1 })
+    else
+        Config.wifi_optimistic = true
+        local ok_on, err = pcall(function() NetworkMgr:turnOnWifi() end)
+        if not ok_on then
+            logger.warn("simpleui: Wi-Fi turn-on error:", tostring(err))
+            Config.wifi_optimistic = nil
+        end
+    end
+    -- Refresh all indicators with the optimistic state BEFORE broadcastEvent,
+    -- which triggers onNetworkConnected/Disconnected and clears wifi_optimistic.
+    if plugin then
+        -- 1. Bottom bar tabs.
+        plugin:_rebuildAllNavbars()
+        -- 2. Topbar wifi icon — synchronous so it fires before wifi_optimistic is nil.
+        local ok_tb, Topbar = pcall(require, "sui_topbar")
+        if ok_tb and Topbar then
+            local cfg = Config.getTopbarConfig()
+            if (cfg.side["wifi"] or "hidden") ~= "hidden" then
+                pcall(function() Topbar.refresh(plugin) end)
+            end
+        end
+        -- 3. Homescreen quick-action icons — baked into ImageWidgets, need a full rebuild.
+        local HS = package.loaded["sui_homescreen"]
+        if HS and HS._instance then
+            pcall(function() HS.refreshImmediate(false) end)
+        end
+    end
+    -- Broadcast network events so other KOReader listeners are notified.
+    -- Set wifi_broadcast_self first so onNetworkConnected/Disconnected knows
+    -- the optimistic state was already applied.
+    Config.wifi_broadcast_self = true
+    if wifi_on then
+        pcall(function() UIManager:broadcastEvent(require("ui/event"):new("NetworkDisconnected")) end)
+    else
+        pcall(function() UIManager:broadcastEvent(require("ui/event"):new("NetworkConnected")) end)
+    end
+    Config.wifi_broadcast_self = nil
+end
+
+-- refreshWifiIcon: called by onNetworkConnected/Disconnected in main.lua.
+-- Clears the optimistic flag (unless we set the broadcast ourselves) and
+-- rebuilds all navbars + homescreen.
+local function _refreshWifiIcon(plugin)
+    if not Config.wifi_broadcast_self then
+        Config.wifi_optimistic = nil
+    end
+    plugin:_rebuildAllNavbars()
+    local HS = package.loaded["sui_homescreen"]
+    if HS and HS.refreshImmediate then
+        pcall(function() HS.refreshImmediate(false) end)
+    end
+end
+
+-- showFrontlightDialog: open the KOReader brightness widget.
+local function _showFrontlightDialog()
+    local ok_f, has_fl = pcall(function() return Device:hasFrontlight() end)
+    if not ok_f or not has_fl then
+        UIManager:show(require("ui/widget/infomessage"):new{
+            text = _("Frontlight not available on this device."), timeout = 2,
+        })
+        return
+    end
+    UIManager:show(require("ui/widget/frontlightwidget"):new{})
+end
+
+-- showBookmarkBrowserSourceDialog: source-picker for the bookmark browser.
+-- Uses _Bottombar().setTempTabActive to manage the bar indicator.
+local function _showBookmarkBrowserSourceDialog(bb_ui)
+    local ok_bb, BookmarkBrowser = pcall(require, "ui/widget/bookmarkbrowser")
+    if not ok_bb then
+        _unavailToast(_("Bookmark browser not available."))
+        return
+    end
+    local FM         = package.loaded["apps/filemanager/filemanager"]
+    local plugin     = FM and FM.instance and FM.instance._simpleui_plugin
+    local prev_action = plugin and plugin.active_action
+    local BB         = _Bottombar()
+    if plugin then BB.setTempTabActive(plugin, "bookmark_browser", true, prev_action) end
+
+    local HS         = package.loaded["sui_homescreen"]
+    local hs_was_open = HS and HS._instance ~= nil
+    local home_dir   = G_reader_settings:readSetting("home_dir")
+    local source_dialog
+    local function open_with_source(fetch_fn, subfolders)
+        UIManager:close(source_dialog)
+        local info_msg = require("ui/widget/infomessage"):new{
+            text    = _("Fetching bookmarks\xe2\x80\xa6"),
+            timeout = 0.1,
+            _navbar_closing_intentionally = true,
+        }
+        UIManager:show(info_msg)
+        UIManager:nextTick(function()
+            local books = {}
+            if type(fetch_fn) == "function" then
+                fetch_fn(books)
+            else
+                local util             = require("util")
+                local DocumentRegistry = require("document/documentregistry")
+                util.findFiles(fetch_fn, function(file)
+                    books[file] = DocumentRegistry:hasProvider(file) or nil
+                end, subfolders)
+            end
+            BookmarkBrowser:show(books, bb_ui)
+            if hs_was_open then
+                local UI_mod = require("sui_core")
+                local stack  = UI_mod.getWindowStack()
+                for i = #stack, 1, -1 do
+                    local w = stack[i] and stack[i].widget
+                    if w and w.covers_fullscreen and w.name ~= "homescreen" then
+                        local orig_cw = w.onCloseWidget
+                        w.onCloseWidget = function(self_w)
+                            local hs_inst2 = HS and HS._instance
+                            if hs_inst2 then
+                                hs_inst2._navbar_closing_intentionally = true
+                                UIManager:close(hs_inst2)
+                            end
+                            if plugin then
+                                BB.setTempTabActive(plugin, "bookmark_browser", false, prev_action)
+                            end
+                            self_w._navbar_closing_intentionally = true
+                            self_w.onCloseWidget = orig_cw
+                            if orig_cw then return orig_cw(self_w) end
+                        end
+                        break
+                    end
+                end
+            end
+        end)
+    end
+    local ButtonDialog = require("ui/widget/buttondialog")
+    source_dialog = ButtonDialog:new{
+        title        = _("Bookmark browser"),
+        title_align  = "center",
+        width_factor = 0.8,
+        buttons = {
+            {{ text = _("History"), callback = function()
+                open_with_source(function(books)
+                    for _, v in ipairs(require("readhistory").hist) do
+                        books[v.file] = v.select_enabled or nil
+                    end
+                end)
+            end }},
+            {{ text = _("Collections"), callback = function()
+                open_with_source(function(books)
+                    local rc = require("readcollection")
+                    if rc.coll then
+                        for _, coll in pairs(rc.coll) do
+                            for file in pairs(coll) do books[file] = true end
+                        end
+                    end
+                end)
+            end }},
+            {{ text = _("Home folder"), enabled = home_dir ~= nil,
+               callback = function() open_with_source(home_dir, false) end }},
+            {{ text = _("Home folder + subfolders"), enabled = home_dir ~= nil,
+               callback = function() open_with_source(home_dir, true) end }},
+            {{ text = _("Cancel"), callback = function()
+                if plugin then BB.setTempTabActive(plugin, "bookmark_browser", false, prev_action) end
+                UIManager:close(source_dialog)
+                if hs_was_open then
+                    local hs_inst = HS and HS._instance
+                    if hs_inst then UIManager:setDirty(hs_inst, "full") end
+                end
+            end }},
+        },
+    }
+    UIManager:show(source_dialog)
+end
+
+-- showPowerDialog: power menu (restart / reboot / sleep / quit).
+-- Uses _Bottombar().setTempTabActive to update the bar indicator while the
+-- dialog is open — that is a legitimate navbar operation, not action logic.
+local function _showPowerDialog(plugin)
+    if plugin._power_dialog then return end  -- guard: ignore double-tap
+    local ButtonDialog  = require("ui/widget/buttondialog")
+    local dialog_w      = math.floor(Screen:getWidth() * 0.42)
+    local prev_action   = plugin.active_action
+    local BB            = _Bottombar()
+
+    BB.setTempTabActive(plugin, "power", true, prev_action)
+
+    local _quitting = false
+    local function _clear()
+        plugin._power_dialog = nil
+        if _quitting then return end
+        BB.setTempTabActive(plugin, "power", false, prev_action)
+    end
+
+    local buttons = {}
+    if Device:canRestart() then
+        buttons[#buttons + 1] = {{ text = _("Restart"), callback = function()
+            _quitting = true
+            local d = plugin._power_dialog; plugin._power_dialog = nil
+            UIManager:close(d); UIManager:flushSettings(); UIManager:restartKOReader()
+        end }}
+    end
+    if Device:canReboot() then
+        buttons[#buttons + 1] = {{ text = _("Reboot"), callback = function()
+            local d = plugin._power_dialog; plugin._power_dialog = nil
+            UIManager:close(d); UIManager:askForReboot()
+        end }}
+    end
+    if Device:canSuspend() then
+        buttons[#buttons + 1] = {{ text = _("Sleep"), callback = function()
+            _quitting = true
+            local d = plugin._power_dialog; plugin._power_dialog = nil
+            UIManager:close(d); UIManager:flushSettings(); UIManager:suspend()
+        end }}
+    end
+    buttons[#buttons + 1] = {{ text = _("Quit"), callback = function()
+        _quitting = true
+        local d = plugin._power_dialog; plugin._power_dialog = nil
+        UIManager:close(d); UIManager:flushSettings(); UIManager:quit(0)
+    end }}
+
+    plugin._power_dialog = ButtonDialog:new{
+        width              = dialog_w,
+        tap_close_callback = _clear,
+        onCloseWidget      = _clear,
+        buttons            = buttons,
+    }
+    UIManager:show(plugin._power_dialog)
+end
+
+-- Expose so main.lua proxy methods and sui_bottombar.refreshWifiIcon callers
+-- can be redirected here without requiring sui_bottombar.
+QA.doWifiToggle                    = _doWifiToggle
+QA.refreshWifiIcon                 = _refreshWifiIcon
+QA.showFrontlightDialog            = _showFrontlightDialog
+QA.showPowerDialog                 = _showPowerDialog
+QA.showBookmarkBrowserSourceDialog = _showBookmarkBrowserSourceDialog
+
 -- Register a descriptor into the registry.
 -- Safe to call from within this module (built-ins) or from external plugins.
 local function _registerDescriptor(desc)
@@ -322,17 +577,13 @@ local function _registerBuiltins()
                 if ok_rui and ReaderUI and ReaderUI.instance then
                     _bb_ui = ReaderUI.instance
                 end
-                -- BookmarkBrowser:getBookList() calls self.ui.bookinfo.extendProps()
-                -- and self.ui.bookinfo.prop_text[]. When _bb_ui is the FileManager
-                -- (no open book), it has no bookinfo field, causing a crash.
-                -- Inject the BookInfo module directly so both static accessors work.
                 if _bb_ui and not _bb_ui.bookinfo then
                     local ok_bi, BookInfo = pcall(require, "apps/filemanager/filemanagerbookinfo")
                     if ok_bi and BookInfo then
                         _bb_ui.bookinfo = BookInfo
                     end
                 end
-                _Bottombar().showBookmarkBrowserSourceDialog(_bb_ui)
+                _showBookmarkBrowserSourceDialog(_bb_ui)
             end,
         },
         {
@@ -348,7 +599,7 @@ local function _registerBuiltins()
             end,
             is_in_place = true,
             execute = function(ctx)
-                _Bottombar().doWifiToggle(ctx.plugin or _simpleui_plugin())
+                _doWifiToggle(ctx.plugin or _simpleui_plugin())
             end,
         },
         {
@@ -357,7 +608,7 @@ local function _registerBuiltins()
             icon  = Config.ICON.frontlight,
             is_in_place = true,
             execute = function(_ctx)
-                _Bottombar().showFrontlightDialog()
+                _showFrontlightDialog()
             end,
         },
         {
@@ -393,7 +644,7 @@ local function _registerBuiltins()
             icon  = Config.ICON.power,
             is_in_place = true,
             execute = function(ctx)
-                _Bottombar().showPowerDialog(ctx.plugin or _simpleui_plugin())
+                _showPowerDialog(ctx.plugin or _simpleui_plugin())
             end,
         },
         {

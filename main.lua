@@ -1439,7 +1439,8 @@ function SimpleUIPlugin:onNetworkConnected()
     if RUI and RUI.instance then
         self:_rebuildAllNavbars()
     else
-        Bottombar.refreshWifiIcon(self)
+        local QA = package.loaded["sui_quickactions"] or require("sui_quickactions")
+        QA.refreshWifiIcon(self)
     end
 end
 
@@ -1453,7 +1454,8 @@ function SimpleUIPlugin:onNetworkDisconnected()
     if RUI and RUI.instance then
         self:_rebuildAllNavbars()
     else
-        Bottombar.refreshWifiIcon(self)
+        local QA = package.loaded["sui_quickactions"] or require("sui_quickactions")
+        QA.refreshWifiIcon(self)
     end
 end
 
@@ -1954,16 +1956,9 @@ function SimpleUIPlugin:_restoreTabInFM(tabs, prev_action)
     Bottombar.restoreTabInFM(self, tabs, prev_action)
 end
 
-function SimpleUIPlugin:_setPowerTabActive(active, prev_action)
-    Bottombar.setPowerTabActive(self, active, prev_action)
-end
-
-function SimpleUIPlugin:_showPowerDialog(fm_self)
-    Bottombar.showPowerDialog(self, fm_self)
-end
-
 function SimpleUIPlugin:_doWifiToggle()
-    Bottombar.doWifiToggle(self)
+    local QA = package.loaded["sui_quickactions"] or require("sui_quickactions")
+    QA.doWifiToggle(self)
 end
 
 function SimpleUIPlugin:_doRotateScreen()
@@ -1971,7 +1966,8 @@ function SimpleUIPlugin:_doRotateScreen()
 end
 
 function SimpleUIPlugin:_showFrontlightDialog()
-    Bottombar.showFrontlightDialog()
+    local QA = package.loaded["sui_quickactions"] or require("sui_quickactions")
+    QA.showFrontlightDialog()
 end
 
 function SimpleUIPlugin:_scheduleRebuild()
