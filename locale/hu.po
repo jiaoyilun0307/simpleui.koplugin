@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: simpleui\n"
 "POT-Creation-Date: 2026-06-03 19:48\n"
-"PO-Revision-Date: 2026-06-18 12:58\n"
+"PO-Revision-Date: 2026-06-25 21:57+0200\n"
 "Last-Translator: Kónya Márton <konyamarci52@proton.me>\n"
 "Language-Team: \n"
 "Language: hu\n"
@@ -1561,6 +1561,10 @@ msgstr "Háttérkép világosítása"
 msgid "List"
 msgstr "Lista"
 
+#: sui_stats_windows.lua
+msgid "Loading statistics…"
+msgstr "Statisztikák betöltése…"
+
 #: sui_menu.lua:2369
 msgid "Lock Scale"
 msgstr "Méretezés rögzítése"
@@ -2923,6 +2927,15 @@ msgstr ""
 "Rövid „Könyv bezárása…” értesítés megjelenítése könyv bezárásakor, az e-ink "
 "frissülése közben történő véletlen dupla érintések megelőzésére."
 
+#: sui_menu.lua
+msgid ""
+"Show a brief \"Loading statistics…\" notice when opening a statistics "
+"window, preventing accidental double-taps while e-ink refreshes."
+msgstr ""
+"Rövid „Statisztikák betöltése…” értesítés megjelenítése a statisztika ablak "
+"megnyitásakor, az e-ink frissülése közben történő véletlen dupla érintések "
+"megelőzésére."
+
 #: desktop_modules/module_recent.lua:397
 #: desktop_modules/module_coverdeck.lua:1038
 msgid "Show finished books"
@@ -3133,6 +3146,10 @@ msgstr ""
 #: sui_stats_windows.lua:136
 msgid "Statistics database library not available."
 msgstr "Statisztika adatbázis könyvtár nem elérhető."
+
+#: sui_menu.lua
+msgid "Statistics Loading Notice"
+msgstr "Statisztika betöltése értesítő"
 
 #: sui_quickactions.lua:373
 msgid "Statistics plugin not available."
@@ -4058,6 +4075,10 @@ msgstr[1] "olvasott oldalak"
 #: main.lua:986
 msgid "Book statistics"
 msgstr "Könyv statisztikák"
+
+#: desktop_modules/module_quote.lua:1440
+msgid "Fixed Height"
+msgstr "Fix magasság"
 
 #~ msgid "Arrange Collections"
 #~ msgstr "Gyűjtemények elrendezése"
