@@ -1088,7 +1088,7 @@ msgid "February"
 msgstr "2月"
 
 #: sui_bottombar.lua:1370
-msgid "Fetching bookmarks\\xe2\\x80\\xa6"
+msgid "Fetching bookmarks\xe2\x80\xa6"
 msgstr "正在获取书签…"
 
 #: desktop_modules/module_clock.lua:206 desktop_modules/module_clock.lua:250
@@ -1545,6 +1545,10 @@ msgstr "壁纸增亮"
 #: desktop_modules/module_reading_stats.lua:701
 msgid "List"
 msgstr "列表"
+
+#: sui_stats_windows.lua
+msgid "Loading statistics…"
+msgstr "正在加载统计数据…"
 
 #: sui_menu.lua:2369
 msgid "Lock Scale"
@@ -2895,8 +2899,16 @@ msgid ""
 "Show a brief \"Closing book…\" notice when closing a book, preventing "
 "accidental double-taps while e-ink refreshes."
 msgstr ""
-"关闭书籍时显示短暂的“正在关闭书籍…”提示，防止在电子墨水屏刷新期间发生意外双"
+"关闭书籍时显示短暂的"正在关闭书籍…"提示，防止在电子墨水屏刷新期间发生意外双"
 "击。"
+
+#: sui_menu.lua
+msgid ""
+"Show a brief \"Loading statistics…\" notice when opening a statistics window, "
+"preventing accidental double-taps while e-ink refreshes."
+msgstr ""
+"打开统计窗口时显示短暂的"正在加载统计数据…"提示，防止在电子墨水屏刷新期间发"
+"生意外双击。"
 
 #: desktop_modules/module_recent.lua:397
 #: desktop_modules/module_coverdeck.lua:1038
@@ -3104,6 +3116,10 @@ msgstr "从预设布局开始，后续均可自由调整。"
 #: sui_stats_windows.lua:136
 msgid "Statistics database library not available."
 msgstr "统计数据库模块不可用。"
+
+#: sui_menu.lua
+msgid "Statistics Loading Notice"
+msgstr "统计数据加载提示"
 
 #: sui_quickactions.lua:373
 msgid "Statistics plugin not available."
