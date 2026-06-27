@@ -50,6 +50,11 @@ def check_translation(pot_path: str, po_path: str, count_missing: bool = False) 
     
     missing = pot_entries - po_entries
     
+    if count_missing:
+        # Only output the count for GitHub Actions
+        print(len(missing))
+        return len(missing)
+    
     print(f"POT template entries: {len(pot_entries)}")
     print(f"PO file entries: {len(po_entries)}")
     print(f"Missing entries: {len(missing)}")
@@ -58,9 +63,6 @@ def check_translation(pot_path: str, po_path: str, count_missing: bool = False) 
         print("\nMissing translations:")
         for entry in sorted(missing):
             print(f"  - {entry}")
-    
-    if count_missing:
-        return len(missing)
     
     if not missing:
         print("\n✓ Translation is complete!")
