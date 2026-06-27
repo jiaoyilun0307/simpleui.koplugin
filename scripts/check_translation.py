@@ -81,8 +81,17 @@ def main():
     args = parser.parse_args()
     
     if args.count_missing:
-        result = check_translation(args.pot, args.po, count_missing=True)
-        print(result)  # Output just the number for GitHub Actions
+        # Only output the count, nothing else
+        pot_content = Path(args.pot).read_text(encoding='utf-8')
+        po_content = Path(args.po).read_text(encoding='utf-8')
+        
+        pot_entries = parse_po_entries(pot_content)
+        po_entries = parse_po_entries(po_content)
+        pot_entries.discard('')
+        po_entries.discard('')
+        
+        missing_count = len(pot_entries - po_entries)
+        print(missing_count)
     else:
         result = check_translation(args.pot, args.po)
         exit(result)

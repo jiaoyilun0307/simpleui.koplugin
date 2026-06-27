@@ -38,16 +38,14 @@ jobs:
       - name: Check for upstream changes
         id: check
         run: |
-          # 检查上游是否有新提交
-          git fetch upstream
           LOCAL_HEAD=$(git rev-parse HEAD)
           UPSTREAM_HEAD=$(git rev-parse upstream/main)
           
           if [ "$LOCAL_HEAD" = "$UPSTREAM_HEAD" ]; then
-            echo "has_upstream_changes=false" >> $GITHUB_OUTPUT
+            echo "has_upstream_changes=false" >> "$GITHUB_OUTPUT"
             echo "No upstream changes detected."
           else
-            echo "has_upstream_changes=true" >> $GITHUB_OUTPUT
+            echo "has_upstream_changes=true" >> "$GITHUB_OUTPUT"
             echo "Upstream changes detected!"
           fi
       
@@ -65,8 +63,9 @@ jobs:
         id: translate_check
         run: |
           python scripts/check_translation.py
-          MISSING=$(python scripts/check_translation.py --count-missing)
-          echo "missing_count=${MISSING}" >> $GITHUB_OUTPUT
+          MISSING=$(python scripts/check_translation.py --count-missing | tr -d '[:space:]')
+          echo "missing_count=${MISSING}" >> "$GITHUB_OUTPUT"
+          echo "Missing count: ${MISSING}"
       
       - name: Auto-fix missing translations
         if: steps.check.outputs.has_upstream_changes == 'true' && steps.translate_check.outputs.missing_count != '0'
@@ -81,7 +80,6 @@ jobs:
             - Synced with latest upstream changes
             - Added/fixed missing translations
             - Automated by GitHub Actions"
-            echo "translations_updated=true" >> $GITHUB_OUTPUT
           fi
       
       - name: Push changes
@@ -115,6 +113,6 @@ jobs:
       - name: Summary
         if: always()
         run: |
-          echo "## Sync Summary" >> $GITHUB_STEP_SUMMARY
-          echo "- Upstream changes: ${{ steps.check.outputs.has_upstream_changes }}" >> $GITHUB_STEP_SUMMARY
-          echo "- Missing translations: ${{ steps.translate_check.outputs.missing_count }}" >> $GITHUB_STEP_SUMMARY
+          echo "## Sync Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Upstream changes: ${{ steps.check.outputs.has_upstream_changes }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Missing translations: ${{ steps.translate_check.outputs.missing_count }}" >> "$GITHUB_STEP_SUMMARY"
