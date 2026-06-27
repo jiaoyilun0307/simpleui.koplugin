@@ -1649,14 +1649,16 @@ function HomescreenWidget:_buildCtx()
         end
     end
 
-    local stats_data = nil
+    -- Compute once here; reused by SP.get and stored in ctx so the async
+    -- refresh tick (scheduleIn 50ms) does not need a second os.date call.
+    local year_str    = os.date("%Y")
+    local stats_data  = nil
     if wants_stats then
         local SP = _getStatsProvider()
         if SP then
             if self._defer_stats then
                 stats_data = SP.getStale() or {}
             else
-                local year_str = os.date("%Y")
                 stats_data = SP.get(self._db_conn, year_str, needs_books)
             end
             if stats_data and stats_data.db_conn_fatal then
@@ -1722,6 +1724,7 @@ function HomescreenWidget:_buildCtx()
     local self_ref = self
     return {
         _needs_books           = needs_books,
+        year_str               = year_str,   -- cached once per render; re-used by async tick
         pfx                    = PFX,
         pfx_qa                 = PFX_QA,
         close_fn               = function() self_ref:onClose() end,
@@ -2254,11 +2257,12 @@ function HomescreenWidget:_updatePage(keep_cache, books_only, stats_only)
                 end
                 if mod.is_book_mod then
                     self._book_mod_slots[mod.id] = {
-                        mod = mod,
-                        parent = col_body,
-                        index = #col_body + 1,
-                        col_w = col_w,
-                        has_menu = has_menu
+                        mod      = mod,
+                        widget   = widget,
+                        parent   = col_body,
+                        index    = #col_body + 1,
+                        col_w    = col_w,
+                        has_menu = has_menu,
                     }
                 end
                 if type(mod.updateStats) == "function" then
@@ -2372,11 +2376,12 @@ function HomescreenWidget:_updatePage(keep_cache, books_only, stats_only)
                 end
                 if mod.is_book_mod then
                     self._book_mod_slots[mod.id] = {
-                        mod = mod,
-                        parent = body,
-                        index = #body + 1,
-                        col_w = inner_w,
-                        has_menu = has_menu
+                        mod      = mod,
+                        widget   = widget,
+                        parent   = body,
+                        index    = #body + 1,
+                        col_w    = inner_w,
+                        has_menu = has_menu,
                     }
                 end
                 if type(mod.updateStats) == "function" then
@@ -2540,7 +2545,7 @@ function HomescreenWidget:_refresh(keep_cache, books_only, stats_only)
                     -- 2. Obter novas estatísticas globais
                     local SP = _getStatsProvider()
                     if SP then
-                        local new_stats = SP.get(self._db_conn, os.date("%Y"), self._ctx_cache._needs_books)
+                        local new_stats = SP.get(self._db_conn, self._ctx_cache.year_str, self._ctx_cache._needs_books)
                         if new_stats then self._ctx_cache.stats = new_stats end
                     end
 
