@@ -128,7 +128,7 @@ end
 
 -- Fetches all statistics for a book from statistics.sqlite3.
 -- Returns a data table on success, or nil + error string on failure.
-local function _fetchBookStatsData(book)
+local function _fetchBookStatsData(book, range_start, range_end)
     local fp = book and book.filepath
     if not fp then return nil, _("No filepath.") end
 
@@ -234,6 +234,14 @@ local function _fetchBookStatsData(book)
 
     local total_days, total_time_book, total_read_pages, book_read_time
     pcall(function()
+        -- Optional date-range filter: when the user has edited the start/end
+        -- date on this book's stats card, only sessions that started within
+        -- [range_start, range_end] count towards days/total time/avg per day
+        -- etc. Left unfiltered (both nil) this reproduces the full-history
+        -- query exactly as before.
+        local range_clause = ""
+        if range_start then range_clause = range_clause .. string.format(" AND start_time >= %d", range_start) end
+        if range_end   then range_clause = range_clause .. string.format(" AND start_time <= %d", range_end) end
         total_days, total_time_book, total_read_pages, book_read_time = conn:rowexec(
             string.format([[
                 WITH ps_agg AS (
@@ -241,7 +249,7 @@ local function _fetchBookStatsData(book)
                            sum(duration) AS page_dur,
                            min(start_time) AS first_start
                     FROM page_stat
-                    WHERE id_book = %d
+                    WHERE id_book = %d%s
                     GROUP BY page
                 )
                 SELECT
@@ -250,7 +258,7 @@ local function _fetchBookStatsData(book)
                     count(*),
                     sum(min(page_dur, %d))
                 FROM ps_agg
-            ]], id_book, MAX_SEC))
+            ]], id_book, range_clause, MAX_SEC))
     end)
 
     local first_open, last_page
@@ -433,6 +441,21 @@ end
 
 local function _fmtDate(ts)
     return os.date("%Y-%m-%d", ts)
+end
+
+-- Converts a "YYYY-MM-DD" string to a unix timestamp: start of day (00:00:00)
+-- by default, or end of day (23:59:59) when end_of_day is true. Used to turn
+-- an edited date-range boundary into SQL-filterable timestamps.
+local function _dateStrToTs(date_str, end_of_day)
+    if type(date_str) ~= "string" then return nil end
+    local y, m, d = date_str:match("^(%d%d%d%d)-(%d%d)-(%d%d)$")
+    if not y then return nil end
+    return os.time{
+        year = tonumber(y), month = tonumber(m), day = tonumber(d),
+        hour = end_of_day and 23 or 0,
+        min  = end_of_day and 59 or 0,
+        sec  = end_of_day and 59 or 0,
+    }
 end
 
 -- Validates a YYYY-MM-DD string; returns true if the date is well-formed.
@@ -781,8 +804,19 @@ function StatsWindows.showFinishedBooksDialog(initial_page)
     local function buildStatsScreen(ctx)
         local inner_w = ctx.inner_w
         local params  = ctx.current().params
-        local d       = params.stats
         local book    = params.book
+        -- Recompute the date-range-dependent aggregates (days, avg/day,
+        -- avg/page, total time, pages read) whenever the user has edited the
+        -- start/end date on this book. params.stats (the full-history fetch
+        -- done at push time) is the fallback when no date has been edited —
+        -- avoids re-querying the DB on every repaint for the common case.
+        local d = params.stats
+        if book and (type(book.date_started) == "string" or type(book.date_finished) == "string") then
+            local start_ts = _dateStrToTs(book.date_started, false)
+            local end_ts   = _dateStrToTs(book.date_finished, true)
+            local filtered = _fetchBookStatsData(book, start_ts, end_ts)
+            if filtered then d = filtered end
+        end
         local cg      = _buildCellGeo(inner_w)
 
         local CLR_BORDER = Blitbuffer.gray(0.72)
@@ -2508,6 +2542,15 @@ function StatsWindows.showBookStatsFromFile(filepath)
         if params then
             d    = params.stats or d
             book = params.book  or book
+        end
+        -- Recompute the date-range-dependent aggregates whenever the user
+        -- has edited the start/end date on this book (see the sibling
+        -- buildStatsScreen in showFinishedBooksDialog for the full rationale).
+        if book and (type(book.date_started) == "string" or type(book.date_finished) == "string") then
+            local start_ts = _dateStrToTs(book.date_started, false)
+            local end_ts   = _dateStrToTs(book.date_finished, true)
+            local filtered = _fetchBookStatsData(book, start_ts, end_ts)
+            if filtered then d = filtered end
         end
 
         local CLR_BORDER = Blitbuffer.gray(0.72)

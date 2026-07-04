@@ -108,31 +108,32 @@ SimpleUI has full translation support. The UI language is detected automatically
 | Language | File | Status |
 |---|---|---|
 | English | *(built-in)* | Complete |
-| Português (Brasil) | `locale/pt_BR.po` | Complete |
-| Português (Portugal) | `locale/pt_PT.po` | Complete |
-| Polski (Polish) | `locale/pl.po` | Partial (67.7% — 248 missing) |
-| Magyar (Hungarian) | `locale/hu.po` | Partial (64.7% — 271 missing) |
-| Български (Bulgarian) | `locale/bg.po` | Partial (64.6% — 272 missing) |
-| 简体中文 (Chinese Simplified) | `locale/zh_CN.po` | Partial (64.6% — 272 missing) |
-| Русский (Russian) | `locale/ru.po` | Partial (62.6% — 287 missing) |
-| Deutsch (German) | `locale/de.po` | Partial (52.0% — 369 missing) |
-| Čeština (Czech) | `locale/cs.po` | Partial (47.5% — 403 missing) |
-| Türkçe (Turkish) | `locale/tr.po` | Partial (47.4% — 404 missing) |
-| Українська (Ukrainian) | `locale/uk.po` | Partial (41.9% — 446 missing) |
-| Svenska (Swedish) | `locale/sv.po` | Partial (41.4% — 450 missing) |
-| Tiếng Việt (Vietnamese) | `locale/vi.po` | Partial (40.8% — 455 missing) ⚠️ |
-| Français (French) | `locale/fr.po` | Partial (40.1% — 460 missing) ⚠️ |
-| Română (Romanian) | `locale/ro.po` | Partial (43.0% — 438 missing) |
-| Română (Moldova) | `locale/ro_MD.po` | Partial (43.0% — 438 missing) |
-| Español | `locale/es.po` | Partial (33.6% — 510 missing) |
-| Italiano (Italian) | `locale/it_IT.po` | Partial (38.9% — 469 missing) ⚠️ |
-| 繁體中文 (Chinese Traditional) | `locale/zh_TW.po` | Partial (38.4% — 473 missing) |
+| Português (Brasil) | `locale/pt_BR.po` | Partial (99.6% — 3 missing) |
+| Português (Portugal) | `locale/pt_PT.po` | Partial (99.6% — 3 missing) |
+| Polski (Polish) | `locale/pl.po` | Partial (98.7% — 11 missing) |
+| Български (Bulgarian) | `locale/bg.po` | Partial (98.6% — 12 missing) |
+| Magyar (Hungarian) | `locale/hu.po` | Partial (98.2% — 15 missing) |
+| 简体中文 (Chinese Simplified) | `locale/zh_CN.po` | Partial (98.2% — 15 missing) ⚠️ |
+| Русский (Russian) | `locale/ru.po` | Partial (98.1% — 16 missing) |
+| Čeština (Czech) | `locale/cs.po` | Partial (97.7% — 19 missing) |
+| 日本語 (Japanese) | `locale/ja.po` | Partial (97.7% — 19 missing) |
+| Tiếng Việt (Vietnamese) | `locale/vi.po` | Partial (97.7% — 19 missing) ⚠️ |
+| Español | `locale/es.po` | Partial (59.4% — 337 missing) |
+| Türkçe (Turkish) | `locale/tr.po` | Partial (43.9% — 466 missing) |
+| Deutsch (German) | `locale/de.po` | Partial (43.6% — 469 missing) |
+| Français (French) | `locale/fr.po` | Partial (41.9% — 483 missing) ⚠️ |
+| Română (Romanian) | `locale/ro.po` | Partial (39.7% — 501 missing) |
+| Română (Moldova) | `locale/ro_MD.po` | Partial (39.7% — 501 missing) |
+| Українська (Ukrainian) | `locale/uk.po` | Partial (38.9% — 508 missing) |
+| Svenska (Swedish) | `locale/sv.po` | Partial (38.3% — 513 missing) |
+| Italiano (Italian) | `locale/it_IT.po` | Partial (36.0% — 532 missing) ⚠️ |
+| 繁體中文 (Chinese Traditional) | `locale/zh_TW.po` | Partial (35.5% — 536 missing) |
 
-> ⚠️ These files contain syntax errors and may not load correctly. Contributions to fix them are welcome.
+> ⚠️ These files contain syntax errors (unescaped quotes or literal line breaks inside strings) and currently fail to load in KOReader, even though most of their content is translated. Contributions to fix the offending lines are welcome.
 
 ### Adding a new language
 
-All 768 strings in the plugin are translatable. To add a new language:
+All 831 strings in the plugin are translatable. To add a new language:
 
 1. Copy `locale/simpleui.pot` to `locale/<lang>.po`, using the standard locale code for your language (examples: `de`, `fr`, `it`, `ja`)
 2. Open the file in any text editor or a dedicated PO editor such as [Poedit](https://poedit.net/)

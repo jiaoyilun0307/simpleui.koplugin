@@ -693,7 +693,7 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
                 local SEP_CENTER = "__sep_center__"
                 local SEP_RIGHT  = "__sep_right__"
                 local sort_items = {}
-                sort_items[#sort_items + 1] = { text = _("Left"):upper(), orig_item = SEP_LEFT, is_divider = true }
+                sort_items[#sort_items + 1] = { text = _("Left"):upper(), orig_item = SEP_LEFT, is_divider = true, pin_top = true }
                 for _i, key in ipairs(cfg.order_left) do
                     if cfg.side[key] ~= "hidden" then
                         sort_items[#sort_items + 1] = { text = TOPBAR_ITEM_LABEL(key), orig_item = key }
@@ -930,7 +930,7 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
                                 }
                             end
                             
-                            sort_items[#sort_items + 1] = { text = _("Left"):upper(), orig_item = SEP_LEFT, is_divider = true }
+                            sort_items[#sort_items + 1] = { text = _("Left"):upper(), orig_item = SEP_LEFT, is_divider = true, pin_top = true }
                             for _, key in ipairs(cfg.order_left) do
                                 if (cfg.side[key] or "hidden") ~= "hidden" then add_item(key) end
                             end
@@ -1434,7 +1434,7 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
         local sort_items = {}
 
         sort_items[#sort_items + 1] = {
-            text = _("Left"):upper(), orig_item = SEP_LEFT, is_divider = true,
+            text = _("Left"):upper(), orig_item = SEP_LEFT, is_divider = true, pin_top = true,
         }
         for _i, id in ipairs(cfg.order_left) do
             if labels[id] then
@@ -1636,7 +1636,7 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
 
                                 local cfg = cfg_getter()
                                 local sort_items = {}
-                                sort_items[#sort_items + 1] = { text = _("Left"):upper(), orig_item = SEP_LEFT, is_divider = true }
+                                sort_items[#sort_items + 1] = { text = _("Left"):upper(), orig_item = SEP_LEFT, is_divider = true, pin_top = true }
                                 for _i, key in ipairs(cfg.order_left) do
                                     if Titlebar.isItemVisible(key) and labels[key] then
                                         sort_items[#sort_items + 1] = { text = labels[key](), orig_item = key }

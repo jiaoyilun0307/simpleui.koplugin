@@ -4,7 +4,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: simpleui\n"
-"POT-Creation-Date: 2026-07-01 20:43\n"
+"POT-Creation-Date: 2026-07-03 19:56\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
@@ -47,7 +47,7 @@ msgstr ""
 #: desktop_modules/module_recent.lua:196
 #: desktop_modules/module_recent.lua:456
 #: desktop_modules/module_tbr.lua:402
-#: desktop_modules/module_coverdeck.lua:675
+#: desktop_modules/module_coverdeck.lua:742
 #: desktop_modules/module_new_books.lua:218
 #: desktop_modules/module_currently.lua:627
 #: desktop_modules/module_currently.lua:636
@@ -60,7 +60,7 @@ msgstr ""
 
 #: desktop_modules/module_reading_goals.lua:496
 #: desktop_modules/module_reading_goals.lua:524
-#: desktop_modules/module_coverdeck.lua:680
+#: desktop_modules/module_coverdeck.lua:747
 #: desktop_modules/module_currently.lua:670
 #: desktop_modules/module_currently.lua:671
 #: desktop_modules/module_currently.lua:728
@@ -68,7 +68,7 @@ msgstr ""
 msgid "%s read"
 msgstr ""
 
-#: desktop_modules/module_coverdeck.lua:686
+#: desktop_modules/module_coverdeck.lua:753
 #: desktop_modules/module_currently.lua:693
 #: desktop_modules/module_currently.lua:697
 msgid "%s remaining"
@@ -86,13 +86,13 @@ msgstr ""
 
 #: sui_menu.lua:3969
 #: sui_menu.lua:4054
-#: sui_presets.lua:912
-#: sui_presets.lua:998
+#: sui_presets.lua:914
+#: sui_presets.lua:1000
 msgid "A preset named \"%s\" already exists."
 msgstr ""
 
 #: sui_menu.lua:3915
-#: sui_presets.lua:853
+#: sui_presets.lua:855
 msgid "A preset named \"%s\" already exists.\nOverwrite it?"
 msgstr ""
 
@@ -109,10 +109,6 @@ msgstr ""
 #: sui_settings_window.lua:298
 #: sui_settings_window.lua:855
 msgid "About"
-msgstr ""
-
-#: desktop_modules/module_coverdeck.lua:953
-msgid "Above"
 msgstr ""
 
 #: sui_style.lua:1780
@@ -159,7 +155,7 @@ msgstr ""
 msgid "Add Collection"
 msgstr ""
 
-#: sui_homescreen.lua:1898
+#: sui_homescreen.lua:1899
 #: sui_menu.lua:974
 #: sui_menu.lua:1011
 #: sui_menu.lua:1197
@@ -175,8 +171,10 @@ msgstr ""
 #: desktop_modules/module_reading_stats.lua:678
 #: desktop_modules/module_reading_goals.lua:913
 #: desktop_modules/module_reading_goals.lua:942
-#: desktop_modules/module_coverdeck.lua:1061
-#: desktop_modules/module_coverdeck.lua:1105
+#: desktop_modules/module_coverdeck.lua:1074
+#: desktop_modules/module_coverdeck.lua:1110
+#: desktop_modules/module_coverdeck.lua:1224
+#: desktop_modules/module_coverdeck.lua:1254
 #: desktop_modules/module_currently.lua:1207
 #: desktop_modules/module_currently.lua:1254
 #: desktop_modules/module_quick_actions.lua:440
@@ -227,7 +225,7 @@ msgstr ""
 msgid "Alignment"
 msgstr ""
 
-#: sui_window.lua:2959
+#: sui_window.lua:2961
 #: sui_settings_window.lua:633
 msgid "All items have already been added."
 msgstr ""
@@ -306,7 +304,7 @@ msgstr ""
 msgid "Arrange Buttons"
 msgstr ""
 
-#: sui_homescreen.lua:1897
+#: sui_homescreen.lua:1898
 #: sui_menu.lua:686
 #: sui_menu.lua:757
 #: sui_menu.lua:764
@@ -318,6 +316,8 @@ msgstr ""
 #: sui_settings_window.lua:41
 #: sui_settings_window.lua:882
 #: desktop_modules/module_action_list.lua:415
+#: desktop_modules/module_coverdeck.lua:1164
+#: desktop_modules/module_coverdeck.lua:1170
 #: desktop_modules/module_currently.lua:1081
 #: desktop_modules/module_currently.lua:1124
 #: desktop_modules/module_quick_actions.lua:336
@@ -332,8 +332,7 @@ msgstr ""
 msgid "Arrange Reading Stats"
 msgstr ""
 
-#: desktop_modules/module_coverdeck.lua:979
-#: desktop_modules/module_coverdeck.lua:1006
+#: desktop_modules/module_coverdeck.lua:1185
 msgid "Arrange Statistics"
 msgstr ""
 
@@ -355,6 +354,7 @@ msgstr ""
 msgid "August"
 msgstr ""
 
+#: desktop_modules/module_coverdeck.lua:91
 #: desktop_modules/module_currently.lua:247
 msgid "Author"
 msgstr ""
@@ -466,10 +466,6 @@ msgstr ""
 msgid "Behaviour"
 msgstr ""
 
-#: desktop_modules/module_coverdeck.lua:962
-msgid "Below"
-msgstr ""
-
 #: sui_stats_windows.lua:2113
 #: sui_stats_windows.lua:2136
 msgid "Best streak"
@@ -483,7 +479,7 @@ msgstr ""
 msgid "Book Statistics"
 msgstr ""
 
-#: main.lua:1072
+#: main.lua:1104
 msgid "Book statistics"
 msgstr ""
 
@@ -651,14 +647,14 @@ msgstr ""
 #: sui_style.lua:1800
 #: sui_updater.lua:483
 #: sui_updater.lua:500
-#: sui_presets.lua:816
-#: sui_presets.lua:855
-#: sui_presets.lua:885
-#: sui_presets.lua:902
-#: sui_presets.lua:930
-#: sui_presets.lua:970
-#: sui_presets.lua:988
-#: sui_presets.lua:1017
+#: sui_presets.lua:818
+#: sui_presets.lua:857
+#: sui_presets.lua:887
+#: sui_presets.lua:904
+#: sui_presets.lua:932
+#: sui_presets.lua:972
+#: sui_presets.lua:990
+#: sui_presets.lua:1019
 #: desktop_modules/module_quote.lua:1213
 #: desktop_modules/module_collections.lua:774
 #: desktop_modules/module_reading_goals.lua:391
@@ -723,7 +719,7 @@ msgstr ""
 msgid "Closing Book Notice"
 msgstr ""
 
-#: main.lua:1645
+#: main.lua:1677
 msgid "Closing book…"
 msgstr ""
 
@@ -826,8 +822,8 @@ msgid "Could not open zip (invalid format or corrupted)"
 msgstr ""
 
 #: sui_presets.lua:207
-#: sui_presets.lua:229
-#: desktop_modules/module_coverdeck.lua:323
+#: sui_presets.lua:230
+#: desktop_modules/module_coverdeck.lua:355
 msgid "Cover Deck"
 msgstr ""
 
@@ -853,13 +849,17 @@ msgstr ""
 
 #: desktop_modules/module_recent.lua:515
 #: desktop_modules/module_recent.lua:517
-#: desktop_modules/module_coverdeck.lua:908
-#: desktop_modules/module_coverdeck.lua:909
+#: desktop_modules/module_coverdeck.lua:1001
+#: desktop_modules/module_coverdeck.lua:1002
 #: desktop_modules/module_new_books.lua:339
 #: desktop_modules/module_new_books.lua:341
 #: desktop_modules/module_currently.lua:1011
 #: desktop_modules/module_currently.lua:1012
 msgid "Cover size"
+msgstr ""
+
+#: desktop_modules/module_coverdeck.lua:89
+msgid "Covers"
 msgstr ""
 
 #: sui_foldercovers.lua:752
@@ -1041,9 +1041,9 @@ msgstr ""
 #: sui_menu.lua:4029
 #: sui_window.lua:1603
 #: sui_window.lua:2444
-#: sui_presets.lua:926
-#: sui_presets.lua:929
-#: sui_presets.lua:969
+#: sui_presets.lua:928
+#: sui_presets.lua:931
+#: sui_presets.lua:971
 #: sui_settings_window.lua:352
 #: sui_settings_window.lua:468
 msgid "Delete"
@@ -1055,8 +1055,8 @@ msgstr ""
 
 #: sui_menu.lua:3987
 #: sui_menu.lua:4028
-#: sui_presets.lua:928
-#: sui_presets.lua:968
+#: sui_presets.lua:930
+#: sui_presets.lua:970
 msgid "Delete preset \"%s\"?"
 msgstr ""
 
@@ -1219,7 +1219,7 @@ msgid "Error checking for updates: "
 msgstr ""
 
 #: sui_menu.lua:4167
-#: sui_presets.lua:1107
+#: sui_presets.lua:1109
 msgid "Error exporting preset: "
 msgstr ""
 
@@ -1228,7 +1228,7 @@ msgid "Error extracting zip: "
 msgstr ""
 
 #: sui_menu.lua:4134
-#: sui_presets.lua:1075
+#: sui_presets.lua:1077
 msgid "Error importing preset: "
 msgstr ""
 
@@ -1241,7 +1241,7 @@ msgid "Error installing pack:"
 msgstr ""
 
 #: sui_menu.lua:4150
-#: sui_presets.lua:1091
+#: sui_presets.lua:1093
 msgid "Export preset"
 msgstr ""
 
@@ -1483,7 +1483,6 @@ msgstr ""
 #: sui_menu.lua:3166
 #: sui_menu.lua:3197
 #: desktop_modules/module_collections.lua:932
-#: desktop_modules/module_coverdeck.lua:978
 msgid "Hidden"
 msgstr ""
 
@@ -1619,7 +1618,7 @@ msgid "If you selected the Momentum Preset, long press the Reading Goal module t
 msgstr ""
 
 #: sui_menu.lua:4106
-#: sui_presets.lua:1048
+#: sui_presets.lua:1050
 msgid "Import preset"
 msgstr ""
 
@@ -1639,8 +1638,8 @@ msgstr ""
 msgid "Invalid arrangement.\nKeep the Left, Center and Right separators in order."
 msgstr ""
 
-#: sui_presets.lua:416
-#: sui_presets.lua:596
+#: sui_presets.lua:418
+#: sui_presets.lua:598
 msgid "Invalid data"
 msgstr ""
 
@@ -1648,8 +1647,8 @@ msgstr ""
 msgid "Invalid input. Please enter 1–6 hexadecimal digits (0–9, A–F)."
 msgstr ""
 
-#: sui_presets.lua:412
-#: sui_presets.lua:592
+#: sui_presets.lua:414
+#: sui_presets.lua:594
 msgid "Invalid preset file"
 msgstr ""
 
@@ -1666,9 +1665,9 @@ msgstr ""
 #: desktop_modules/module_reading_stats.lua:591
 #: desktop_modules/module_reading_stats.lua:612
 #: desktop_modules/module_reading_stats.lua:634
-#: desktop_modules/module_coverdeck.lua:974
-#: desktop_modules/module_coverdeck.lua:1021
-#: desktop_modules/module_coverdeck.lua:1042
+#: desktop_modules/module_coverdeck.lua:1161
+#: desktop_modules/module_coverdeck.lua:1201
+#: desktop_modules/module_coverdeck.lua:1215
 #: desktop_modules/module_currently.lua:1178
 #: desktop_modules/module_currently.lua:1183
 #: desktop_modules/module_currently.lua:1206
@@ -1774,7 +1773,7 @@ msgstr ""
 msgid "Library Buttons"
 msgstr ""
 
-#: sui_presets.lua:228
+#: sui_presets.lua:229
 msgid "Library View"
 msgstr ""
 
@@ -1818,10 +1817,10 @@ msgstr ""
 msgid "Long press to customize"
 msgstr ""
 
-#: sui_presets.lua:395
-#: sui_presets.lua:407
-#: sui_presets.lua:575
-#: sui_presets.lua:587
+#: sui_presets.lua:397
+#: sui_presets.lua:409
+#: sui_presets.lua:577
+#: sui_presets.lua:589
 msgid "LuaSettings module unavailable"
 msgstr ""
 
@@ -1832,9 +1831,9 @@ msgstr ""
 #: sui_menu.lua:3934
 #: sui_menu.lua:4008
 #: sui_menu.lua:4013
-#: sui_presets.lua:873
-#: sui_presets.lua:949
-#: sui_presets.lua:954
+#: sui_presets.lua:875
+#: sui_presets.lua:951
+#: sui_presets.lua:956
 msgid "Manage presets"
 msgstr ""
 
@@ -1923,7 +1922,7 @@ msgstr ""
 msgid "Modules  (%d)"
 msgstr ""
 
-#: sui_homescreen.lua:2505
+#: sui_homescreen.lua:2506
 msgid "Modules exceed the visible area.\nMove some to another page or adjust the scale."
 msgstr ""
 
@@ -1946,7 +1945,7 @@ msgstr ""
 msgid "Monthly Reading Goal"
 msgstr ""
 
-#: main.lua:1021
+#: main.lua:1053
 msgid "More by %s (%d)"
 msgstr ""
 
@@ -1972,8 +1971,8 @@ msgstr ""
 msgid "My Highlights"
 msgstr ""
 
-#: sui_presets.lua:763
-#: sui_presets.lua:768
+#: sui_presets.lua:765
+#: sui_presets.lua:770
 msgid "My Presets"
 msgstr ""
 
@@ -2160,8 +2159,8 @@ msgstr ""
 msgid "No download file found.\n\nOpen the releases page?"
 msgstr ""
 
-#: sui_presets.lua:387
-#: sui_presets.lua:567
+#: sui_presets.lua:389
+#: sui_presets.lua:569
 msgid "No export directory"
 msgstr ""
 
@@ -2186,7 +2185,7 @@ msgid "No icons found in:"
 msgstr ""
 
 #: sui_window.lua:2124
-#: sui_window.lua:2721
+#: sui_window.lua:2723
 msgid "No items available."
 msgstr ""
 
@@ -2198,7 +2197,7 @@ msgstr ""
 #: sui_menu.lua:1655
 #: sui_menu.lua:1957
 #: sui_menu.lua:1982
-#: sui_window.lua:2631
+#: sui_window.lua:2633
 #: desktop_modules/module_collections.lua:818
 #: desktop_modules/module_collections.lua:843
 #: desktop_modules/module_action_list.lua:478
@@ -2207,8 +2206,8 @@ msgstr ""
 #: desktop_modules/module_reading_stats.lua:636
 #: desktop_modules/module_reading_goals.lua:905
 #: desktop_modules/module_reading_goals.lua:912
-#: desktop_modules/module_coverdeck.lua:1029
-#: desktop_modules/module_coverdeck.lua:1044
+#: desktop_modules/module_coverdeck.lua:1209
+#: desktop_modules/module_coverdeck.lua:1217
 #: desktop_modules/module_currently.lua:1200
 #: desktop_modules/module_currently.lua:1284
 #: desktop_modules/module_currently.lua:1416
@@ -2236,12 +2235,12 @@ msgid "No plugins found."
 msgstr ""
 
 #: sui_menu.lua:4114
-#: sui_presets.lua:1055
+#: sui_presets.lua:1057
 msgid "No preset files found.\nPlace .lua files in:\n%1"
 msgstr ""
 
 #: sui_menu.lua:4090
-#: sui_presets.lua:1032
+#: sui_presets.lua:1034
 msgid "No presets found."
 msgstr ""
 
@@ -2253,6 +2252,10 @@ msgstr ""
 #: sui_stats_windows.lua:177
 #: sui_stats_windows.lua:2493
 msgid "No statistics found for this book."
+msgstr ""
+
+#: desktop_modules/module_coverdeck.lua:1071
+msgid "No statistics selected."
 msgstr ""
 
 #: desktop_modules/module_reading_stats.lua:352
@@ -2382,14 +2385,14 @@ msgstr ""
 #: sui_menu.lua:3916
 #: sui_menu.lua:3945
 #: sui_menu.lua:4074
-#: sui_presets.lua:854
-#: sui_presets.lua:884
-#: sui_presets.lua:1016
+#: sui_presets.lua:856
+#: sui_presets.lua:886
+#: sui_presets.lua:1018
 msgid "Overwrite"
 msgstr ""
 
-#: sui_presets.lua:883
-#: sui_presets.lua:1015
+#: sui_presets.lua:885
+#: sui_presets.lua:1017
 msgid "Overwrite preset \"%s\" with the current homescreen settings?"
 msgstr ""
 
@@ -2410,9 +2413,9 @@ msgstr ""
 msgid "Pack folder not accessible: "
 msgstr ""
 
-#: sui_homescreen.lua:1792
+#: sui_homescreen.lua:1793
 #: sui_patches.lua:1568
-#: sui_patches.lua:2075
+#: sui_patches.lua:2074
 #: sui_window.lua:1114
 msgid "Page %1 of %2"
 msgstr ""
@@ -2541,7 +2544,7 @@ msgid "Please enter a date in YYYY-MM-DD format."
 msgstr ""
 
 #: sui_menu.lua:3895
-#: sui_presets.lua:828
+#: sui_presets.lua:830
 msgid "Please enter a name for the preset."
 msgstr ""
 
@@ -2577,40 +2580,40 @@ msgid "Preserve Deleted Books in Statistics"
 msgstr ""
 
 #: sui_menu.lua:4126
-#: sui_presets.lua:1069
+#: sui_presets.lua:1071
 msgid "Preset \"%s\" imported."
 msgstr ""
 
 #: sui_menu.lua:3855
-#: sui_presets.lua:710
-#: sui_presets.lua:788
+#: sui_presets.lua:712
+#: sui_presets.lua:790
 msgid "Preset \"%s\" not found."
 msgstr ""
 
 #: sui_menu.lua:3905
-#: sui_presets.lua:845
+#: sui_presets.lua:847
 msgid "Preset \"%s\" saved."
 msgstr ""
 
 #: sui_menu.lua:3951
 #: sui_menu.lua:4080
-#: sui_presets.lua:890
-#: sui_presets.lua:1022
+#: sui_presets.lua:892
+#: sui_presets.lua:1024
 msgid "Preset \"%s\" updated."
 msgstr ""
 
 #: sui_menu.lua:4162
-#: sui_presets.lua:1102
+#: sui_presets.lua:1104
 msgid "Preset exported to:\n%s"
 msgstr ""
 
 #: sui_menu.lua:3880
-#: sui_presets.lua:813
+#: sui_presets.lua:815
 msgid "Preset name"
 msgstr ""
 
-#: sui_presets.lua:389
-#: sui_presets.lua:569
+#: sui_presets.lua:391
+#: sui_presets.lua:571
 msgid "Preset not found"
 msgstr ""
 
@@ -2644,6 +2647,7 @@ msgid "Progress Bar Type"
 msgstr ""
 
 #: desktop_modules/module_recent.lua:561
+#: desktop_modules/module_coverdeck.lua:92
 #: desktop_modules/module_currently.lua:248
 msgid "Progress bar"
 msgstr ""
@@ -2744,12 +2748,12 @@ msgstr ""
 
 #: sui_presets.lua:137
 #: sui_presets.lua:172
-#: sui_presets.lua:229
+#: sui_presets.lua:230
 #: desktop_modules/module_recent.lua:69
 #: desktop_modules/module_recent.lua:70
 #: desktop_modules/module_recent.lua:81
 #: desktop_modules/module_recent.lua:541
-#: desktop_modules/module_coverdeck.lua:929
+#: desktop_modules/module_coverdeck.lua:1022
 msgid "Recent Books"
 msgstr ""
 
@@ -2762,16 +2766,16 @@ msgstr ""
 #: sui_menu.lua:4049
 #: sui_window.lua:1600
 #: sui_window.lua:2436
-#: sui_presets.lua:896
-#: sui_presets.lua:903
-#: sui_presets.lua:989
+#: sui_presets.lua:898
+#: sui_presets.lua:905
+#: sui_presets.lua:991
 msgid "Rename"
 msgstr ""
 
 #: sui_menu.lua:3960
 #: sui_menu.lua:4045
-#: sui_presets.lua:899
-#: sui_presets.lua:985
+#: sui_presets.lua:901
+#: sui_presets.lua:987
 msgid "Rename \"%s\""
 msgstr ""
 
@@ -2883,7 +2887,7 @@ msgstr ""
 #: sui_quickactions.lua:2030
 #: sui_menu.lua:3888
 #: sui_stats_windows.lua:581
-#: sui_presets.lua:821
+#: sui_presets.lua:823
 #: desktop_modules/module_reading_goals.lua:391
 #: desktop_modules/module_reading_goals.lua:407
 #: desktop_modules/module_reading_goals.lua:424
@@ -2892,7 +2896,7 @@ msgid "Save"
 msgstr ""
 
 #: sui_menu.lua:3873
-#: sui_presets.lua:806
+#: sui_presets.lua:808
 msgid "Save as new preset"
 msgstr ""
 
@@ -2900,7 +2904,7 @@ msgstr ""
 msgid "Save icon preset"
 msgstr ""
 
-#: sui_presets.lua:811
+#: sui_presets.lua:813
 msgid "Save preset"
 msgstr ""
 
@@ -2921,8 +2925,8 @@ msgstr ""
 #: desktop_modules/module_reading_goals.lua:816
 #: desktop_modules/module_clock.lua:787
 #: desktop_modules/module_clock.lua:789
-#: desktop_modules/module_coverdeck.lua:899
-#: desktop_modules/module_coverdeck.lua:901
+#: desktop_modules/module_coverdeck.lua:992
+#: desktop_modules/module_coverdeck.lua:994
 #: desktop_modules/module_new_books.lua:325
 #: desktop_modules/module_new_books.lua:327
 #: desktop_modules/module_currently.lua:997
@@ -2952,7 +2956,7 @@ msgstr ""
 msgid "Scale for the cover thumbnail only.\n100% is the default size."
 msgstr ""
 
-#: desktop_modules/module_coverdeck.lua:910
+#: desktop_modules/module_coverdeck.lua:1003
 msgid "Scale for the cover thumbnails only.\n100% is the default size."
 msgstr ""
 
@@ -2981,7 +2985,7 @@ msgstr ""
 msgid "Scale for the percentage read text.\n100% is the default size."
 msgstr ""
 
-#: desktop_modules/module_coverdeck.lua:902
+#: desktop_modules/module_coverdeck.lua:995
 msgid "Scale for this module."
 msgstr ""
 
@@ -2999,7 +3003,7 @@ msgstr ""
 msgid "Scale for this module.\n100% is the default size."
 msgstr ""
 
-#: desktop_modules/module_coverdeck.lua:918
+#: desktop_modules/module_coverdeck.lua:1011
 msgid "Scale for title and statistics text.\n100% is the default size."
 msgstr ""
 
@@ -3033,9 +3037,9 @@ msgid "Select"
 msgstr ""
 
 #: sui_menu.lua:3864
-#: sui_presets.lua:719
-#: sui_presets.lua:727
-#: sui_presets.lua:732
+#: sui_presets.lua:721
+#: sui_presets.lua:729
+#: sui_presets.lua:734
 msgid "Select Preset"
 msgstr ""
 
@@ -3146,16 +3150,12 @@ msgid "Show a brief \"Loading statistics\xe2\x80\xa6\" notice when opening a sta
 msgstr ""
 
 #: desktop_modules/module_recent.lua:590
-#: desktop_modules/module_coverdeck.lua:1121
+#: desktop_modules/module_coverdeck.lua:1267
 msgid "Show finished books"
 msgstr ""
 
 #: sui_config.lua:925
 msgid "Show section label"
-msgstr ""
-
-#: desktop_modules/module_coverdeck.lua:1133
-msgid "Show status bar"
 msgstr ""
 
 #: sui_menu.lua:2272
@@ -3176,8 +3176,8 @@ msgstr ""
 
 #: sui_menu.lua:4375
 #: sui_menu.lua:4380
-#: main.lua:2097
-#: main.lua:2110
+#: main.lua:2129
+#: main.lua:2142
 msgid "Simple UI"
 msgstr ""
 
@@ -3205,19 +3205,19 @@ msgstr ""
 msgid "Simple UI will be %s after restart.\n\nRestart now?"
 msgstr ""
 
-#: main.lua:837
+#: main.lua:869
 msgid "Simple UI: Go to Homescreen"
 msgstr ""
 
-#: main.lua:843
+#: main.lua:875
 msgid "Simple UI: Go to Library"
 msgstr ""
 
-#: main.lua:855
+#: main.lua:887
 msgid "Simple UI: Settings"
 msgstr ""
 
-#: main.lua:849
+#: main.lua:881
 msgid "Simple UI: Toggle Homescreen / Library"
 msgstr ""
 
@@ -3283,7 +3283,7 @@ msgid "Solid Background"
 msgstr ""
 
 #: desktop_modules/module_quote.lua:1293
-#: desktop_modules/module_coverdeck.lua:926
+#: desktop_modules/module_coverdeck.lua:1019
 msgid "Source"
 msgstr ""
 
@@ -3318,6 +3318,13 @@ msgstr ""
 msgid "Start with a ready-made layout. You can change everything later."
 msgstr ""
 
+#: desktop_modules/module_coverdeck.lua:93
+#: desktop_modules/module_coverdeck.lua:1069
+#: desktop_modules/module_coverdeck.lua:1116
+#: desktop_modules/module_coverdeck.lua:1182
+msgid "Statistics"
+msgstr ""
+
 #: sui_menu.lua:2530
 msgid "Statistics Loading Notice"
 msgstr ""
@@ -3344,7 +3351,7 @@ msgstr ""
 
 #: desktop_modules/module_reading_stats.lua:829
 #: desktop_modules/module_reading_goals.lua:1113
-#: desktop_modules/module_coverdeck.lua:1154
+#: desktop_modules/module_coverdeck.lua:1300
 #: desktop_modules/module_currently.lua:1571
 msgid "Stats updated successfully."
 msgstr ""
@@ -3492,8 +3499,8 @@ msgstr ""
 msgid "Text only"
 msgstr ""
 
-#: desktop_modules/module_coverdeck.lua:916
-#: desktop_modules/module_coverdeck.lua:917
+#: desktop_modules/module_coverdeck.lua:1009
+#: desktop_modules/module_coverdeck.lua:1010
 msgid "Text size"
 msgstr ""
 
@@ -3532,9 +3539,9 @@ msgstr ""
 msgid "This month — Time"
 msgstr ""
 
-#: sui_presets.lua:835
-#: sui_presets.lua:908
-#: sui_presets.lua:994
+#: sui_presets.lua:837
+#: sui_presets.lua:910
+#: sui_presets.lua:996
 msgid "This name is reserved by a built-in preset."
 msgstr ""
 
@@ -3570,6 +3577,7 @@ msgid "Time remaining"
 msgstr ""
 
 #: sui_titlebar.lua:106
+#: desktop_modules/module_coverdeck.lua:90
 #: desktop_modules/module_currently.lua:246
 msgid "Title"
 msgstr ""
@@ -3581,10 +3589,6 @@ msgstr ""
 
 #: sui_menu.lua:1747
 msgid "Title Bar will be %s after restart.\n\nRestart now?"
-msgstr ""
-
-#: desktop_modules/module_coverdeck.lua:950
-msgid "Title Position"
 msgstr ""
 
 #: sui_menu.lua:3329
@@ -3616,7 +3620,7 @@ msgstr ""
 #: desktop_modules/module_tbr.lua:273
 #: desktop_modules/module_tbr.lua:309
 #: desktop_modules/module_tbr.lua:755
-#: desktop_modules/module_coverdeck.lua:938
+#: desktop_modules/module_coverdeck.lua:1031
 msgid "To Be Read"
 msgstr ""
 
@@ -3656,7 +3660,7 @@ msgstr ""
 msgid "Top Bar"
 msgstr ""
 
-#: sui_homescreen.lua:1867
+#: sui_homescreen.lua:1868
 msgid "Top Margin"
 msgstr ""
 
@@ -3748,7 +3752,7 @@ msgstr ""
 
 #: desktop_modules/module_reading_stats.lua:805
 #: desktop_modules/module_reading_goals.lua:1089
-#: desktop_modules/module_coverdeck.lua:1130
+#: desktop_modules/module_coverdeck.lua:1276
 #: desktop_modules/module_currently.lua:1547
 msgid "Update Stats Now"
 msgstr ""
@@ -3762,7 +3766,7 @@ msgid "Update check cancelled."
 msgstr ""
 
 #: sui_menu.lua:3942
-#: sui_presets.lua:881
+#: sui_presets.lua:883
 msgid "Update with current settings"
 msgstr ""
 
@@ -3786,7 +3790,7 @@ msgstr ""
 msgid "Version: %s"
 msgstr ""
 
-#: sui_homescreen.lua:1870
+#: sui_homescreen.lua:1871
 msgid "Vertical space above this module.\n100% is the default spacing."
 msgstr ""
 
@@ -4125,7 +4129,7 @@ msgid_plural "%d days"
 msgstr[0] ""
 msgstr[1] ""
 
-#: desktop_modules/module_coverdeck.lua:678
+#: desktop_modules/module_coverdeck.lua:745
 #: desktop_modules/module_currently.lua:653
 #: desktop_modules/module_currently.lua:654
 #: desktop_modules/module_currently.lua:732

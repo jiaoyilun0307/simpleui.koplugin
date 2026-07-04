@@ -2590,7 +2590,9 @@ function SUIWindow.ArrangeList(opts)
             })
         else
             local can_move_up = (_i > 1)
-            if can_move_up and _i == 2 and (items[1].dim or items[1]._is_break or items[1].is_divider) then
+            local prev_item   = items[_i - 1]
+            if can_move_up and _i == 2 and prev_item and
+               (prev_item.dim or prev_item._is_break or prev_item.is_divider) and prev_item.pin_top then
                 can_move_up = false
             end
 

@@ -809,6 +809,38 @@ function SimpleUIPlugin:init()
         end
         -- -------------------------------------------------------------------
 
+        -- Settings migration v8:
+        -- Introduces the unified Cover Deck arrange list (coverdeck_main_order),
+        -- replacing the old coverdeck_title_pos above/below/hidden radio and
+        -- the separate "Show status bar" toggle for the progress bar.
+        --   1. Legacy title_pos == "hidden" had no dedicated key of its own;
+        --      fold it into coverdeck_show_title so upgrading users keep the
+        --      title hidden instead of it reappearing under the new model.
+        --   2. coverdeck_main_order is seeded from title_pos ("above"/"below")
+        --      so existing layouts render identically the first time they're
+        --      opened under the new arrange list, instead of silently
+        --      reverting to the "below" default.
+        if not SUISettings:isTrue("simpleui_settings_migrated_v8") then
+            pcall(function()
+                local PFX       = "simpleui_hs_"
+                local title_pos = SUISettings:get(PFX .. "coverdeck_title_pos")
+                if title_pos == "hidden" and SUISettings:get(PFX .. "coverdeck_show_title") == nil then
+                    SUISettings:set(PFX .. "coverdeck_show_title", false)
+                    logger.info("simpleui: migration v8 — folded coverdeck_title_pos=hidden into coverdeck_show_title=false")
+                end
+                if SUISettings:get(PFX .. "coverdeck_main_order") == nil then
+                    local order = (title_pos == "above")
+                        and { "title", "author", "covers", "progress", "stats" }
+                        or  { "covers", "title", "author", "progress", "stats" }
+                    SUISettings:set(PFX .. "coverdeck_main_order", order)
+                    logger.info("simpleui: migration v8 — seeded coverdeck_main_order from legacy title_pos")
+                end
+            end)
+            SUISettings:set("simpleui_settings_migrated_v8", true)
+            SUISettings:flush()
+        end
+        -- -------------------------------------------------------------------
+
         Config.applyFirstRunDefaults()
         Config.migrateOldCustomSlots()
         -- Always run sanitizeQASlots: it cleans both custom QA slot references

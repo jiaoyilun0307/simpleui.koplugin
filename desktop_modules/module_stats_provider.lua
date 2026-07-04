@@ -323,20 +323,11 @@ end
 
 -- ---------------------------------------------------------------------------
 -- Sidecar scan: one pass → books_year + books_total simultaneously.
--- db_conn is passed in so we can cross-reference last_open from the statistics
--- DB as a more reliable "read this year" signal than summary.modified.
--- summary.modified reflects when the sidecar was last written — for books
--- marked finished before SimpleUI 2.0, this timestamp predates the current
--- year even if the user read the book this year.  last_open in the DB is set
--- to os.time() on every session close and is always current.
-local function _dbLastOpenForMd5(conn, md5)
-    if not conn or not md5 then return nil end
-    local ok, row = pcall(function()
-        return conn:rowexec(string.format(
-            "SELECT last_open FROM book WHERE md5 = '%s' LIMIT 1", md5))
-    end)
-    return ok and row and tonumber(row) or nil
-end
+-- books_year counts books *completed* this year, based on summary.modified
+-- (the sidecar's completion timestamp) only. We deliberately do NOT use the
+-- statistics DB's last_open here — it updates on every session close, not
+-- just on completion, so using it as a "read this year" signal inflates the
+-- count whenever an already-finished book from a previous year is reopened.
 -- Replaces two separate countMarkedRead() calls (previously O(2N) sidecar I/O).
 -- Uses the same _sidecar_cache from module_books_shared for cache hits.
 -- ---------------------------------------------------------------------------
@@ -362,7 +353,7 @@ local function _modifiedInYear(summary, year_str)
     return false
 end
 
-local function countMarkedReadBoth(year_str, year_start, db_conn)
+local function countMarkedReadBoth(year_str)
     local books_year  = 0
     local books_total = 0
 
@@ -430,23 +421,20 @@ local function countMarkedReadBoth(year_str, year_start, db_conn)
 
             if type(summary) == "table" and summary.status == "complete" then
                 books_total = books_total + 1
-                -- Prefer DB last_open for the year check: it is updated on every
-                -- session close and is always current, unlike summary.modified
-                -- which reflects the sidecar write time and can predate the
-                -- current year for books finished before SimpleUI 2.0.
-                local in_year = false
-                if db_conn and md5 and year_start then
-                    local lo = _dbLastOpenForMd5(db_conn, md5)
-                    if lo then
-                        in_year = lo >= year_start
-                    end
-                end
-                -- Fallback to summary.modified when the DB has no record for
-                -- this book (e.g. statistics plugin was never enabled for it).
-                if not in_year then
-                    in_year = _modifiedInYear(summary, year_str)
-                end
-                if in_year then
+                -- books_year counts books *completed* this year, based solely
+                -- on summary.modified (the sidecar's completion timestamp).
+                --
+                -- We used to also accept DB last_open >= year_start as an
+                -- alternative signal, on the theory that pre-SimpleUI-2.0
+                -- books could have a stale summary.modified that predates
+                -- their real completion date. In practice this made the
+                -- yearly count go up whenever an already-finished book from
+                -- a previous year was merely reopened (e.g. to re-read a
+                -- page) — last_open updates on every session close, not just
+                -- on completion, so it isn't a valid "completed this year"
+                -- signal. See GitHub issue: yearly count inflated by
+                -- reopening old finished books.
+                if _modifiedInYear(summary, year_str) then
                     books_year = books_year + 1
                 end
             end
@@ -559,10 +547,7 @@ function SP.get(db_conn, year_str, needs_books)
             -- streak were already correct and are carried over unchanged.
             _changed      = { timeseries = false, streak = false, books = true },
         }
-        local by, bt = countMarkedReadBoth(
-            year_str or tostring(t.year),
-            os.time{ year = t.year, month = 1, day = 1, hour = 0, min = 0, sec = 0 },
-            db_conn)
+        local by, bt = countMarkedReadBoth(year_str or tostring(t.year))
         result.books_year  = by
         result.books_total = bt
         _cache     = result
@@ -679,10 +664,7 @@ function SP.get(db_conn, year_str, needs_books)
         result.books_total = (_cache and _cache.books_total) or 0
         _books_cache_valid = false
     else
-        local by, bt = countMarkedReadBoth(
-            year_str or tostring(t.year),
-            year_start,
-            db_conn)
+        local by, bt = countMarkedReadBoth(year_str or tostring(t.year))
         result.books_year  = by
         result.books_total = bt
     end

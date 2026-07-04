@@ -3,7 +3,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: simpleui\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-01 20:43\n"
+"POT-Creation-Date: 2026-07-03 19:43\n"
 "PO-Revision-Date: \n"
 "Last-Translator: \n"
 "Language-Team: \n"
@@ -49,7 +49,7 @@ msgid "%d%%"
 msgstr "%d%%"
 
 #: desktop_modules/module_recent.lua:196 desktop_modules/module_recent.lua:456
-#: desktop_modules/module_tbr.lua:402 desktop_modules/module_coverdeck.lua:675
+#: desktop_modules/module_tbr.lua:402 desktop_modules/module_coverdeck.lua:742
 #: desktop_modules/module_new_books.lua:218
 #: desktop_modules/module_currently.lua:627
 #: desktop_modules/module_currently.lua:636
@@ -62,7 +62,7 @@ msgstr "%s restantes"
 
 #: desktop_modules/module_reading_goals.lua:496
 #: desktop_modules/module_reading_goals.lua:524
-#: desktop_modules/module_coverdeck.lua:680
+#: desktop_modules/module_coverdeck.lua:747
 #: desktop_modules/module_currently.lua:670
 #: desktop_modules/module_currently.lua:671
 #: desktop_modules/module_currently.lua:728
@@ -70,7 +70,7 @@ msgstr "%s restantes"
 msgid "%s read"
 msgstr "%s lido"
 
-#: desktop_modules/module_coverdeck.lua:686
+#: desktop_modules/module_coverdeck.lua:753
 #: desktop_modules/module_currently.lua:693
 #: desktop_modules/module_currently.lua:697
 msgid "%s remaining"
@@ -86,11 +86,11 @@ msgstr "(%d/%d — no limite)"
 msgid "4-Cover Grid (Mosaic View Only)"
 msgstr "Grade de 4 Capas (Apenas Vista em Mosaico)"
 
-#: sui_menu.lua:3969 sui_menu.lua:4054 sui_presets.lua:912 sui_presets.lua:998
+#: sui_menu.lua:3969 sui_menu.lua:4054 sui_presets.lua:914 sui_presets.lua:1000
 msgid "A preset named \"%s\" already exists."
 msgstr "Já existe uma predefinição com o nome \"%s\"."
 
-#: sui_menu.lua:3915 sui_presets.lua:853
+#: sui_menu.lua:3915 sui_presets.lua:855
 msgid ""
 "A preset named \"%s\" already exists.\n"
 "Overwrite it?"
@@ -115,10 +115,6 @@ msgstr "TOTAL"
 #: sui_menu.lua:4447 sui_settings_window.lua:298 sui_settings_window.lua:855
 msgid "About"
 msgstr "Sobre"
-
-#: desktop_modules/module_coverdeck.lua:953
-msgid "Above"
-msgstr "Acima"
 
 #: sui_style.lua:1780
 msgid "Accent / Active Color"
@@ -161,8 +157,8 @@ msgstr "Adicionar Botão"
 msgid "Add Collection"
 msgstr "Adicionar Coleção"
 
-#: sui_homescreen.lua:1898 sui_menu.lua:974 sui_menu.lua:1011
-#: sui_menu.lua:1197 sui_menu.lua:1243 sui_menu.lua:1992 sui_menu.lua:2028
+#: sui_homescreen.lua:1899 sui_menu.lua:974 sui_menu.lua:1011 sui_menu.lua:1197
+#: sui_menu.lua:1243 sui_menu.lua:1992 sui_menu.lua:2028
 #: sui_quicksettings_bar.lua:1027 sui_window.lua:673
 #: sui_settings_window.lua:860 desktop_modules/module_action_list.lua:513
 #: desktop_modules/module_action_list.lua:549
@@ -170,8 +166,10 @@ msgstr "Adicionar Coleção"
 #: desktop_modules/module_reading_stats.lua:678
 #: desktop_modules/module_reading_goals.lua:913
 #: desktop_modules/module_reading_goals.lua:942
-#: desktop_modules/module_coverdeck.lua:1061
-#: desktop_modules/module_coverdeck.lua:1105
+#: desktop_modules/module_coverdeck.lua:1072
+#: desktop_modules/module_coverdeck.lua:1109
+#: desktop_modules/module_coverdeck.lua:1222
+#: desktop_modules/module_coverdeck.lua:1252
 #: desktop_modules/module_currently.lua:1207
 #: desktop_modules/module_currently.lua:1254
 #: desktop_modules/module_quick_actions.lua:440
@@ -284,11 +282,13 @@ msgstr "Reorganizar %s"
 msgid "Arrange Buttons"
 msgstr "Reorganizar Botões"
 
-#: sui_homescreen.lua:1897 sui_menu.lua:686 sui_menu.lua:757 sui_menu.lua:764
+#: sui_homescreen.lua:1898 sui_menu.lua:686 sui_menu.lua:757 sui_menu.lua:764
 #: sui_menu.lua:1906 sui_topbar.lua:514 sui_bottombar.lua:895
 #: sui_quicksettings_bar.lua:1026 sui_quicksettings_bar.lua:1077
 #: sui_settings_window.lua:41 sui_settings_window.lua:882
 #: desktop_modules/module_action_list.lua:415
+#: desktop_modules/module_coverdeck.lua:1162
+#: desktop_modules/module_coverdeck.lua:1168
 #: desktop_modules/module_currently.lua:1081
 #: desktop_modules/module_currently.lua:1124
 #: desktop_modules/module_quick_actions.lua:336
@@ -303,8 +303,7 @@ msgstr "Organizar Configurações Rápidas"
 msgid "Arrange Reading Stats"
 msgstr "Reorganizar Estatísticas de Leitura"
 
-#: desktop_modules/module_coverdeck.lua:979
-#: desktop_modules/module_coverdeck.lua:1006
+#: desktop_modules/module_coverdeck.lua:1183
 msgid "Arrange Statistics"
 msgstr "Organizar Estatísticas"
 
@@ -324,6 +323,7 @@ msgstr "Visão Geral"
 msgid "August"
 msgstr "Agosto"
 
+#: desktop_modules/module_coverdeck.lua:91
 #: desktop_modules/module_currently.lua:247
 msgid "Author"
 msgstr "Autor"
@@ -417,10 +417,6 @@ msgstr "Espaçamento da bateria"
 msgid "Behaviour"
 msgstr "Comportamento"
 
-#: desktop_modules/module_coverdeck.lua:962
-msgid "Below"
-msgstr "Abaixo"
-
 #: sui_stats_windows.lua:2113 sui_stats_windows.lua:2136
 msgid "Best streak"
 msgstr "Melhor sequência"
@@ -433,7 +429,7 @@ msgstr "Informações do Livro"
 msgid "Book Statistics"
 msgstr "Estatísticas do Livro"
 
-#: main.lua:1072
+#: main.lua:1104
 msgid "Book statistics"
 msgstr "Estatísticas do Livro"
 
@@ -542,26 +538,25 @@ msgstr "Por série"
 msgid "By tags"
 msgstr "Por etiqueta"
 
-#: sui_quickactions.lua:369 sui_quickactions.lua:1227
-#: sui_quickactions.lua:1510 sui_quickactions.lua:1634
-#: sui_quickactions.lua:1656 sui_quickactions.lua:1750
-#: sui_quickactions.lua:2028 sui_quickactions.lua:2099
-#: sui_quickactions.lua:2125 sui_quickactions.lua:2150
-#: sui_quickactions.lua:2228 sui_quickactions.lua:2252
-#: sui_quickactions.lua:2527 sui_titlebar.lua:1000 sui_foldercovers.lua:747
-#: sui_foldercovers.lua:831 sui_foldercovers.lua:888 sui_foldercovers.lua:1257
-#: sui_config.lua:823 sui_config.lua:895 sui_menu.lua:642 sui_menu.lua:907
-#: sui_menu.lua:1037 sui_menu.lua:1314 sui_menu.lua:2345 sui_menu.lua:2405
-#: sui_menu.lua:2442 sui_menu.lua:2786 sui_menu.lua:3147 sui_menu.lua:3883
-#: sui_menu.lua:3917 sui_menu.lua:3946 sui_menu.lua:3963 sui_menu.lua:3989
-#: sui_menu.lua:4030 sui_menu.lua:4048 sui_menu.lua:4075 sui_menu.lua:4316
-#: sui_stats_windows.lua:568 sui_stats_windows.lua:691 sui_browsemeta.lua:1085
-#: sui_browsemeta.lua:1193 sui_browsemeta.lua:1403 sui_style.lua:1104
-#: sui_style.lua:1800 sui_updater.lua:483 sui_updater.lua:500
-#: sui_presets.lua:816 sui_presets.lua:855 sui_presets.lua:885
-#: sui_presets.lua:902 sui_presets.lua:930 sui_presets.lua:970
-#: sui_presets.lua:988 sui_presets.lua:1017
-#: desktop_modules/module_quote.lua:1213
+#: sui_quickactions.lua:369 sui_quickactions.lua:1227 sui_quickactions.lua:1510
+#: sui_quickactions.lua:1634 sui_quickactions.lua:1656
+#: sui_quickactions.lua:1750 sui_quickactions.lua:2028
+#: sui_quickactions.lua:2099 sui_quickactions.lua:2125
+#: sui_quickactions.lua:2150 sui_quickactions.lua:2228
+#: sui_quickactions.lua:2252 sui_quickactions.lua:2527 sui_titlebar.lua:1000
+#: sui_foldercovers.lua:747 sui_foldercovers.lua:831 sui_foldercovers.lua:888
+#: sui_foldercovers.lua:1257 sui_config.lua:823 sui_config.lua:895
+#: sui_menu.lua:642 sui_menu.lua:907 sui_menu.lua:1037 sui_menu.lua:1314
+#: sui_menu.lua:2345 sui_menu.lua:2405 sui_menu.lua:2442 sui_menu.lua:2786
+#: sui_menu.lua:3147 sui_menu.lua:3883 sui_menu.lua:3917 sui_menu.lua:3946
+#: sui_menu.lua:3963 sui_menu.lua:3989 sui_menu.lua:4030 sui_menu.lua:4048
+#: sui_menu.lua:4075 sui_menu.lua:4316 sui_stats_windows.lua:568
+#: sui_stats_windows.lua:691 sui_browsemeta.lua:1085 sui_browsemeta.lua:1193
+#: sui_browsemeta.lua:1403 sui_style.lua:1104 sui_style.lua:1800
+#: sui_updater.lua:483 sui_updater.lua:500 sui_presets.lua:818
+#: sui_presets.lua:857 sui_presets.lua:887 sui_presets.lua:904
+#: sui_presets.lua:932 sui_presets.lua:972 sui_presets.lua:990
+#: sui_presets.lua:1019 desktop_modules/module_quote.lua:1213
 #: desktop_modules/module_collections.lua:774
 #: desktop_modules/module_reading_goals.lua:391
 #: desktop_modules/module_reading_goals.lua:407
@@ -617,7 +612,7 @@ msgstr "Fechar"
 msgid "Closing Book Notice"
 msgstr "Aviso ao Fechar Livro"
 
-#: main.lua:1645
+#: main.lua:1677
 msgid "Closing book…"
 msgstr "Fechando o livro…"
 
@@ -705,8 +700,8 @@ msgstr "Não foi possível abrir o banco de dados de estatísticas."
 msgid "Could not open zip (invalid format or corrupted)"
 msgstr "Não foi possível abrir o zip (formato inválido ou corrompido)"
 
-#: sui_presets.lua:207 sui_presets.lua:229
-#: desktop_modules/module_coverdeck.lua:323
+#: sui_presets.lua:207 sui_presets.lua:230
+#: desktop_modules/module_coverdeck.lua:355
 msgid "Cover Deck"
 msgstr "Carrossel de Capas"
 
@@ -730,14 +725,18 @@ msgid "Cover for \"%s\""
 msgstr "Capa de \"%s\""
 
 #: desktop_modules/module_recent.lua:515 desktop_modules/module_recent.lua:517
-#: desktop_modules/module_coverdeck.lua:908
-#: desktop_modules/module_coverdeck.lua:909
+#: desktop_modules/module_coverdeck.lua:1001
+#: desktop_modules/module_coverdeck.lua:1002
 #: desktop_modules/module_new_books.lua:339
 #: desktop_modules/module_new_books.lua:341
 #: desktop_modules/module_currently.lua:1011
 #: desktop_modules/module_currently.lua:1012
 msgid "Cover size"
 msgstr "Tamanho da capa"
+
+#: desktop_modules/module_coverdeck.lua:89
+msgid "Covers"
+msgstr "Capas"
 
 #: sui_foldercovers.lua:752 sui_browsemeta.lua:1092
 msgid "Create"
@@ -888,7 +887,7 @@ msgstr "Padrão: Sistema"
 #: sui_quickactions.lua:1226 sui_quickactions.lua:2521
 #: sui_quickactions.lua:2526 sui_menu.lua:3985 sui_menu.lua:3988
 #: sui_menu.lua:4029 sui_window.lua:1603 sui_window.lua:2444
-#: sui_presets.lua:926 sui_presets.lua:929 sui_presets.lua:969
+#: sui_presets.lua:928 sui_presets.lua:931 sui_presets.lua:971
 #: sui_settings_window.lua:352 sui_settings_window.lua:468
 msgid "Delete"
 msgstr "Excluir"
@@ -897,7 +896,7 @@ msgstr "Excluir"
 msgid "Delete Settings"
 msgstr "Excluir Configurações"
 
-#: sui_menu.lua:3987 sui_menu.lua:4028 sui_presets.lua:928 sui_presets.lua:968
+#: sui_menu.lua:3987 sui_menu.lua:4028 sui_presets.lua:930 sui_presets.lua:970
 msgid "Delete preset \"%s\"?"
 msgstr "Excluir a predefinição \"%s\"?"
 
@@ -915,17 +914,11 @@ msgstr "Digital"
 
 #: sui_menu.lua:2426
 msgid "Disable \"Lock Scale\" first to set a custom label scale."
-msgstr ""
-"Desative \"Bloquear Escala\" primeiro para definir uma escala personalizada "
-"para os rótulos.Desative \"Escala Bloqueada\" primeiro para definir uma "
-"escala de rótulo personalizada."
+msgstr "Desative \"Bloquear Escala\" primeiro para definir uma escala personalizada para os rótulos.Desative \"Escala Bloqueada\" primeiro para definir uma escala de rótulo personalizada."
 
 #: sui_config.lua:807
 msgid "Disable \"Lock Scale\" first to set a per-module scale."
-msgstr ""
-"Desative \"Bloquear Escala\" primeiro para definir uma escala por "
-"módulo.Desative \"Escala Bloqueada\" primeiro para definir uma escala por "
-"módulo."
+msgstr "Desative \"Bloquear Escala\" primeiro para definir uma escala por módulo.Desative \"Escala Bloqueada\" primeiro para definir uma escala por módulo."
 
 #: sui_config.lua:166
 msgid "Disk Usage"
@@ -1001,11 +994,7 @@ msgstr "Vazio"
 
 #: sui_quickactions.lua:698 sui_quickactions.lua:716 sui_quickactions.lua:734
 msgid "Enable 'Browse by Author / Series / Tags' in the library menu first."
-msgstr ""
-"Ative 'Navegar por Autor / Série / Etiquetas' no menu da biblioteca "
-"primeiro.Ative 'Navegar por Autor / Série / Tags' no menu da biblioteca "
-"primeiro.Ative primeiro \"Navegar por Autor / Série / Etiquetas\" no menu da"
-" biblioteca."
+msgstr "Ative 'Navegar por Autor / Série / Etiquetas' no menu da biblioteca primeiro.Ative 'Navegar por Autor / Série / Tags' no menu da biblioteca primeiro.Ative primeiro \"Navegar por Autor / Série / Etiquetas\" no menu da biblioteca."
 
 #: sui_menu.lua:2669
 msgid "Enable Browse by Author / Series / Tags"
@@ -1040,12 +1029,8 @@ msgid "Enable custom UI font"
 msgstr "Ativar fonte personalizada"
 
 #: sui_style.lua:1797
-msgid ""
-"Enter a hex color (#RRGGBB). On greyscale e-ink the perceived brightness is "
-"used."
-msgstr ""
-"Insira uma cor em hexadecimal (#RRGGBB). Em telas de e-ink em escala de "
-"cinza, é usada a luminosidade percebida."
+msgid "Enter a hex color (#RRGGBB). On greyscale e-ink the perceived brightness is used."
+msgstr "Insira uma cor em hexadecimal (#RRGGBB). Em telas de e-ink em escala de cinza, é usada a luminosidade percebida."
 
 #: sui_quickactions.lua:1653
 msgid ""
@@ -1071,7 +1056,7 @@ msgstr "Erro ao verificar atualizações."
 msgid "Error checking for updates: "
 msgstr "Erro ao verificar atualizações: "
 
-#: sui_menu.lua:4167 sui_presets.lua:1107
+#: sui_menu.lua:4167 sui_presets.lua:1109
 msgid "Error exporting preset: "
 msgstr "Erro ao exportar predefinição: "
 
@@ -1079,7 +1064,7 @@ msgstr "Erro ao exportar predefinição: "
 msgid "Error extracting zip: "
 msgstr "Erro ao extrair zip: "
 
-#: sui_menu.lua:4134 sui_presets.lua:1075
+#: sui_menu.lua:4134 sui_presets.lua:1077
 msgid "Error importing preset: "
 msgstr "Erro ao importar predefinição: "
 
@@ -1091,7 +1076,7 @@ msgstr "Erro nos Objetivos de Leitura: verifique o crash.log"
 msgid "Error installing pack:"
 msgstr "Erro ao instalar o pacote:"
 
-#: sui_menu.lua:4150 sui_presets.lua:1091
+#: sui_menu.lua:4150 sui_presets.lua:1093
 msgid "Export preset"
 msgstr "Exportar predefinição"
 
@@ -1333,7 +1318,6 @@ msgstr ""
 #: sui_menu.lua:2834 sui_menu.lua:2874 sui_menu.lua:2880 sui_menu.lua:2891
 #: sui_menu.lua:2928 sui_menu.lua:2934 sui_menu.lua:2945 sui_menu.lua:3166
 #: sui_menu.lua:3197 desktop_modules/module_collections.lua:932
-#: desktop_modules/module_coverdeck.lua:978
 msgid "Hidden"
 msgstr "Oculto"
 
@@ -1462,14 +1446,10 @@ msgid "Icons, fonts and appearance"
 msgstr "Ícones, fontes e aparência"
 
 #: sui_onboarding.lua:165
-msgid ""
-"If you selected the Momentum Preset, long press the Reading Goal module to "
-"choose and set your reading goals."
-msgstr ""
-"Se você selecionou a Predefinição Momentum, pressione e segure o módulo Meta"
-" de Leitura para escolher e definir suas metas de leitura."
+msgid "If you selected the Momentum Preset, long press the Reading Goal module to choose and set your reading goals."
+msgstr "Se você selecionou a Predefinição Momentum, pressione e segure o módulo Meta de Leitura para escolher e definir suas metas de leitura."
 
-#: sui_menu.lua:4106 sui_presets.lua:1048
+#: sui_menu.lua:4106 sui_presets.lua:1050
 msgid "Import preset"
 msgstr "Importar predefinição"
 
@@ -1497,7 +1477,7 @@ msgstr ""
 "Disposição inválida.\n"
 "Mantenha os separadores Esquerdo, Centro e Direito em ordem."
 
-#: sui_presets.lua:416 sui_presets.lua:596
+#: sui_presets.lua:418 sui_presets.lua:598
 msgid "Invalid data"
 msgstr "Dados inválidos"
 
@@ -1505,7 +1485,7 @@ msgstr "Dados inválidos"
 msgid "Invalid input. Please enter 1–6 hexadecimal digits (0–9, A–F)."
 msgstr "Entrada inválida. Insira 1–6 dígitos hexadecimais (0–9, A–F)."
 
-#: sui_presets.lua:412 sui_presets.lua:592
+#: sui_presets.lua:414 sui_presets.lua:594
 msgid "Invalid preset file"
 msgstr "Arquivo de predefinição inválido"
 
@@ -1518,9 +1498,9 @@ msgstr "Inverter no Modo Noturno"
 #: desktop_modules/module_reading_stats.lua:591
 #: desktop_modules/module_reading_stats.lua:612
 #: desktop_modules/module_reading_stats.lua:634
-#: desktop_modules/module_coverdeck.lua:974
-#: desktop_modules/module_coverdeck.lua:1021
-#: desktop_modules/module_coverdeck.lua:1042
+#: desktop_modules/module_coverdeck.lua:1159
+#: desktop_modules/module_coverdeck.lua:1199
+#: desktop_modules/module_coverdeck.lua:1213
 #: desktop_modules/module_currently.lua:1178
 #: desktop_modules/module_currently.lua:1183
 #: desktop_modules/module_currently.lua:1206
@@ -1606,7 +1586,7 @@ msgstr "Biblioteca"
 msgid "Library Buttons"
 msgstr "Botões da Biblioteca"
 
-#: sui_presets.lua:228
+#: sui_presets.lua:229
 msgid "Library View"
 msgstr "Visualização de Biblioteca"
 
@@ -1641,8 +1621,8 @@ msgstr "Bloquear Escala"
 msgid "Long press to customize"
 msgstr "Pressão longa para personalizar"
 
-#: sui_presets.lua:395 sui_presets.lua:407 sui_presets.lua:575
-#: sui_presets.lua:587
+#: sui_presets.lua:397 sui_presets.lua:409 sui_presets.lua:577
+#: sui_presets.lua:589
 msgid "LuaSettings module unavailable"
 msgstr "Módulo LuaSettings indisponível"
 
@@ -1650,8 +1630,8 @@ msgstr "Módulo LuaSettings indisponível"
 msgid "Make it yours"
 msgstr "Personalize do seu jeito"
 
-#: sui_menu.lua:3934 sui_menu.lua:4008 sui_menu.lua:4013 sui_presets.lua:873
-#: sui_presets.lua:949 sui_presets.lua:954
+#: sui_menu.lua:3934 sui_menu.lua:4008 sui_menu.lua:4013 sui_presets.lua:875
+#: sui_presets.lua:951 sui_presets.lua:956
 msgid "Manage presets"
 msgstr "Gerenciar predefinições"
 
@@ -1736,7 +1716,7 @@ msgstr "Módulos"
 msgid "Modules  (%d)"
 msgstr "Módulos  (%d)"
 
-#: sui_homescreen.lua:2505
+#: sui_homescreen.lua:2506
 msgid ""
 "Modules exceed the visible area.\n"
 "Move some to another page or adjust the scale."
@@ -1763,7 +1743,7 @@ msgstr "Meta Mensal"
 msgid "Monthly Reading Goal"
 msgstr "Meta de Leitura Mensal"
 
-#: main.lua:1021
+#: main.lua:1053
 msgid "More by %s (%d)"
 msgstr "Mais de %s (%d)"
 
@@ -1787,7 +1767,7 @@ msgstr "Minha Ação"
 msgid "My Highlights"
 msgstr "Meus Destaques"
 
-#: sui_presets.lua:763 sui_presets.lua:768
+#: sui_presets.lua:765 sui_presets.lua:770
 msgid "My Presets"
 msgstr "Minhas Predefinições"
 
@@ -1977,12 +1957,8 @@ msgid "No collections selected  —  long press to configure"
 msgstr "Nenhuma coleção selecionada  —  pressione e segure para configurar"
 
 #: desktop_modules/module_quote.lua:876
-msgid ""
-"No custom quotes found. Add a .lua file to the plugin's sui_quotes/ folder "
-"and select it in Settings."
-msgstr ""
-"Nenhuma citação personalizada encontrada. Adicione um arquivo .lua à pasta "
-"sui_quotes/ do plugin e selecione-o nas Configurações."
+msgid "No custom quotes found. Add a .lua file to the plugin's sui_quotes/ folder and select it in Settings."
+msgstr "Nenhuma citação personalizada encontrada. Adicione um arquivo .lua à pasta sui_quotes/ do plugin e selecione-o nas Configurações."
 
 #: sui_updater.lua:481
 msgid ""
@@ -1994,7 +1970,7 @@ msgstr ""
 "\n"
 "Abrir a página de lançamentos?"
 
-#: sui_presets.lua:387 sui_presets.lua:567
+#: sui_presets.lua:389 sui_presets.lua:569
 msgid "No export directory"
 msgstr "Nenhum diretório de exportação"
 
@@ -2016,11 +1992,7 @@ msgstr "Nenhuma fonte encontrada."
 
 #: desktop_modules/module_quote.lua:948
 msgid "No highlights found. Open a book and highlight some passages."
-msgstr ""
-"Nenhum destaque encontrado. Abra um livro e destaque algumas "
-"passagens.Nenhum destaque encontrado. Abra um livro e destaque algumas "
-"passagens.Nenhum destaque encontrado. Abra um livro e destaque algumas "
-"passagens."
+msgstr "Nenhum destaque encontrado. Abra um livro e destaque algumas passagens.Nenhum destaque encontrado. Abra um livro e destaque algumas passagens.Nenhum destaque encontrado. Abra um livro e destaque algumas passagens."
 
 #: sui_quickactions.lua:1734
 msgid "No icons found in:"
@@ -2040,8 +2012,8 @@ msgstr "Nenhum item disponível."
 #: desktop_modules/module_reading_stats.lua:636
 #: desktop_modules/module_reading_goals.lua:905
 #: desktop_modules/module_reading_goals.lua:912
-#: desktop_modules/module_coverdeck.lua:1029
-#: desktop_modules/module_coverdeck.lua:1044
+#: desktop_modules/module_coverdeck.lua:1207
+#: desktop_modules/module_coverdeck.lua:1215
 #: desktop_modules/module_currently.lua:1200
 #: desktop_modules/module_currently.lua:1284
 #: desktop_modules/module_currently.lua:1416
@@ -2067,7 +2039,7 @@ msgstr "Nenhum pacote encontrado."
 msgid "No plugins found."
 msgstr "Nenhum plugin encontrado."
 
-#: sui_menu.lua:4114 sui_presets.lua:1055
+#: sui_menu.lua:4114 sui_presets.lua:1057
 msgid ""
 "No preset files found.\n"
 "Place .lua files in:\n"
@@ -2077,7 +2049,7 @@ msgstr ""
 "Coloque arquivos .lua em:\n"
 "%1"
 
-#: sui_menu.lua:4090 sui_presets.lua:1032
+#: sui_menu.lua:4090 sui_presets.lua:1034
 msgid "No presets found."
 msgstr "Nenhuma predefinição encontrada."
 
@@ -2090,16 +2062,17 @@ msgstr "Nenhuma citação encontrada."
 msgid "No statistics found for this book."
 msgstr "Nenhuma estatística encontrada para este livro."
 
+#: desktop_modules/module_coverdeck.lua:1069
+msgid "No statistics selected."
+msgstr "Nenhuma estatística selecionada."
+
 #: desktop_modules/module_reading_stats.lua:352
 msgid "No stats selected"
 msgstr "Nenhuma estatística selecionada"
 
 #: desktop_modules/module_reading_stats.lua:351
 msgid "No stats selected  —  long press to configure"
-msgstr ""
-"Nenhuma estatística selecionada  —  pressione longamente para "
-"configurarNenhuma estatística selecionada  —  mantenha pressionado para "
-"configurar"
+msgstr "Nenhuma estatística selecionada  —  pressione longamente para configurarNenhuma estatística selecionada  —  mantenha pressionado para configurar"
 
 #: sui_quickactions.lua:2134
 msgid "No system actions found."
@@ -2197,17 +2170,14 @@ msgstr "Aviso de Excesso"
 msgid "Overlays"
 msgstr "Sobreposições"
 
-#: sui_menu.lua:3916 sui_menu.lua:3945 sui_menu.lua:4074 sui_presets.lua:854
-#: sui_presets.lua:884 sui_presets.lua:1016
+#: sui_menu.lua:3916 sui_menu.lua:3945 sui_menu.lua:4074 sui_presets.lua:856
+#: sui_presets.lua:886 sui_presets.lua:1018
 msgid "Overwrite"
 msgstr "Sobrescrever"
 
-#: sui_presets.lua:883 sui_presets.lua:1015
+#: sui_presets.lua:885 sui_presets.lua:1017
 msgid "Overwrite preset \"%s\" with the current homescreen settings?"
-msgstr ""
-"Substituir o preset \"%s\" pelas configurações atuais da tela "
-"inicial?Substituir a predefinição \"%s\" pelas configurações atuais da tela "
-"inicial?"
+msgstr "Substituir o preset \"%s\" pelas configurações atuais da tela inicial?Substituir a predefinição \"%s\" pelas configurações atuais da tela inicial?"
 
 #: sui_menu.lua:3944 sui_menu.lua:4073
 msgid "Overwrite preset \"%s\" with the current icon settings?"
@@ -2233,7 +2203,7 @@ msgstr ""
 msgid "Pack folder not accessible: "
 msgstr "Pasta do pacote não acessível: "
 
-#: sui_homescreen.lua:1792 sui_patches.lua:1568 sui_patches.lua:2075
+#: sui_homescreen.lua:1793 sui_patches.lua:1568 sui_patches.lua:2074
 #: sui_window.lua:1114
 msgid "Page %1 of %2"
 msgstr "Página %1 de %2"
@@ -2361,11 +2331,8 @@ msgid "Place images in:"
 msgstr "Coloque as imagens em:"
 
 #: sui_onboarding.lua:169
-msgid ""
-"Place your files in koreader/settings/simpleui/sui_wallpapers or sui_icons."
-msgstr ""
-"Coloque os seus ficheiros em koreader/settings/simpleui/sui_wallpapers ou "
-"sui_icons."
+msgid "Place your files in koreader/settings/simpleui/sui_wallpapers or sui_icons."
+msgstr "Coloque os seus ficheiros em koreader/settings/simpleui/sui_wallpapers ou sui_icons."
 
 #: sui_menu.lua:3381
 msgid "Placeholder Cover for Bookless Folders"
@@ -2375,7 +2342,7 @@ msgstr "Capa Substituta para Pastas sem Livros"
 msgid "Please enter a date in YYYY-MM-DD format."
 msgstr "Digite uma data no formato AAAA-MM-DD."
 
-#: sui_menu.lua:3895 sui_presets.lua:828
+#: sui_menu.lua:3895 sui_presets.lua:830
 msgid "Please enter a name for the preset."
 msgstr "Por favor insira um nome para a predefinição."
 
@@ -2407,24 +2374,23 @@ msgstr "Energia"
 msgid "Preserve Deleted Books in Statistics"
 msgstr "Preservar Livros Excluídos nas Estatísticas"
 
-#: sui_menu.lua:4126 sui_presets.lua:1069
+#: sui_menu.lua:4126 sui_presets.lua:1071
 msgid "Preset \"%s\" imported."
 msgstr "Predefinição \"%s\" importada."
 
-#: sui_menu.lua:3855 sui_presets.lua:710 sui_presets.lua:788
+#: sui_menu.lua:3855 sui_presets.lua:712 sui_presets.lua:790
 msgid "Preset \"%s\" not found."
 msgstr "Predefinição \"%s\" não encontrada."
 
-#: sui_menu.lua:3905 sui_presets.lua:845
+#: sui_menu.lua:3905 sui_presets.lua:847
 msgid "Preset \"%s\" saved."
 msgstr "Predefinição \"%s\" salva."
 
-#: sui_menu.lua:3951 sui_menu.lua:4080 sui_presets.lua:890
-#: sui_presets.lua:1022
+#: sui_menu.lua:3951 sui_menu.lua:4080 sui_presets.lua:892 sui_presets.lua:1024
 msgid "Preset \"%s\" updated."
 msgstr "Predefinição \"%s\" atualizada."
 
-#: sui_menu.lua:4162 sui_presets.lua:1102
+#: sui_menu.lua:4162 sui_presets.lua:1104
 msgid ""
 "Preset exported to:\n"
 "%s"
@@ -2432,11 +2398,11 @@ msgstr ""
 "Preset exportado para:\n"
 "%s"
 
-#: sui_menu.lua:3880 sui_presets.lua:813
+#: sui_menu.lua:3880 sui_presets.lua:815
 msgid "Preset name"
 msgstr "Nome da predefinição"
 
-#: sui_presets.lua:389 sui_presets.lua:569
+#: sui_presets.lua:391 sui_presets.lua:571
 msgid "Preset not found"
 msgstr "Predefinição não encontrada"
 
@@ -2449,12 +2415,8 @@ msgid "Presets module unavailable."
 msgstr "Módulo de predefinições indisponível."
 
 #: sui_onboarding.lua:157
-msgid ""
-"Press and hold any element on the screen (like modules or bars) to quickly "
-"customize its settings."
-msgstr ""
-"Pressione e segure qualquer elemento na tela (como módulos ou barras) para "
-"personalizar rapidamente suas configurações."
+msgid "Press and hold any element on the screen (like modules or bars) to quickly customize its settings."
+msgstr "Pressione e segure qualquer elemento na tela (como módulos ou barras) para personalizar rapidamente suas configurações."
 
 #: sui_bottombar.lua:575
 msgid "Prev"
@@ -2473,6 +2435,7 @@ msgid "Progress Bar Type"
 msgstr "Tipo de Barra de Progresso"
 
 #: desktop_modules/module_recent.lua:561
+#: desktop_modules/module_coverdeck.lua:92
 #: desktop_modules/module_currently.lua:248
 msgid "Progress bar"
 msgstr "Barra de progresso"
@@ -2559,10 +2522,10 @@ msgstr "Estatísticas de Leitura"
 msgid "Reboot"
 msgstr "Reiniciar"
 
-#: sui_presets.lua:137 sui_presets.lua:172 sui_presets.lua:229
+#: sui_presets.lua:137 sui_presets.lua:172 sui_presets.lua:230
 #: desktop_modules/module_recent.lua:69 desktop_modules/module_recent.lua:70
 #: desktop_modules/module_recent.lua:81 desktop_modules/module_recent.lua:541
-#: desktop_modules/module_coverdeck.lua:929
+#: desktop_modules/module_coverdeck.lua:1022
 msgid "Recent Books"
 msgstr "Livros Recentes"
 
@@ -2571,12 +2534,12 @@ msgid "Remove from To Be Read"
 msgstr "Remover de Para Ler"
 
 #: sui_menu.lua:3957 sui_menu.lua:3964 sui_menu.lua:4049 sui_window.lua:1600
-#: sui_window.lua:2436 sui_presets.lua:896 sui_presets.lua:903
-#: sui_presets.lua:989
+#: sui_window.lua:2436 sui_presets.lua:898 sui_presets.lua:905
+#: sui_presets.lua:991
 msgid "Rename"
 msgstr "Renomear"
 
-#: sui_menu.lua:3960 sui_menu.lua:4045 sui_presets.lua:899 sui_presets.lua:985
+#: sui_menu.lua:3960 sui_menu.lua:4045 sui_presets.lua:901 sui_presets.lua:987
 msgid "Rename \"%s\""
 msgstr "Renomear \"%s\""
 
@@ -2617,11 +2580,7 @@ msgstr "Restaurar todos os ícones de Ações Rápidas para o padrão?"
 
 #: sui_menu.lua:2460
 msgid "Reset all scales to default (100%)? This cannot be undone."
-msgstr ""
-"Redefinir todas as escalas para o padrão (100%)? Esta ação não pode ser "
-"desfeita.Redefinir todas as escalas para o padrão (100%)? Esta ação não pode"
-" ser desfeita.Redefinir todas as escalas para o padrão (100%)? Esta ação não"
-" pode ser desfeita."
+msgstr "Redefinir todas as escalas para o padrão (100%)? Esta ação não pode ser desfeita.Redefinir todas as escalas para o padrão (100%)? Esta ação não pode ser desfeita.Redefinir todas as escalas para o padrão (100%)? Esta ação não pode ser desfeita."
 
 #: sui_style.lua:1102
 msgid "Reset all system icons to default?"
@@ -2631,9 +2590,9 @@ msgstr "Restaurar todos os ícones do sistema para o padrão?"
 msgid "Reset to Default Scale"
 msgstr "Redefinir para Escala Padrão"
 
-#: sui_quickactions.lua:403 sui_menu.lua:436 sui_menu.lua:843
-#: sui_menu.lua:1047 sui_menu.lua:1109 sui_menu.lua:1324 sui_menu.lua:1750
-#: sui_menu.lua:3297 sui_menu.lua:3320 sui_menu.lua:3342 sui_menu.lua:4398
+#: sui_quickactions.lua:403 sui_menu.lua:436 sui_menu.lua:843 sui_menu.lua:1047
+#: sui_menu.lua:1109 sui_menu.lua:1324 sui_menu.lua:1750 sui_menu.lua:3297
+#: sui_menu.lua:3320 sui_menu.lua:3342 sui_menu.lua:4398
 #: sui_quicksettings_bar.lua:1165 sui_window.lua:1829 sui_updater.lua:431
 msgid "Restart"
 msgstr "Reiniciar"
@@ -2673,14 +2632,14 @@ msgid "Saturday"
 msgstr "Sábado"
 
 #: sui_quickactions.lua:2030 sui_menu.lua:3888 sui_stats_windows.lua:581
-#: sui_presets.lua:821 desktop_modules/module_reading_goals.lua:391
+#: sui_presets.lua:823 desktop_modules/module_reading_goals.lua:391
 #: desktop_modules/module_reading_goals.lua:407
 #: desktop_modules/module_reading_goals.lua:424
 #: desktop_modules/module_reading_goals.lua:442
 msgid "Save"
 msgstr "Salvar"
 
-#: sui_menu.lua:3873 sui_presets.lua:806
+#: sui_menu.lua:3873 sui_presets.lua:808
 msgid "Save as new preset"
 msgstr "Salvar como nova predefinição"
 
@@ -2688,7 +2647,7 @@ msgstr "Salvar como nova predefinição"
 msgid "Save icon preset"
 msgstr "Salvar predefinição de ícones"
 
-#: sui_presets.lua:811
+#: sui_presets.lua:813
 msgid "Save preset"
 msgstr "Salvar predefinição"
 
@@ -2705,8 +2664,8 @@ msgstr "Salvar predefinição"
 #: desktop_modules/module_reading_goals.lua:814
 #: desktop_modules/module_reading_goals.lua:816
 #: desktop_modules/module_clock.lua:787 desktop_modules/module_clock.lua:789
-#: desktop_modules/module_coverdeck.lua:899
-#: desktop_modules/module_coverdeck.lua:901
+#: desktop_modules/module_coverdeck.lua:992
+#: desktop_modules/module_coverdeck.lua:994
 #: desktop_modules/module_new_books.lua:325
 #: desktop_modules/module_new_books.lua:327
 #: desktop_modules/module_currently.lua:997
@@ -2758,7 +2717,7 @@ msgstr ""
 "Escala apenas para a miniatura da capa.\n"
 "100% é o tamanho padrão."
 
-#: desktop_modules/module_coverdeck.lua:910
+#: desktop_modules/module_coverdeck.lua:1003
 msgid ""
 "Scale for the cover thumbnails only.\n"
 "100% is the default size."
@@ -2810,7 +2769,7 @@ msgstr ""
 "Escala para o texto da porcentagem lida.\n"
 "100% é o tamanho padrão."
 
-#: desktop_modules/module_coverdeck.lua:902
+#: desktop_modules/module_coverdeck.lua:995
 msgid "Scale for this module."
 msgstr "Escala para este módulo."
 
@@ -2831,7 +2790,7 @@ msgstr ""
 "Escala para este módulo.\n"
 "100% é o tamanho padrão."
 
-#: desktop_modules/module_coverdeck.lua:918
+#: desktop_modules/module_coverdeck.lua:1011
 msgid ""
 "Scale for title and statistics text.\n"
 "100% is the default size."
@@ -2875,8 +2834,8 @@ msgstr "Texto Secundário / Esmaecido"
 msgid "Select"
 msgstr "Selecionar"
 
-#: sui_menu.lua:3864 sui_presets.lua:719 sui_presets.lua:727
-#: sui_presets.lua:732
+#: sui_menu.lua:3864 sui_presets.lua:721 sui_presets.lua:729
+#: sui_presets.lua:734
 msgid "Select Preset"
 msgstr "Selecionar Predefinição"
 
@@ -2968,34 +2927,21 @@ msgid "Show Page Count in Title Bar"
 msgstr "Mostrar Contagem de Páginas na Barra de Título"
 
 #: sui_menu.lua:2488
-msgid ""
-"Show a brief \"Closing book…\" notice when closing a book, preventing "
-"accidental double-taps while e-ink refreshes."
-msgstr ""
-"Mostra um breve aviso \"Fechando livro…\" ao fechar um livro, evitando "
-"toques duplos acidentais enquanto a tela de e-ink atualiza."
+msgid "Show a brief \"Closing book…\" notice when closing a book, preventing accidental double-taps while e-ink refreshes."
+msgstr "Mostra um breve aviso \"Fechando livro…\" ao fechar um livro, evitando toques duplos acidentais enquanto a tela de e-ink atualiza."
 
 #: sui_menu.lua:2531
-msgid ""
-"Show a brief \"Loading statistics…\" notice when opening a statistics "
-"window, preventing accidental double-taps while e-ink refreshes."
-msgstr ""
-"Mostra um breve aviso \"Carregando estatísticas…\" ao abrir uma janela de "
-"estatísticas, evitando toques duplos acidentais enquanto a tela de e-ink "
-"atualiza."
+msgid "Show a brief \"Loading statistics…\" notice when opening a statistics window, preventing accidental double-taps while e-ink refreshes."
+msgstr "Mostra um breve aviso \"Carregando estatísticas…\" ao abrir uma janela de estatísticas, evitando toques duplos acidentais enquanto a tela de e-ink atualiza."
 
 #: desktop_modules/module_recent.lua:590
-#: desktop_modules/module_coverdeck.lua:1121
+#: desktop_modules/module_coverdeck.lua:1265
 msgid "Show finished books"
 msgstr "Mostrar livros concluídos"
 
 #: sui_config.lua:925
 msgid "Show section label"
 msgstr "Mostrar rótulo de seção"
-
-#: desktop_modules/module_coverdeck.lua:1133
-msgid "Show status bar"
-msgstr "Mostrar barra de status"
 
 #: sui_menu.lua:2272
 msgid "Show wallpaper on all screens"
@@ -3025,7 +2971,7 @@ msgstr ""
 msgid "Simple"
 msgstr "Simples"
 
-#: sui_menu.lua:4375 sui_menu.lua:4380 main.lua:2097 main.lua:2110
+#: sui_menu.lua:4375 sui_menu.lua:4380 main.lua:2129 main.lua:2142
 msgid "Simple UI"
 msgstr "Simple UI"
 
@@ -3052,12 +2998,8 @@ msgid "Simple UI Settings"
 msgstr "Configurações do Simple UI"
 
 #: sui_onboarding.lua:129
-msgid ""
-"Simple UI is designed to be simple and flexible. Here are a few tips to get "
-"the most out of it."
-msgstr ""
-"O Simple UI foi criado para ser simples e flexível. Aqui estão algumas dicas"
-" para aproveitar ao máximo."
+msgid "Simple UI is designed to be simple and flexible. Here are a few tips to get the most out of it."
+msgstr "O Simple UI foi criado para ser simples e flexível. Aqui estão algumas dicas para aproveitar ao máximo."
 
 #: sui_updater.lua:469
 msgid "Simple UI is up to date (%s)."
@@ -3073,19 +3015,19 @@ msgstr ""
 "\n"
 "Reiniciar agora?"
 
-#: main.lua:837
+#: main.lua:869
 msgid "Simple UI: Go to Homescreen"
 msgstr "Simple UI: Ir para a Tela Inicial"
 
-#: main.lua:843
+#: main.lua:875
 msgid "Simple UI: Go to Library"
 msgstr "Simple UI: Ir para a Biblioteca"
 
-#: main.lua:855
+#: main.lua:887
 msgid "Simple UI: Settings"
 msgstr "Simple UI: Configurações"
 
-#: main.lua:849
+#: main.lua:881
 msgid "Simple UI: Toggle Homescreen / Library"
 msgstr "Simple UI: Alternar Tela Inicial / Biblioteca"
 
@@ -3156,7 +3098,7 @@ msgid "Solid Background"
 msgstr "Fundo Sólido"
 
 #: desktop_modules/module_quote.lua:1293
-#: desktop_modules/module_coverdeck.lua:926
+#: desktop_modules/module_coverdeck.lua:1019
 msgid "Source"
 msgstr "Fonte"
 
@@ -3190,9 +3132,14 @@ msgstr "Começar com a Tela Inicial"
 
 #: sui_onboarding.lua:58
 msgid "Start with a ready-made layout. You can change everything later."
-msgstr ""
-"Comece com um layout pronto. Você pode mudar tudo depois.Comece com uma "
-"predefinição pronta para usar. Você pode alterar tudo mais tarde."
+msgstr "Comece com um layout pronto. Você pode mudar tudo depois.Comece com uma predefinição pronta para usar. Você pode alterar tudo mais tarde."
+
+#: desktop_modules/module_coverdeck.lua:93
+#: desktop_modules/module_coverdeck.lua:1067
+#: desktop_modules/module_coverdeck.lua:1114
+#: desktop_modules/module_coverdeck.lua:1180
+msgid "Statistics"
+msgstr "Estatísticas"
 
 #: sui_menu.lua:2530
 msgid "Statistics Loading Notice"
@@ -3219,7 +3166,7 @@ msgstr "Layout das estatísticas"
 
 #: desktop_modules/module_reading_stats.lua:829
 #: desktop_modules/module_reading_goals.lua:1113
-#: desktop_modules/module_coverdeck.lua:1154
+#: desktop_modules/module_coverdeck.lua:1298
 #: desktop_modules/module_currently.lua:1571
 msgid "Stats updated successfully."
 msgstr "Estatísticas atualizadas com sucesso."
@@ -3359,8 +3306,8 @@ msgstr "Tamanho do Texto — %d%%"
 msgid "Text only"
 msgstr "Apenas texto"
 
-#: desktop_modules/module_coverdeck.lua:916
-#: desktop_modules/module_coverdeck.lua:917
+#: desktop_modules/module_coverdeck.lua:1009
+#: desktop_modules/module_coverdeck.lua:1010
 msgid "Text size"
 msgstr "Tamanho do texto"
 
@@ -3406,7 +3353,7 @@ msgstr "Este mês — Páginas"
 msgid "This month — Time"
 msgstr "Este mês — Tempo"
 
-#: sui_presets.lua:835 sui_presets.lua:908 sui_presets.lua:994
+#: sui_presets.lua:837 sui_presets.lua:910 sui_presets.lua:996
 msgid "This name is reserved by a built-in preset."
 msgstr "Este nome está reservado por uma predefinição integrada."
 
@@ -3444,7 +3391,8 @@ msgstr "Tempo lido"
 msgid "Time remaining"
 msgstr "Tempo restante"
 
-#: sui_titlebar.lua:106 desktop_modules/module_currently.lua:246
+#: sui_titlebar.lua:106 desktop_modules/module_coverdeck.lua:90
+#: desktop_modules/module_currently.lua:246
 msgid "Title"
 msgstr "Título"
 
@@ -3461,10 +3409,6 @@ msgstr ""
 "A Barra de Título ficará %s após reiniciar.\n"
 "\n"
 "Reiniciar agora?"
-
-#: desktop_modules/module_coverdeck.lua:950
-msgid "Title Position"
-msgstr "Posição do Título"
 
 #: sui_menu.lua:3329
 msgid "Title and Author"
@@ -3510,7 +3454,7 @@ msgstr ""
 
 #: desktop_modules/module_tbr.lua:257 desktop_modules/module_tbr.lua:258
 #: desktop_modules/module_tbr.lua:273 desktop_modules/module_tbr.lua:309
-#: desktop_modules/module_tbr.lua:755 desktop_modules/module_coverdeck.lua:938
+#: desktop_modules/module_tbr.lua:755 desktop_modules/module_coverdeck.lua:1031
 msgid "To Be Read"
 msgstr "Para Ler"
 
@@ -3546,7 +3490,7 @@ msgstr "Superior"
 msgid "Top Bar"
 msgstr "Barra Superior"
 
-#: sui_homescreen.lua:1867
+#: sui_homescreen.lua:1868
 msgid "Top Margin"
 msgstr "Margem Superior"
 
@@ -3630,7 +3574,7 @@ msgstr "Atualizar"
 
 #: desktop_modules/module_reading_stats.lua:805
 #: desktop_modules/module_reading_goals.lua:1089
-#: desktop_modules/module_coverdeck.lua:1130
+#: desktop_modules/module_coverdeck.lua:1274
 #: desktop_modules/module_currently.lua:1547
 msgid "Update Stats Now"
 msgstr "Atualizar Estatísticas Agora"
@@ -3643,7 +3587,7 @@ msgstr "Atualização cancelada."
 msgid "Update check cancelled."
 msgstr "Verificação de atualizações cancelada."
 
-#: sui_menu.lua:3942 sui_presets.lua:881
+#: sui_menu.lua:3942 sui_presets.lua:883
 msgid "Update with current settings"
 msgstr "Atualizar com configurações atuais"
 
@@ -3671,7 +3615,7 @@ msgstr "Versão, autor e atualizações"
 msgid "Version: %s"
 msgstr "Versão: %s"
 
-#: sui_homescreen.lua:1870
+#: sui_homescreen.lua:1871
 msgid ""
 "Vertical space above this module.\n"
 "100% is the default spacing."
@@ -3731,11 +3675,7 @@ msgstr "Controle de Temperatura"
 
 #: sui_menu.lua:2543
 msgid "Warn when modules on a page exceed the available screen height."
-msgstr ""
-"Avisar quando os módulos em uma página excederem a altura disponível da "
-"tela.Avisar quando os módulos em uma página excedem a altura disponível da "
-"tela.Avisar quando os módulos em uma página excederem a altura disponível da"
-" tela."
+msgstr "Avisar quando os módulos em uma página excederem a altura disponível da tela.Avisar quando os módulos em uma página excedem a altura disponível da tela.Avisar quando os módulos em uma página excederem a altura disponível da tela."
 
 #: desktop_modules/module_clock.lua:56
 msgid "Wednesday"
@@ -3760,12 +3700,8 @@ msgstr ""
 "Livros cujo status seja alterado para Lendo ou Abandonado são removidos automaticamente desta lista."
 
 #: sui_menu.lua:2476
-msgid ""
-"When closing a book from the Home Screen, go back to the folder where the "
-"book is located instead of the Library home folder."
-msgstr ""
-"Ao fechar um livro a partir da Tela Inicial, voltar para a pasta onde o "
-"livro está localizado em vez da pasta raiz da Biblioteca."
+msgid "When closing a book from the Home Screen, go back to the folder where the book is located instead of the Library home folder."
+msgstr "Ao fechar um livro a partir da Tela Inicial, voltar para a pasta onde o livro está localizado em vez da pasta raiz da Biblioteca."
 
 #: sui_menu.lua:2555
 msgid ""
@@ -4026,7 +3962,7 @@ msgid_plural "%d days"
 msgstr[0] "%d dia"
 msgstr[1] "%d dias"
 
-#: desktop_modules/module_coverdeck.lua:678
+#: desktop_modules/module_coverdeck.lua:745
 #: desktop_modules/module_currently.lua:653
 #: desktop_modules/module_currently.lua:654
 #: desktop_modules/module_currently.lua:732
@@ -4105,29 +4041,23 @@ msgstr[1] ""
 #: desktop_modules/module_action_list.lua:533
 #: desktop_modules/module_quick_actions.lua:319
 #: desktop_modules/module_quick_actions.lua:460
-msgid ""
-"The maximum of %d action per module has been reached. Remove one first."
-msgid_plural ""
-"The maximum of %d actions per module has been reached. Remove one first."
+msgid "The maximum of %d action per module has been reached. Remove one first."
+msgid_plural "The maximum of %d actions per module has been reached. Remove one first."
 msgstr[0] "O máximo de %d ação por módulo foi atingido. Remova uma primeiro."
 msgstr[1] "O máximo de %d ações por módulo foi atingido. Remova uma primeiro."
 
 #: sui_quickactions.lua:1265 sui_quickactions.lua:2439
 msgid "The maximum of %d quick action has been reached. Delete one first."
-msgid_plural ""
-"The maximum of %d quick actions has been reached. Delete one first."
+msgid_plural "The maximum of %d quick actions has been reached. Delete one first."
 msgstr[0] "O máximo de %d ação rápida foi atingido. Exclua uma primeiro."
 msgstr[1] "O máximo de %d ações rápidas foi atingido. Exclua uma primeiro."
 
 #: desktop_modules/module_reading_stats.lua:580
 #: desktop_modules/module_reading_stats.lua:662
 msgid "The maximum of %d stat per row has been reached. Remove one first."
-msgid_plural ""
-"The maximum of %d stats per row has been reached. Remove one first."
-msgstr[0] ""
-"O máximo de %d estatística por linha foi atingido. Remova uma primeiro."
-msgstr[1] ""
-"O máximo de %d estatísticas por linha foi atingido. Remova uma primeiro."
+msgid_plural "The maximum of %d stats per row has been reached. Remove one first."
+msgstr[0] "O máximo de %d estatística por linha foi atingido. Remova uma primeiro."
+msgstr[1] "O máximo de %d estatísticas por linha foi atingido. Remova uma primeiro."
 
 #: sui_menu.lua:370 sui_menu.lua:1223
 msgid "The maximum of %d tab has been reached. Remove one first."
@@ -4146,6 +4076,18 @@ msgid "page read"
 msgid_plural "pages read"
 msgstr[0] "página lida"
 msgstr[1] "páginas lidas"
+
+#~ msgid "Above"
+#~ msgstr "Acima"
+
+#~ msgid "Below"
+#~ msgstr "Abaixo"
+
+#~ msgid "Show status bar"
+#~ msgstr "Mostrar barra de status"
+
+#~ msgid "Title Position"
+#~ msgstr "Posição do Título"
 
 #~ msgid "best streak"
 #~ msgstr "melhor sequência"

@@ -69,9 +69,9 @@ end
 -- ---------------------------------------------------------------------------
 
 local SETTING_SOURCE        = "coverdeck_source"         -- pfx .. this; "recent"|"tbr"
-local SETTING_TITLE_POS     = "coverdeck_title_pos"       -- pfx .. this; "above"|"below"
 local SETTING_SHOW_FINISHED = "coverdeck_show_finished"   -- pfx .. this; default OFF
 local ELEM_ORDER_KEY        = "coverdeck_stats_order"     -- pfx .. this
+local MAIN_ORDER_KEY        = "coverdeck_main_order"      -- pfx .. this
 
 local _ELEM_DEFAULT_ORDER = { "percent", "book_days", "book_time", "book_remaining" }
 local _ELEM_LABELS = {
@@ -81,16 +81,24 @@ local _ELEM_LABELS = {
     book_remaining = _("Time remaining"),
 }
 
+-- Main list: the top-level arrangeable elements. "covers" is a fixed anchor
+-- (always present, never removable — renders as a divider in the arrange
+-- screen); the rest can be freely reordered and toggled around it.
+local _MAIN_ELEM_DEFAULT_ORDER = { "covers", "title", "author", "progress", "stats" }
+local _MAIN_ELEM_LABELS = {
+    covers   = _("Covers"),
+    title    = _("Title"),
+    author   = _("Author"),
+    progress = _("Progress bar"),
+    stats    = _("Statistics"),
+}
+
 -- ---------------------------------------------------------------------------
 -- Settings accessors
 -- ---------------------------------------------------------------------------
 
 local function getSource(pfx)
     return SUISettings:readSetting(pfx .. SETTING_SOURCE) or "recent"
-end
-
-local function getTitlePos(pfx)
-    return SUISettings:readSetting(pfx .. SETTING_TITLE_POS) or "below"
 end
 
 local function showFinished(pfx)
@@ -118,6 +126,27 @@ local function _getElemOrder(pfx)
     return result
 end
 
+-- Returns the saved main-list order, falling back to the default. Unknown
+-- keys are dropped; new keys are appended at the tail. "covers" is forced
+-- to be present — it can never be removed, only reordered — as a defensive
+-- measure in case a corrupted/hand-edited setting ever drops it.
+-- Legacy migration (coverdeck_title_pos -> coverdeck_main_order /
+-- coverdeck_show_title) runs once in main.lua; this function only resolves
+-- whatever is currently saved.
+local function _getMainOrder(pfx)
+    local saved = SUISettings:readSetting(pfx .. MAIN_ORDER_KEY)
+    if type(saved) ~= "table" or #saved == 0 then return _MAIN_ELEM_DEFAULT_ORDER end
+    local seen, result = {}, {}
+    for _i, v in ipairs(saved) do
+        if _MAIN_ELEM_LABELS[v] and not seen[v] then seen[v] = true; result[#result+1] = v end
+    end
+    for _i, v in ipairs(_MAIN_ELEM_DEFAULT_ORDER) do
+        if not seen[v] then result[#result+1] = v end
+    end
+    if not seen.covers then table.insert(result, 1, "covers") end
+    return result
+end
+
 -- ---------------------------------------------------------------------------
 -- getVisibleElements — single source of truth for what is visible.
 -- Returns a plain table consumed by both build() and getHeight() so that
@@ -130,7 +159,11 @@ local function getVisibleElements(pfx)
         if _showElem(pfx, key) then has_stat = true; break end
     end
     return {
+        main_order  = _getMainOrder(pfx),
+        show_title  = _showElem(pfx, "title"),
+        show_author = _showElem(pfx, "author"),
         progress    = _showElem(pfx, "progress"),
+        show_stats  = _showElem(pfx, "stats"),
         has_stat    = has_stat,
         stats_order = stats_order,
     }
@@ -300,7 +333,23 @@ local function buildTBRFps(ctx)
         local tbr = require("desktop_modules/module_tbr")
         ctx._tbr_fps = tbr.getTBRList()
     end
-    return ctx._tbr_fps
+    local list = ctx._tbr_fps
+    -- Whichever book was last opened (ctx.current_fp, from KOReader's global
+    -- ReadHistory) becomes position 1 in the coverdeck's own display order —
+    -- but only if it's actually on the TBR list; otherwise leave the list
+    -- untouched. This only reorders the coverdeck's view, not the underlying
+    -- TBR collection itself.
+    if not (ctx.current_fp and list and #list > 0) then return list end
+    local found = false
+    for _i, fp in ipairs(list) do
+        if fp == ctx.current_fp then found = true; break end
+    end
+    if not found then return list end
+    local fps = { ctx.current_fp }
+    for _i, fp in ipairs(list) do
+        if fp ~= ctx.current_fp then fps[#fps+1] = fp end
+    end
+    return fps
 end
 
 local function getFps(source, ctx)
@@ -408,18 +457,38 @@ function M.build(w, ctx)
         for _, key in ipairs(stats_order) do
             if c.show[key] then has_stat = true; break end
         end
+        local main_order_saved = c.main_order
+        local main_order = (type(main_order_saved) == "table" and #main_order_saved > 0)
+            and (function()
+                local seen, result = {}, {}
+                for _, v in ipairs(main_order_saved) do
+                    if _MAIN_ELEM_LABELS[v] and not seen[v] then seen[v] = true; result[#result+1] = v end
+                end
+                for _, v in ipairs(_MAIN_ELEM_DEFAULT_ORDER) do
+                    if not seen[v] then result[#result+1] = v end
+                end
+                if not seen.covers then table.insert(result, 1, "covers") end
+                return result
+            end)()
+            or _MAIN_ELEM_DEFAULT_ORDER
         vis = {
+            main_order  = main_order,
+            show_title  = c.show.title,
+            show_author = c.show.author,
             progress    = c.show.progress,
+            show_stats  = c.show.stats,
             has_stat    = has_stat,
             stats_order = stats_order,
         }
     else
         vis = getVisibleElements(pfx)
     end
-    local title_pos      = c and c.title_pos or getTitlePos(pfx)
-    local show_title     = title_pos ~= "hidden"
-    local show_progress  = vis.progress
-    local stats_order    = vis.stats_order
+    local main_order      = vis.main_order
+    local show_title      = vis.show_title
+    local show_author     = vis.show_author
+    local show_progress   = vis.progress
+    local show_stats      = vis.show_stats
+    local stats_order     = vis.stats_order
 
     -- Carousel dimensions
     local center_w = math.floor(Screen:scaleBySize(140) * cs)
@@ -599,6 +668,21 @@ function M.build(w, ctx)
         }
     end
 
+    -- Author widget
+    local author_widget
+    if show_author and bd.authors and bd.authors ~= "" then
+        local author_fs   = math.floor(SUIStyle.FS_SUBTITLE * scale * lbl_scale)
+        local face_author = Font:getFace(SUIStyle.FACE_REGULAR, math.max(8, author_fs))
+        author_widget = UI.makeColoredText{
+            text            = bd.authors,
+            face            = face_author,
+            fgcolor         = CLR_TEXT_SUB_EFF,
+            width           = inner_w,
+            alignment       = "center",
+            truncation_char = "…",
+        }
+    end
+
     local _cd_update_funcs = {}
     local function _updateColoredText(wgt, txt, fg)
         if wgt._inner and wgt._inner.setText then
@@ -611,50 +695,51 @@ function M.build(w, ctx)
         end
     end
 
-    -- Meta block: progress bar + stats line
-    local meta = VerticalGroup:new{ align = "center" }
-
+    -- Progress bar widget
+    local progress_widget
     if show_progress then
-        meta[#meta+1] = UI.progressBar(center_w, bd.percent, bar_h)
+        progress_widget = UI.progressBar(center_w, bd.percent, bar_h)
     end
 
-    -- Stats
-    local bstats
-    if vis.has_stat then
-        -- Fast path: use stats pre-computed by _buildCtx() when the centre cover
-        -- matches the pre-fetched entry (common case on first render).
-        local pre = ctx.coverdeck_center_stats
-        if pre and pre.fp == fps[curIdx] then
-            bstats = pre.stats
-        else
-            -- Slow path: _buildCtx guessed wrong (curIdx != 1) or ctx has no
-            -- pre-computed stats.  Run the query now; result lands in
-            -- _bstats_cache so subsequent carousel navigations are instant.
-            local prefetched_entry = ctx.prefetched and ctx.prefetched[fps[curIdx]]
-            local md5 = prefetched_entry and prefetched_entry.partial_md5_checksum
-            if not md5 then
-                local DS = require("docsettings")
-                local ok_ds, ds = pcall(DS.open, DS, fps[curIdx])
-                if ok_ds and ds then
-                    md5 = ds:readSetting("partial_md5_checksum")
-                    pcall(function() ds:close() end)
-                end
-            end
-            if md5 then
-                bstats = fetchBookStats(md5, ctx.db_conn, ctx)
-            end
+    -- Stats widget
+    local stats_widget
+    local has_any_stats = false
+    if show_stats then
+        for _i, key in ipairs(stats_order) do
+            local show_this = (c and c.show) and c.show[key]
+            if show_this == nil then show_this = _showElem(pfx, key) end
+            if show_this then has_any_stats = true; break end
         end
     end
 
-    local has_any_stats = false
-    for _i, key in ipairs(stats_order) do
-        local show_this = (c and c.show) and c.show[key]
-        if show_this == nil then show_this = _showElem(pfx, key) end
-        if show_this then has_any_stats = true; break end
-    end
-
     if has_any_stats then
-        if #meta > 0 then meta[#meta+1] = SH.vspan(PAD2, ctx.vspan_pool) end
+        local bstats
+        if vis.has_stat then
+            -- Fast path: use stats pre-computed by _buildCtx() when the centre cover
+            -- matches the pre-fetched entry (common case on first render).
+            local pre = ctx.coverdeck_center_stats
+            if pre and pre.fp == fps[curIdx] then
+                bstats = pre.stats
+            else
+                -- Slow path: _buildCtx guessed wrong (curIdx != 1) or ctx has no
+                -- pre-computed stats.  Run the query now; result lands in
+                -- _bstats_cache so subsequent carousel navigations are instant.
+                local prefetched_entry = ctx.prefetched and ctx.prefetched[fps[curIdx]]
+                local md5 = prefetched_entry and prefetched_entry.partial_md5_checksum
+                if not md5 then
+                    local DS = require("docsettings")
+                    local ok_ds, ds = pcall(DS.open, DS, fps[curIdx])
+                    if ok_ds and ds then
+                        md5 = ds:readSetting("partial_md5_checksum")
+                        pcall(function() ds:close() end)
+                    end
+                end
+                if md5 then
+                    bstats = fetchBookStats(md5, ctx.db_conn, ctx)
+                end
+            end
+        end
+
         local stats_w = UI.makeColoredText{
             text      = "",
             face      = face_info,
@@ -694,23 +779,32 @@ function M.build(w, ctx)
         end
         _update(bstats, bd)
         table.insert(_cd_update_funcs, _update)
-        meta[#meta+1] = stats_w
+        stats_widget = stats_w
     end
 
-    -- Final layout assembly
+    -- Final layout assembly — render each visible main-list element in the
+    -- user's chosen order ("covers" is the carousel itself; the rest are
+    -- optional widgets). A PAD2 vspan separates any two adjacent elements.
     local final_vg = VerticalGroup:new{ align = "center" }
-    if title_widget and title_pos == "above" then
-        final_vg[#final_vg+1] = title_widget
-        final_vg[#final_vg+1] = SH.vspan(PAD2, ctx.vspan_pool)
+    local _first_elem = true
+    local function _appendElem(widget)
+        if not widget then return end
+        if not _first_elem then final_vg[#final_vg+1] = SH.vspan(PAD2, ctx.vspan_pool) end
+        final_vg[#final_vg+1] = widget
+        _first_elem = false
     end
-    final_vg[#final_vg+1] = tappable
-    if title_widget and title_pos == "below" then
-        final_vg[#final_vg+1] = SH.vspan(PAD2, ctx.vspan_pool)
-        final_vg[#final_vg+1] = title_widget
-    end
-    if #meta > 0 then
-        final_vg[#final_vg+1] = SH.vspan(PAD2, ctx.vspan_pool)
-        final_vg[#final_vg+1] = meta
+    for _i, key in ipairs(main_order) do
+        if key == "covers" then
+            _appendElem(tappable)
+        elseif key == "title" then
+            _appendElem(title_widget)
+        elseif key == "author" then
+            _appendElem(author_widget)
+        elseif key == "progress" then
+            _appendElem(progress_widget)
+        elseif key == "stats" then
+            _appendElem(stats_widget)
+        end
     end
 
     -- Pre-warm the cover of the next book in the carousel at center size.
@@ -838,14 +932,17 @@ function M.getHeight(ctx)
             if _ELEM_LABELS[key] and c.show[key] then has_stat = true; break end
         end
         vis = {
-            progress = c.show.progress,
-            has_stat = has_stat,
+            show_title  = c.show.title,
+            show_author = c.show.author,
+            progress    = c.show.progress,
+            show_stats  = c.show.stats,
+            has_stat    = has_stat,
         }
     else
         vis = getVisibleElements(pfx)
     end
-    local title_pos  = c and c.title_pos or getTitlePos(pfx)
-    local show_title = title_pos ~= "hidden"
+    local show_title  = vis.show_title
+    local show_author = vis.show_author
 
     local center_w = math.floor(Screen:scaleBySize(140) * scale * thumb_scale)
     local center_h = math.floor(center_w * 3 / 2)
@@ -859,13 +956,18 @@ function M.getHeight(ctx)
         h = h + math.max(8, title_fs) + PAD2
     end
 
+    if show_author then
+        local author_fs = math.floor(SUIStyle.FS_SUBTITLE * scale * lbl_scale)
+        h = h + math.max(8, author_fs) + PAD2
+    end
+
     local has_meta = false
     if vis.progress then
         has_meta = true
         h = h + math.floor(Screen:scaleBySize(8) * scale)   -- matches bar_h in build()
     end
 
-    if vis.has_stat then
+    if vis.has_stat and vis.show_stats ~= false then
         if has_meta then h = h + PAD2 end
         h        = h + math.floor(Screen:scaleBySize(14) * scale * lbl_scale)
         has_meta = true
@@ -953,193 +1055,230 @@ function M.getMenuItems(ctx_menu)
         },
     }
 
-    local title_pos_item = {
-        text = _lc("Title Position"),
-        sub_item_table = {
-            {
-                text         = _lc("Above"), radio = true,
-                checked_func = function() return getTitlePos(pfx) == "above" end,
-                keep_menu_open = true,
-                callback     = function()
-                    SUISettings:saveSetting(pfx .. SETTING_TITLE_POS, "above")
-                    refresh()
+    -- Pushes the nested "Statistics" arrange screen (percent / days / time /
+    -- remaining), reachable either by tapping the "Statistics" row inside the
+    -- main arrange list (SUI) or via the "Statistics" submenu (native).
+    local function _pushStatsArrange()
+        local function _statsSortItems()
+            local sort_items = {}
+            for _i, key in ipairs(_getElemOrder(pfx)) do
+                if _showElem(pfx, key) then
+                    sort_items[#sort_items+1] = { text = _lc(_ELEM_LABELS[key]), orig_item = key }
+                end
+            end
+            return sort_items
+        end
+        local function _saveStatsOrder(items_to_save)
+            local new_order, active_set = {}, {}
+            for _i, it in ipairs(items_to_save) do
+                new_order[#new_order+1] = it.orig_item
+                active_set[it.orig_item] = true
+            end
+            for _i, k in ipairs(_getElemOrder(pfx)) do
+                if not active_set[k] then new_order[#new_order+1] = k end
+            end
+            SUISettings:saveSetting(pfx .. ELEM_ORDER_KEY, new_order)
+            refresh()
+        end
+        if ctx_menu.show_arrange then
+            ctx_menu.show_arrange({
+                title      = _lc("Statistics"),
+                items_func = _statsSortItems,
+                empty_text = _lc("No statistics selected."),
+                on_delete  = function(item) _toggleElem(pfx, item.orig_item) end,
+                on_change  = _saveStatsOrder,
+                footer_text = _lc("Add Item"),
+                footer_enabled = function()
+                    for _i, key in ipairs(_getElemOrder(pfx)) do
+                        if not _showElem(pfx, key) then return true end
+                    end
+                    return false
                 end,
-            },
-            {
-                text         = _lc("Below"), radio = true,
-                checked_func = function() return getTitlePos(pfx) == "below" end,
-                keep_menu_open = true,
-                callback     = function()
-                    SUISettings:saveSetting(pfx .. SETTING_TITLE_POS, "below")
-                    refresh()
+                footer_action = function(ctx2)
+                    local picker_items = {}
+                    for _i, key in ipairs(_getElemOrder(pfx)) do
+                        if not _showElem(pfx, key) then
+                            local _key, _label = key, _lc(_ELEM_LABELS[key])
+                            picker_items[#picker_items+1] = {
+                                text   = _label,
+                                on_tap = function(picker_ctx)
+                                    _toggleElem(pfx, _key)
+                                    local new_order, active_set = {}, {}
+                                    for _i2, k in ipairs(_getElemOrder(pfx)) do
+                                        if _showElem(pfx, k) and k ~= _key then
+                                            new_order[#new_order+1] = k
+                                            active_set[k] = true
+                                        end
+                                    end
+                                    new_order[#new_order+1] = _key
+                                    active_set[_key] = true
+                                    for _i2, k in ipairs(_getElemOrder(pfx)) do
+                                        if not active_set[k] then new_order[#new_order+1] = k end
+                                    end
+                                    SUISettings:saveSetting(pfx .. ELEM_ORDER_KEY, new_order)
+                                    refresh()
+                                    picker_ctx.pop()
+                                    ctx2.repaint()
+                                end,
+                            }
+                        end
+                    end
+                    ctx2.push("item_picker", { title = _lc("Add Item"), items = picker_items })
                 end,
-            },
-            {
-                text         = _lc("Hidden"), radio = true,
-                checked_func = function() return getTitlePos(pfx) == "hidden" end,
-                keep_menu_open = true,
-                callback     = function()
-                    SUISettings:saveSetting(pfx .. SETTING_TITLE_POS, "hidden")
-                    refresh()
-                end,
-            },
-        },
-    }
+            })
+        else
+            local sort_items = _statsSortItems()
+            _UIManager:show(SortWidget:new{
+                title             = _lc("Statistics"),
+                item_table        = sort_items,
+                covers_fullscreen = true,
+                callback          = function() _saveStatsOrder(sort_items) end,
+            })
+        end
+    end
+
+    -- Main arrange list: "Covers" (fixed anchor, divider — never removable)
+    -- plus Title / Author / Progress bar / Statistics, freely reorderable
+    -- and toggleable around it. Tapping "Statistics" opens the nested
+    -- per-statistic arrange screen above.
+    local function _mainSortItems()
+        local sort_items = {}
+        for _i, key in ipairs(_getMainOrder(pfx)) do
+            if key == "covers" then
+                sort_items[#sort_items+1] = {
+                    text = _lc(_MAIN_ELEM_LABELS.covers):upper(), orig_item = "covers", is_divider = true,
+                }
+            elseif _showElem(pfx, key) then
+                local entry = { text = _lc(_MAIN_ELEM_LABELS[key]), orig_item = key }
+                if key == "stats" then
+                    entry.show_chevron = true
+                    entry.on_tap       = _pushStatsArrange
+                end
+                sort_items[#sort_items+1] = entry
+            end
+        end
+        return sort_items
+    end
+
+    local function _saveMainOrder(items_to_save)
+        local new_order, active_set = {}, {}
+        for _i, it in ipairs(items_to_save) do
+            new_order[#new_order+1] = it.orig_item
+            active_set[it.orig_item] = true
+        end
+        for _i, k in ipairs(_getMainOrder(pfx)) do
+            if not active_set[k] then new_order[#new_order+1] = k end
+        end
+        SUISettings:saveSetting(pfx .. MAIN_ORDER_KEY, new_order)
+        refresh()
+    end
 
     local items_item = {
         text = _lc("Items"),
         sub_item_table = {
             {
-                text      = _lc("Arrange Statistics"),
+                text      = _lc("Arrange Items"),
                 separator = true,
                 keep_menu_open = true,
                 callback  = function()
-                    local sort_items = {}
-                    for _i, key in ipairs(_getElemOrder(pfx)) do
-                        if _showElem(pfx, key) then
-                            sort_items[#sort_items+1] = {
-                                text      = _lc(_ELEM_LABELS[key]),
-                                orig_item = key,
-                            }
-                        end
-                    end
-                    local function on_save()
-                        local new_order = {}
-                        for _i, item in ipairs(sort_items) do
-                            new_order[#new_order+1] = item.orig_item
-                        end
-                        local active_set = {}
-                        for _i, k in ipairs(new_order) do active_set[k] = true end
-                        for _i, k in ipairs(_getElemOrder(pfx)) do
-                            if not active_set[k] then new_order[#new_order+1] = k end
-                        end
-                        SUISettings:saveSetting(pfx .. ELEM_ORDER_KEY, new_order)
-                        refresh()
-                    end
+                    local sort_items = _mainSortItems()
                     _UIManager:show(SortWidget:new{
-                        title             = _lc("Arrange Statistics"),
+                        title             = _lc("Arrange Items"),
                         item_table        = sort_items,
                         covers_fullscreen = true,
-                        callback          = on_save,
+                        callback          = function() _saveMainOrder(sort_items) end,
                     })
                 end,
             },
-            toggle_item("Percentage read",  "percent",        true),
-            toggle_item("Days of reading",  "book_days",      true),
-            toggle_item("Time read",        "book_time",      true),
-            toggle_item("Time remaining",   "book_remaining", true),
+            toggle_item("Title",        "title",    true),
+            toggle_item("Author",       "author",   true),
+            toggle_item("Progress bar", "progress", true),
+            toggle_item("Statistics",   "stats",    true),
+            {
+                text = _lc("Statistics"),
+                sub_item_table = {
+                    {
+                        text      = _lc("Arrange Statistics"),
+                        separator = true,
+                        keep_menu_open = true,
+                        callback  = _pushStatsArrange,
+                    },
+                    toggle_item("Percentage read",  "percent",        true),
+                    toggle_item("Days of reading",  "book_days",      true),
+                    toggle_item("Time read",        "book_time",      true),
+                    toggle_item("Time remaining",   "book_remaining", true),
+                },
+                sui_hidden = ctx_menu.is_sui or nil,
+            },
         },
-            sui_build = ctx_menu.is_sui and function(ctx, _item)
-                local SUIWindow = require("sui_window")
-                return SUIWindow.ListRow{
-                    title        = _lc("Items"),
-                    subtitle     = function()
-                        local names = {}
-                        for _, key in ipairs(_getElemOrder(pfx)) do
-                            if _showElem(pfx, key) then
-                                names[#names + 1] = _lc(_ELEM_LABELS[key])
-                            end
+        sui_build = ctx_menu.is_sui and function(ctx, _item)
+            local SUIWindow = require("sui_window")
+            return SUIWindow.ListRow{
+                title        = _lc("Items"),
+                subtitle     = function()
+                    local names = {}
+                    for _, key in ipairs(_getMainOrder(pfx)) do
+                        if key ~= "covers" and _showElem(pfx, key) then
+                            names[#names + 1] = _lc(_MAIN_ELEM_LABELS[key])
                         end
-                        return #names > 0 and table.concat(names, "  ·  ") or _lc("No items selected.")
-                    end,
-                    inner_w      = ctx.inner_w,
-                    show_chevron = true,
-                    on_tap       = function()
-                        local sort_items = {}
-                        for _, key in ipairs(_getElemOrder(pfx)) do
-                            if _showElem(pfx, key) then
-                                sort_items[#sort_items+1] = { text = _lc(_ELEM_LABELS[key]), orig_item = key }
-                            end
-                        end
-                        
-                        ctx.push("arrange", {
-                            title = _lc("Items"),
-                            items = sort_items,
-                            empty_text = _lc("No items selected."),
-                            on_delete = function(item)
-                                _toggleElem(pfx, item.orig_item)
-                            end,
-                            on_change = function(items_to_save)
-                                local new_order  = {}
-                                local active_set = {}
-                                for _, it in ipairs(items_to_save) do
-                                    new_order[#new_order + 1] = it.orig_item
-                                    active_set[it.orig_item]  = true
-                                end
-                                for _, k in ipairs(_getElemOrder(pfx)) do
-                                    if not active_set[k] then new_order[#new_order + 1] = k end
-                                end
-                                SUISettings:saveSetting(pfx .. ELEM_ORDER_KEY, new_order)
-                                refresh()
-                            end,
-                            footer_text = _lc("Add Item"),
-                        footer_enabled = function()
-                                for _, key in ipairs(_getElemOrder(pfx)) do
-                                    if not _showElem(pfx, key) then return true end
-                                end
-                                return false
-                            end,
-                            footer_action = function(ctx2)
-                                local picker_items = {}
-                                for _, key in ipairs(_getElemOrder(pfx)) do
-                                    if not _showElem(pfx, key) then
-                                        local _key   = key
-                                        local _label = _lc(_ELEM_LABELS[key])
-                                        picker_items[#picker_items + 1] = {
-                                            text   = _label,
-                                            on_tap = function(picker_ctx)
-                                                _toggleElem(pfx, _key)
-                                                local new_order = {}
-                                                local active_set = {}
-                                                for _, k in ipairs(_getElemOrder(pfx)) do
-                                                    if _showElem(pfx, k) and k ~= _key then
-                                                        new_order[#new_order + 1] = k
-                                                        active_set[k] = true
-                                                    end
-                                                end
-                                                new_order[#new_order + 1] = _key
-                                                active_set[_key] = true
-                                                for _, k in ipairs(_getElemOrder(pfx)) do
-                                                    if not active_set[k] then
-                                                        new_order[#new_order + 1] = k
-                                                    end
-                                                end
-                                                SUISettings:saveSetting(pfx .. ELEM_ORDER_KEY, new_order)
-                                                
-                                                table.insert(sort_items, { text = _label, orig_item = _key })
-                                                
-                                                refresh()
-                                                picker_ctx.pop()
-                                                ctx2.repaint()
-                                            end,
-                                        }
-                                    end
-                                end
-                                ctx2.push("item_picker", {
-                                    title = _lc("Add Item"),
-                                    items = picker_items,
-                                })
-                            end,
-                        })
                     end
-                }
-            end or nil,
+                    return #names > 0 and table.concat(names, "  ·  ") or _lc("No items selected.")
+                end,
+                inner_w      = ctx.inner_w,
+                show_chevron = true,
+                on_tap       = function()
+                    ctx.push("arrange", {
+                        title       = _lc("Items"),
+                        items_func  = _mainSortItems,
+                        empty_text  = _lc("No items selected."),
+                        on_delete   = function(item)
+                            if item.orig_item ~= "covers" then
+                                _toggleElem(pfx, item.orig_item)
+                            end
+                        end,
+                        on_change   = _saveMainOrder,
+                        footer_text = _lc("Add Item"),
+                        footer_enabled = function()
+                            for _, key in ipairs({ "title", "author", "progress", "stats" }) do
+                                if not _showElem(pfx, key) then return true end
+                            end
+                            return false
+                        end,
+                        footer_action = function(ctx2)
+                            local picker_items = {}
+                            for _, key in ipairs({ "title", "author", "progress", "stats" }) do
+                                if not _showElem(pfx, key) then
+                                    local _key, _label = key, _lc(_MAIN_ELEM_LABELS[key])
+                                    picker_items[#picker_items + 1] = {
+                                        text   = _label,
+                                        on_tap = function(picker_ctx)
+                                            _toggleElem(pfx, _key)
+                                            local cur = _getMainOrder(pfx)
+                                            local new_order = {}
+                                            for _, k in ipairs(cur) do
+                                                if k ~= _key then new_order[#new_order + 1] = k end
+                                            end
+                                            new_order[#new_order + 1] = _key
+                                            SUISettings:saveSetting(pfx .. MAIN_ORDER_KEY, new_order)
+                                            refresh()
+                                            picker_ctx.pop()
+                                            ctx2.repaint()
+                                        end,
+                                    }
+                                end
+                            end
+                            ctx2.push("item_picker", { title = _lc("Add Item"), items = picker_items })
+                        end,
+                    })
+                end,
+            }
+        end or nil,
     }
 
     local menu = {}
     menu[#menu+1] = source_item
     menu[#menu+1] = items_item
-    menu[#menu+1] = {
-        text           = _lc("Show status bar"),
-        checked_func   = function() return _showElem(pfx, "progress") end,
-        keep_menu_open = true,
-        callback       = function()
-            _toggleElem(pfx, "progress")
-            refresh()
-        end,
-    }
     for _i, item in ipairs(scale_items) do menu[#menu+1] = item end
-    menu[#menu+1] = title_pos_item
     menu[#menu+1] = {
         text           = _lc("Show finished books"),
         checked_func   = function() return showFinished(pfx) end,

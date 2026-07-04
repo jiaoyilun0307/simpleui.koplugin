@@ -1542,11 +1542,13 @@ function HomescreenWidget:_buildCtx()
                 thumb_scale   = Config.getThumbScale("coverdeck", PFX),
                 lbl_scale     = Config.getItemLabelScale("coverdeck", PFX),
                 source        = SUISettings:readSetting(PFX .. "coverdeck_source") or "recent",
-                title_pos     = SUISettings:readSetting(PFX .. "coverdeck_title_pos") or "below",
                 show_finished = SUISettings:readSetting(PFX .. "coverdeck_show_finished") == true,
+                main_order    = SUISettings:readSetting(PFX .. "coverdeck_main_order"),
                 show = {
+                    title    = SUISettings:nilOrTrue(PFX .. "coverdeck_show_title"),
                     author   = SUISettings:nilOrTrue(PFX .. "coverdeck_show_author"),
                     progress = SUISettings:nilOrTrue(PFX .. "coverdeck_show_progress"),
+                    stats    = SUISettings:nilOrTrue(PFX .. "coverdeck_show_stats"),
                     percent  = SUISettings:nilOrTrue(PFX .. "coverdeck_show_percent"),
                     book_days      = SUISettings:nilOrTrue(PFX .. "coverdeck_show_book_days"),
                     book_time      = SUISettings:nilOrTrue(PFX .. "coverdeck_show_book_time"),
@@ -1616,7 +1618,7 @@ function HomescreenWidget:_buildCtx()
     -- and never requires a DB query.
     local cd_cfg = cfg and cfg.coverdeck
     local coverdeck_needs_db = mod_cd and Registry.isEnabled(mod_cd, PFX) and (
-        (cd_cfg and cd_cfg.show and
+        (cd_cfg and cd_cfg.show and cd_cfg.show.stats ~= false and
             (cd_cfg.show.book_days or cd_cfg.show.book_time or cd_cfg.show.book_remaining))
         or (not (cd_cfg and cd_cfg.show) and (
             SUISettings:nilOrTrue(PFX .. "coverdeck_show_book_days") or
