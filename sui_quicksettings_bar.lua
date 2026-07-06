@@ -798,11 +798,28 @@ end
 -- the patched updateItems knows to switch to panel mode.
 
 local _panel_tab = {
+    id       = "_sui_qs_panel",  -- lets sui_style.lua's icon-slot system (Style ▸ Icons ▸ Tab Bar) reference this tab
     icon     = "simpleui_settings",
     remember = false,
     -- _sui_qs_panel flag consumed by the patched updateItems
     _sui_qs_panel = true,
 }
+
+--- Applies the user's stored icon override (Style ▸ Icons ▸ Tab Bar ▸
+--- "SimpleUI Quick Settings") to the shared panel-tab descriptor, or falls
+--- back to the default "simpleui_settings" icon. `_panel_tab` is the exact
+--- same table object inserted by reference into both FileManagerMenu's and
+--- ReaderMenu's tab_item_table, so mutating its `.icon` field here updates
+--- the tab everywhere it appears, independent of injection/patch ordering.
+function QSBar.refreshPanelTabIcon()
+    local ok_ss, SUIStyle = pcall(require, "sui_style")
+    local override_path = ok_ss and SUIStyle and SUIStyle.getIcon("sui_tab_qs_panel")
+    local name = nil
+    if override_path and ok_ss and SUIStyle.registerTabIconName then
+        name = SUIStyle.registerTabIconName("sui_tab_qs_panel", override_path)
+    end
+    _panel_tab.icon = name or "simpleui_settings"
+end
 
 local function injectPanelTab(m_self)
     if not isEnabled() then return end
@@ -840,6 +857,10 @@ end
 -- Called once from SimpleUIPlugin:onInit (via the existing do-block in main.lua).
 function QSBar.install()
     if not isEnabled() then return end
+
+    -- Apply any stored icon override for the panel tab up front, so it's
+    -- already correct the first time the tab is injected.
+    pcall(QSBar.refreshPanelTabIcon)
 
     -- 0. Icon registration: make "simpleui_settings" resolve to settings.svg
     --    independently.  Three layers:

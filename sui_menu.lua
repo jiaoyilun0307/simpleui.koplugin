@@ -2539,6 +2539,35 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
                 },
             },
             {
+                text = _("Book Cover Transition"),
+                help_text = _("Briefly show the book cover full-screen when opening or closing a book, masking the page-layout flash. Requires the book to already be indexed by the cover browser (its cover must have been seen at least once in a grid/list view)."),
+                sub_item_table = {
+                    {
+                        text           = _("Show on Open"),
+                        checked_func   = function()
+                            return SUISettings:isTrue("simpleui_reader_cover_open")
+                        end,
+                        keep_menu_open = true,
+                        callback       = function()
+                            local on = SUISettings:isTrue("simpleui_reader_cover_open")
+                            SUISettings:saveSetting("simpleui_reader_cover_open", not on)
+                        end,
+                    },
+                    {
+                        text           = _("Show on Close"),
+                        help_text      = _("Replaces the \"Closing book…\" notice above with the cover for that close, when a cover is available."),
+                        checked_func   = function()
+                            return SUISettings:isTrue("simpleui_reader_cover_close")
+                        end,
+                        keep_menu_open = true,
+                        callback       = function()
+                            local on = SUISettings:isTrue("simpleui_reader_cover_close")
+                            SUISettings:saveSetting("simpleui_reader_cover_close", not on)
+                        end,
+                    },
+                },
+            },
+            {
                 text           = _("Statistics Loading Notice"),
                 help_text      = _("Show a brief \"Loading statistics\xe2\x80\xa6\" notice when opening a statistics window, preventing accidental double-taps while e-ink refreshes."),
                 checked_func   = function()

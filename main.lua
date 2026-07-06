@@ -1656,6 +1656,36 @@ function SimpleUIPlugin:onCloseDocument()
     local HS = package.loaded["sui_homescreen"]
     if not HS then return end
 
+    -- Filepath of the book that just closed. readhistory.hist[1] is still the
+    -- closing book at this point (the reader has not yet handed control back
+    -- to the FM, so the history order has not been updated). Computed here,
+    -- ahead of the notice block below, so both the cover-transition call and
+    -- the later stats-invalidation block (which also needs it) share one
+    -- lookup instead of repeating it.
+    local rh        = package.loaded["readhistory"]
+    local closed_fp = rh and rh.hist and rh.hist[1] and rh.hist[1].file
+
+    -- Cover Transition (close side): show the book cover instead of the
+    -- plain "Closing book…" notice below, for a less jarring exit from the
+    -- reader. Off by default; only takes effect for closes that would have
+    -- shown the notice anyway (an internal reload never reaches this point
+    -- with is_reload false, so it is never affected). If no cover is found
+    -- (e.g. CoverBrowser not installed, or the book was never indexed) this
+    -- silently falls through to the ordinary text notice further down.
+    local cover_shown = false
+    if not is_reload then
+        local Patches = package.loaded["sui_patches"]
+        if Patches and Patches.CoverTransition and Patches.CoverTransition.isCloseEnabled() then
+            local orig_show = UIManager._simpleui_show_orig or UIManager.show
+            local live_doc  = self.ui and self.ui.document
+            local ok_ct, shown = pcall(Patches.CoverTransition.show, closed_fp, orig_show, live_doc)
+            cover_shown = ok_ct and shown
+            if cover_shown then
+                Patches.CoverTransition.scheduleAutoClose(0.5)
+            end
+        end
+    end
+
     -- Show a brief "closing book" notice whenever a book is closed.
     -- onCloseDocument is the single, authoritative place for this: it fires on
     -- every close path (menu, gesture, or any direct call to ReaderUI:onClose).
@@ -1686,7 +1716,7 @@ function SimpleUIPlugin:onCloseDocument()
             notice_mode = SUISettings:nilOrTrue("simpleui_hs_closing_notice") and "always" or "never"
         end
 
-        local suppress = is_reload
+        local suppress = is_reload or cover_shown
 
         if (notice_mode == "always" and not suppress)
                 or (notice_mode == "gesture_only" and via_gesture) then
@@ -1737,12 +1767,9 @@ function SimpleUIPlugin:onCloseDocument()
     -- Registry.get + Registry.isEnabled are cheap table lookups; the module
     -- is guaranteed already loaded when enabled (required by the HS on open).
 
-    -- Determine the filepath of the book that just closed.
-    -- readhistory.hist[1] is still the closing book at this point (the reader
-    -- has not yet handed control back to the FM, so the history order has not
-    -- been updated).
-    local rh         = package.loaded["readhistory"]
-    local closed_fp  = rh and rh.hist and rh.hist[1] and rh.hist[1].file
+    -- closed_fp (filepath of the book that just closed) was already resolved
+    -- near the top of this function, ahead of the Cover Transition / notice
+    -- block, which also needs it.
 
     -- Invalidate the shared stats provider when either stats module is active.
     -- One SP.invalidate() covers both reading_goals and reading_stats — they

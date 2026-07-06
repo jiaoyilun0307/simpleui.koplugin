@@ -202,7 +202,7 @@ The `custom_icons/` folder is created automatically on first run and is never to
 
 ### Icon Packs
 
-An icon pack lets you replace multiple SimpleUI icons at once — titlebar buttons, pagination chevrons, navigation tab icons, and quick-action icons — with a single tap.
+An icon pack lets you replace multiple SimpleUI icons at once — titlebar buttons, pagination chevrons, navigation tab icons, touch-menu tab bar icons, and quick-action icons — with a single tap.
 
 #### Where to place packs
 
@@ -296,6 +296,22 @@ Every file in the pack root must be an `.svg` or `.png`. The filename (without e
 | Filename | Description |
 |----------|-------------|
 | `sui_fc_empty.svg` | Placeholder cover for empty folders |
+
+**Touch menu tab bar** (native KOReader tabs + the SimpleUI-injected Quick Settings tab)
+
+| Filename | Description |
+|----------|-------------|
+| `sui_tab_main.svg` | Tab: Menu |
+| `sui_tab_setting.svg` | Tab: Settings |
+| `sui_tab_tools.svg` | Tab: Tools |
+| `sui_tab_search.svg` | Tab: Search |
+| `sui_tab_fm_settings.svg` | Tab: File Browser Settings (File Manager only) |
+| `sui_tab_navigation.svg` | Tab: Reader Navigation (Reader only) |
+| `sui_tab_typeset.svg` | Tab: Reader Typeset (Reader only) |
+| `sui_tab_filebrowser.svg` | Tab: Back to File Browser (Reader only) |
+| `sui_tab_qs_panel.svg` | Tab: SimpleUI Quick Settings (injected tab) |
+
+> **Tab bar icons only support `.svg`/`.png` image files — Nerd Font symbols are not available for this group.** These icons are rendered by KOReader's own native tab-bar widget, which only ever resolves an icon by looking up an image file by name; it has no code path for drawing a font glyph. Every other icon group in SimpleUI (titlebar, pagination, navpager, quick actions, etc.) is rendered by SimpleUI's own widgets and supports Nerd Font symbols normally — this limitation is specific to the tab bar. The "Nerd Font symbol…" option is hidden accordingly when picking a tab bar icon from **Style → Icons → System Icons → Tab Bar**.
 
 Files with names that do not match any of the above are silently ignored.
 

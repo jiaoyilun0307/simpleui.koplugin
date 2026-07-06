@@ -1,7 +1,9 @@
 -- sui_style.lua — SimpleUI  ▸  Style  ▸  Icons  ▸  System Icons
 --
 -- Manages custom icon overrides for:
---   • KOReader FM menu tabs (appbar.filebrowser / settings / tools / search / menu)
+--   • KOReader FM + Reader touch-menu tabs (appbar.filebrowser / settings /
+--     tools / search / menu / navigation / typeset), plus the SimpleUI-
+--     injected Quick Settings tab (see sui_quicksettings_bar.lua)
 --   • FM titlebar home button  (KO built-in "home" icon)
 --   • SimpleUI menu button     (ko_menu  — the right titlebar button)
 --   • SimpleUI search button   (ko_search — injected search button)
@@ -12,9 +14,13 @@
 -- Icons are stored as full SVG/PNG paths in SUISettings under the key
 -- "simpleui_sysicon_<slot_id>".  nil means "use the default".
 --
--- For FM tab icons: we patch FileManagerMenu.setUpdateItemTable so that every
--- time the menu is rebuilt the tab icons are replaced with the user's choices.
--- The patch is installed by installTabIconPatch() and removed on teardown.
+-- For tab-bar icons: we patch FileManagerMenu.onShowMenu and
+-- ReaderMenu.onShowMenu so that every time either menu is (re)opened the
+-- tab icons are replaced with the user's choices before the TouchMenu
+-- widget is built. Matching happens on `tab.id` — the field KOReader's
+-- MenuSorter stamps onto every tab entry (menu_items key) — NOT `tab.key`,
+-- which native tabs never have. The patches are installed by
+-- installTabIconPatch()/installReaderTabIconPatch() and removed on teardown.
 --
 -- For titlebar / search / back icons: sui_titlebar.apply() calls
 -- SUIStyle.getIcon(slot_id) when it assigns image.file to each button, and
@@ -29,9 +35,16 @@
 --   SUIStyle.getIcon(id)      — stored path or nil
 --   SUIStyle.setIcon(id, path)— save (nil = reset to default)
 --   SUIStyle.resetAll()       — clear every override
---   SUIStyle.applyTabIcons(fm)— push overrides into live tab_item_table
---   SUIStyle.installTabIconPatch(plugin) — persistent FM-menu patch
---   SUIStyle.removeTabIconPatch()        — undo persistent patch
+--   SUIStyle.applyTabIcons(fm_or_ui_or_table) — push overrides into a live
+--                                          FM/Reader tab_item_table
+--   SUIStyle.installTabIconPatch(plugin)       — persistent FM-menu patch
+--   SUIStyle.removeTabIconPatch()              — undo persistent patch
+--   SUIStyle.installReaderTabIconPatch(plugin) — persistent Reader-menu patch
+--   SUIStyle.removeReaderTabIconPatch()        — undo persistent patch
+--   SUIStyle.refreshLiveTabBars()        — reapply + repaint any open
+--                                          FM/Reader tab bar right now
+--                                          (also syncs the shared Quick
+--                                          Settings panel-tab icon)
 --   SUIStyle.makeMenuItems(plugin)       — returns sub_item_table for the menu
 --   SUIStyle.applyIconToBtn(id, btn)     — overwrite image.file on a live button
 --                                          (called by sui_titlebar.lua)
@@ -197,6 +210,75 @@ M.SLOTS = {
         group     = "sui_fc_icons",
         default_ko = "icons/custom.svg",
     },
+    -- ── Touch menu tab bar ───────────────────────────────────────────────
+    -- Overrides the icons shown on the native KOReader touch-menu tabs
+    -- (FileManager + Reader), plus the SimpleUI-injected Quick Settings tab.
+    -- `tab_id` matches the `.id` field KOReader's MenuSorter stamps onto
+    -- each tab entry (menu_items key), NOT `tab.key` (that field doesn't
+    -- exist on native tabs). Applied live by M.applyTabIcons().
+    {
+        id         = "sui_tab_main",
+        label      = function() return _("Tab: Menu") end,
+        group      = "sui_tabbar_icons",
+        tab_id     = "main",
+        default_ko = "appbar.menu",
+    },
+    {
+        id         = "sui_tab_setting",
+        label      = function() return _("Tab: Settings") end,
+        group      = "sui_tabbar_icons",
+        tab_id     = "setting",
+        default_ko = "appbar.settings",
+    },
+    {
+        id         = "sui_tab_tools",
+        label      = function() return _("Tab: Tools") end,
+        group      = "sui_tabbar_icons",
+        tab_id     = "tools",
+        default_ko = "appbar.tools",
+    },
+    {
+        id         = "sui_tab_search",
+        label      = function() return _("Tab: Search") end,
+        group      = "sui_tabbar_icons",
+        tab_id     = "search",
+        default_ko = "appbar.search",
+    },
+    {
+        id         = "sui_tab_fm_settings",
+        label      = function() return _("Tab: File Browser Settings") end,
+        group      = "sui_tabbar_icons",
+        tab_id     = "filemanager_settings",
+        default_ko = "appbar.filebrowser",
+    },
+    {
+        id         = "sui_tab_navigation",
+        label      = function() return _("Tab: Reader Navigation") end,
+        group      = "sui_tabbar_icons",
+        tab_id     = "navigation",
+        default_ko = "appbar.navigation",
+    },
+    {
+        id         = "sui_tab_typeset",
+        label      = function() return _("Tab: Reader Typeset") end,
+        group      = "sui_tabbar_icons",
+        tab_id     = "typeset",
+        default_ko = "appbar.typeset",
+    },
+    {
+        id         = "sui_tab_filebrowser",
+        label      = function() return _("Tab: Back to File Browser") end,
+        group      = "sui_tabbar_icons",
+        tab_id     = "filebrowser",
+        default_ko = "appbar.filebrowser",
+    },
+    {
+        id         = "sui_tab_qs_panel",
+        label      = function() return _("Tab: SimpleUI Quick Settings") end,
+        group      = "sui_tabbar_icons",
+        tab_id     = "_sui_qs_panel",
+        default_ko = "simpleui_settings",
+    },
 }
 
 -- Quick lookup by id.
@@ -316,6 +398,7 @@ function M.performResetAllSystemIcons(plugin)
     if ok_qa and QA2 and QA2.invalidateCustomQACache then QA2.invalidateCustomQACache() end
     local ok_fc, FC = pcall(require, "sui_foldercovers")
     if ok_fc and FC and FC.invalidateCache then FC.invalidateCache() end
+    pcall(M.refreshLiveTabBars)
     
     if fm and fm.file_chooser then
         fm._navbar_suppress_path_change = true
@@ -611,21 +694,134 @@ end
 -- FM tab icon application
 -- ---------------------------------------------------------------------------
 
--- Build a tab_key → slot_id map for fast lookup.
-local _TAB_KEY_TO_ID = {}
+-- Build a tab_id → slot_id map for fast lookup.
+-- NOTE: KOReader's MenuSorter stamps `.id = order_id` onto every top-level
+-- tab entry (see ui/menusorter.lua:sort()); native tabs never have a
+-- `.key` field. The SimpleUI-injected Quick Settings tab is given an
+-- explicit `.id = "_sui_qs_panel"` in sui_quicksettings_bar.lua so it can
+-- be matched the same way.
+local _TAB_ID_TO_SLOT = {}
 for _, s in ipairs(M.SLOTS) do
-    if s.tab_key then _TAB_KEY_TO_ID[s.tab_key] = s.id end
+    if s.tab_id then _TAB_ID_TO_SLOT[s.tab_id] = s.id end
 end
 
---- Iterates the live tab_item_table of a FileManager instance and replaces
---- icons whose slot has a user override.  Also accepts a raw tab_item_table.
+-- ---------------------------------------------------------------------------
+-- Tab-icon name registration
+-- ---------------------------------------------------------------------------
+-- CRITICAL CONSTRAINT: unlike every other icon slot in this file (which
+-- SimpleUI renders itself via ImageWidget/IconWidget with `.file = path`,
+-- so any absolute/relative path works), tab-bar icons are rendered by
+-- KOReader's OWN native widgets: TouchMenu → TouchMenuBar → IconButton →
+-- IconWidget. IconButton unconditionally does
+-- `IconWidget:new{ icon = self.icon }`, and IconWidget:init() ALWAYS treats
+-- a non-file, non-image `.icon` as a bare NAME to search for under
+-- ICONS_DIRS + {".svg",".png"} (see ui/widget/iconwidget.lua) — it never
+-- accepts a literal file path. Assigning a full custom path straight into
+-- `tab.icon` (as an earlier version of this code did) therefore always
+-- resolves to icon-not-found.
+--
+-- The fix — and the same trick sui_quicksettings_bar.lua already uses to
+-- make "simpleui_settings" resolve — is to REGISTER the custom icon under
+-- a stable bare name:
+--   1. Copy the file to DataStorage/icons/<name>.<ext> (disk-based lookup;
+--      ICONS_DIRS always searches the user icons dir first, so this alone
+--      is enough, and survives restarts).
+--   2. Also poke IconWidget's runtime ICONS_PATH cache so the change is
+--      visible immediately, without waiting for a fresh process.
+-- Only .svg/.png are supported here because those are the only two
+-- extensions IconWidget's by-name search ever tries.
+local _TAB_ICON_NAME_CACHE = {} -- slot_id -> { src = last-registered source path, name = registered name }
+
+--- Registers `path` under a stable per-slot icon name so KOReader's native
+--- tab-bar widgets (which only resolve `.icon` by name) can find it.
+--- Returns the registered name, or nil if `path` can't be registered
+--- (unsupported extension, nerd-font glyph ref, or I/O failure) — callers
+--- should fall back to the slot's native default in that case.
+function M.registerTabIconName(slot_id, path)
+    if type(path) ~= "string" or path == "" then return nil end
+
+    local ok_cfg, Config = pcall(require, "sui_config")
+    if ok_cfg and Config.isNerdIcon and Config.isNerdIcon(path) then
+        -- Nerd-font glyph references aren't files; nothing to register.
+        return nil
+    end
+
+    local ext = path:match("%.([^.]+)$")
+    ext = ext and ext:lower()
+    if ext ~= "svg" and ext ~= "png" then
+        -- IconWidget's by-name search only ever tries .svg/.png — jpg/jpeg
+        -- (allowed for every other icon slot) can never be found this way.
+        logger.warn("simpleui/style: tab icons must be .svg or .png (got: "
+                    .. tostring(ext) .. ") — falling back to default for " .. slot_id)
+        return nil
+    end
+
+    local name = "simpleui_" .. slot_id
+    local cached = _TAB_ICON_NAME_CACHE[slot_id]
+    if cached and cached.src == path and cached.name == name then
+        return name -- already registered for this exact source
+    end
+
+    local ok_ds, DataStorage = pcall(require, "datastorage")
+    local ok_lfs, lfs        = pcall(require, "libs/libkoreader-lfs")
+    local ok_fu, ffiutil     = pcall(require, "ffi/util")
+    if not (ok_ds and ok_lfs and ok_fu) then return nil end
+
+    local user_dir = DataStorage:getDataDir() .. "/icons"
+    if lfs.attributes(user_dir, "mode") ~= "directory" then
+        pcall(lfs.mkdir, user_dir)
+    end
+    local dst = user_dir .. "/" .. name .. "." .. ext
+
+    -- Always (re)copy — the user may have picked a different source file
+    -- for the same slot since the last time this ran.
+    local copy_ok = pcall(ffiutil.copyFile, path, dst)
+    if not copy_ok or lfs.attributes(dst, "mode") ~= "file" then
+        logger.warn("simpleui/style: failed to register tab icon for " .. slot_id)
+        return nil
+    end
+
+    -- Keep IconWidget's runtime name-cache in sync so the change applies
+    -- immediately, without a restart (same approach as
+    -- sui_quicksettings_bar.lua's icon-registration Layer 2).
+    pcall(function()
+        local iw = require("ui/widget/iconwidget")
+        local iw_init = iw._simpleui_orig_init_for_scan or rawget(iw, "init")
+        if type(iw_init) ~= "function" then return end
+        for i = 1, 64 do
+            local uname, uval = debug.getupvalue(iw_init, i)
+            if uname == nil then break end
+            if uname == "ICONS_PATH" and type(uval) == "table" then
+                uval[name] = dst
+                break
+            end
+        end
+    end)
+
+    _TAB_ICON_NAME_CACHE[slot_id] = { src = path, name = name }
+    return name
+end
+
+--- Iterates the live tab_item_table of a FileManager or ReaderMenu instance
+--- and resyncs every recognized tab's icon: the user's registered override
+--- when one exists, or the slot's native default otherwise. Also accepts a
+--- raw tab_item_table. Always resyncing (rather than only touching tabs
+--- with an override) also fixes resets: a tab that previously had a custom
+--- icon correctly reverts to its native icon once the override is cleared.
 function M.applyTabIcons(fm_or_table)
     local tab_table
     if type(fm_or_table) == "table" then
-        -- Could be a FM instance or a raw table.
+        -- Could be a FM instance, a ReaderUI instance, or a raw table.
         if fm_or_table.file_manager_menu
            and fm_or_table.file_manager_menu.tab_item_table then
             tab_table = fm_or_table.file_manager_menu.tab_item_table
+        elseif fm_or_table.menu
+           and fm_or_table.menu.tab_item_table then
+            -- ReaderUI instance (ReaderMenu is registered as ui.menu).
+            tab_table = fm_or_table.menu.tab_item_table
+        elseif fm_or_table.tab_item_table then
+            -- FileManagerMenu or ReaderMenu instance passed directly.
+            tab_table = fm_or_table.tab_item_table
         elseif fm_or_table[1] and fm_or_table[1].icon ~= nil then
             -- raw tab_item_table passed directly
             tab_table = fm_or_table
@@ -634,25 +830,51 @@ function M.applyTabIcons(fm_or_table)
     if not tab_table then return end
 
     for _, tab in ipairs(tab_table) do
-        local slot_id = tab.key and _TAB_KEY_TO_ID[tab.key]
+        local slot_id = tab.id and _TAB_ID_TO_SLOT[tab.id]
         if slot_id then
-            local path = M.getIcon(slot_id)
-            if path then
-                tab.icon = path
+            local slot = _SLOT_BY_ID[slot_id]
+            local raw  = M.getIcon(slot_id)
+            if raw then
+                local name = M.registerTabIconName(slot_id, raw)
+                tab.icon = name or (slot and slot.default_ko) or tab.icon
+            elseif slot and slot.default_ko then
+                tab.icon = slot.default_ko
             end
         end
     end
 end
 
 -- ---------------------------------------------------------------------------
--- Persistent FM-menu patch
+-- Persistent tab-bar icon patches (FileManagerMenu + ReaderMenu)
 -- ---------------------------------------------------------------------------
--- Wraps FileManagerMenu.setUpdateItemTable so icons survive every menu rebuild.
+-- Both patches hook `onShowMenu` rather than `setUpdateItemTable`.
+--
+-- Why onShowMenu: FileManagerMenu/ReaderMenu:onShowMenu only calls
+-- setUpdateItemTable() when `self.tab_item_table == nil` (build-once, cache
+-- forever per instance). Patching onShowMenu instead of setUpdateItemTable
+-- guarantees our override runs on *every* menu opening, and — critically —
+-- runs it by forcing the table to be built (via a dynamic `fmm_self:
+-- setUpdateItemTable()` call, which resolves to whatever version is
+-- currently installed, including sui_quicksettings_bar's own tab-injection
+-- wrap) *before* delegating to the untouched native onShowMenu that
+-- actually constructs the TouchMenu widget. This sidesteps any ordering
+-- dependency between this patch and sui_quicksettings_bar's own patches:
+-- by the time TouchMenu:new{} runs, every tab (native + injected) already
+-- has its final icon.
+--
+-- The SimpleUI-injected Quick Settings tab (_sui_qs_panel) is additionally
+-- kept in sync directly by QSBar.refreshPanelTabIcon() (see
+-- sui_quicksettings_bar.lua), since that tab is a single shared table
+-- object reused by reference in both FM and Reader — mutating its `.icon`
+-- field once is sufficient and avoids relying on injection-vs-override
+-- ordering altogether. applyTabIcons() below still matches it too, as a
+-- harmless no-op confirmation once it's present in a given tab_item_table.
 
-local _patch_installed = false
+local _fm_patch_installed     = false
+local _reader_patch_installed = false
 
 function M.installTabIconPatch(plugin)
-    if _patch_installed then return end
+    if _fm_patch_installed then return end
     local FMMenu = package.loaded["apps/filemanager/filemanagermenu"]
     if not FMMenu then
         local ok, m = pcall(require, "apps/filemanager/filemanagermenu")
@@ -661,51 +883,104 @@ function M.installTabIconPatch(plugin)
     if not FMMenu then return end
     if FMMenu._simpleui_sysicon_patched then return end
 
-    local orig = FMMenu.setUpdateItemTable
+    local orig = FMMenu.onShowMenu
     FMMenu._simpleui_sysicon_orig    = orig
     FMMenu._simpleui_sysicon_patched = true
-    plugin._sysicon_fmmenu_patched   = true
+    if plugin then plugin._sysicon_fmmenu_patched = true end
 
-    FMMenu.setUpdateItemTable = function(fmm_self, ...)
-        orig(fmm_self, ...)
-        -- After the table is built, replace icons.
+    FMMenu.onShowMenu = function(fmm_self, ...)
+        if fmm_self.tab_item_table == nil then
+            fmm_self:setUpdateItemTable()
+        end
         if fmm_self.tab_item_table then
             M.applyTabIcons(fmm_self.tab_item_table)
         end
+        return orig(fmm_self, ...)
     end
 
-    _patch_installed = true
+    _fm_patch_installed = true
     logger.dbg("simpleui/style: FM tab icon patch installed")
 end
 
 function M.removeTabIconPatch()
-    if not _patch_installed then return end
+    if not _fm_patch_installed then return end
     local FMMenu = package.loaded["apps/filemanager/filemanagermenu"]
     if FMMenu and FMMenu._simpleui_sysicon_patched then
-        FMMenu.setUpdateItemTable           = FMMenu._simpleui_sysicon_orig
-        FMMenu._simpleui_sysicon_orig       = nil
-        FMMenu._simpleui_sysicon_patched    = nil
+        FMMenu.onShowMenu                = FMMenu._simpleui_sysicon_orig
+        FMMenu._simpleui_sysicon_orig    = nil
+        FMMenu._simpleui_sysicon_patched = nil
     end
-    _patch_installed = false
+    _fm_patch_installed = false
     logger.dbg("simpleui/style: FM tab icon patch removed")
 end
 
--- ---------------------------------------------------------------------------
--- Live FM icon refresh
--- ---------------------------------------------------------------------------
--- Pushes current overrides into the live menu and asks it to redraw.
+function M.installReaderTabIconPatch(plugin)
+    if _reader_patch_installed then return end
+    local ok, RMenu = pcall(require, "apps/reader/modules/readermenu")
+    if not ok or not RMenu then return end
+    if RMenu._simpleui_sysicon_patched then return end
 
-local function _refreshFMTabBar(fm)
-    if not (fm and fm.file_manager_menu) then return end
-    local fmm = fm.file_manager_menu
-    if fmm.tab_item_table then
-        M.applyTabIcons(fmm.tab_item_table)
+    local orig = RMenu.onShowMenu
+    RMenu._simpleui_sysicon_orig    = orig
+    RMenu._simpleui_sysicon_patched = true
+    if plugin then plugin._sysicon_rdmenu_patched = true end
+
+    RMenu.onShowMenu = function(rm_self, ...)
+        if rm_self.tab_item_table == nil then
+            rm_self:setUpdateItemTable()
+        end
+        if rm_self.tab_item_table then
+            M.applyTabIcons(rm_self.tab_item_table)
+        end
+        return orig(rm_self, ...)
     end
-    -- Tell TouchMenu to repaint if it's open.
-    local tm = fmm._menu
-    if tm then
-        local ok_ui, UIManager = pcall(require, "ui/uimanager")
-        if ok_ui then UIManager:setDirty(tm, "ui") end
+
+    _reader_patch_installed = true
+    logger.dbg("simpleui/style: Reader tab icon patch installed")
+end
+
+function M.removeReaderTabIconPatch()
+    if not _reader_patch_installed then return end
+    local RMenu = package.loaded["apps/reader/modules/readermenu"]
+    if RMenu and RMenu._simpleui_sysicon_patched then
+        RMenu.onShowMenu                = RMenu._simpleui_sysicon_orig
+        RMenu._simpleui_sysicon_orig    = nil
+        RMenu._simpleui_sysicon_patched = nil
+    end
+    _reader_patch_installed = false
+    logger.dbg("simpleui/style: Reader tab icon patch removed")
+end
+
+-- ---------------------------------------------------------------------------
+-- Live tab-bar icon refresh
+-- ---------------------------------------------------------------------------
+-- Pushes current overrides into any live FM/Reader tab bar and asks it to
+-- redraw. Covers the (rare) case where the icon picker is used while a
+-- touch menu with tabs is already on the window stack.
+
+function M.refreshLiveTabBars()
+    -- Keep the shared Quick Settings panel tab's icon in sync regardless
+    -- of whether the quicksettings-bar feature itself is currently enabled.
+    local ok_qs, QSBar = pcall(require, "sui_quicksettings_bar")
+    if ok_qs and QSBar and QSBar.refreshPanelTabIcon then
+        pcall(QSBar.refreshPanelTabIcon)
+    end
+
+    local ok_ui, UIManager = pcall(require, "ui/uimanager")
+    if not ok_ui then return end
+
+    local fm = package.loaded["apps/filemanager/filemanager"]
+    fm = fm and fm.instance
+    if fm and fm.file_manager_menu and fm.file_manager_menu.tab_item_table then
+        M.applyTabIcons(fm.file_manager_menu.tab_item_table)
+    end
+
+    for _, entry in ipairs(UIManager._window_stack or {}) do
+        local w = entry.widget
+        if w and w.tab_item_table then
+            M.applyTabIcons(w.tab_item_table)
+            UIManager:setDirty(w, "ui")
+        end
     end
 end
 
@@ -810,6 +1085,8 @@ local function _reapplyTitlebar()
                 fm.file_chooser:refreshPath()
                 fm._navbar_suppress_path_change = nil
             end
+        elseif group == "sui_tabbar_icons" then
+            M.refreshLiveTabBars()
         end
     end
 
@@ -916,6 +1193,13 @@ local function _reapplyTitlebar()
     -- ── sui_fc_icons group ───────────────────────────────────────────────
     for _, slot in ipairs(M.SLOTS) do
         if slot.group == "sui_fc_icons" then
+            items[#items + 1] = _makeRow(slot)
+        end
+    end
+
+    -- ── sui_tabbar_icons group (touch menu tabs) ─────────────────────────
+    for _, slot in ipairs(M.SLOTS) do
+        if slot.group == "sui_tabbar_icons" then
             items[#items + 1] = _makeRow(slot)
         end
     end
@@ -1048,15 +1332,27 @@ function M.sui_build_system_icons(plugin, ctx_menu, ctx)
                                 local function _guardedSetIcon(ipath, on_valid)
                                     if ipath == nil then on_valid(nil); return end
                                     local safe = M.safeIconPath(ipath, nil)
-                                    if safe then on_valid(safe)
-                                    else
+                                    if not safe then
                                         ctx_menu.UIManager:show(ctx_menu.InfoMessage:new{ text = _("Unsupported icon format.\nPlease use a PNG or SVG file."), timeout = 3 })
+                                        return
                                     end
+                                    if slot.group == "sui_tabbar_icons" then
+                                        local ext = safe:match("%.([^.]+)$")
+                                        ext = ext and ext:lower()
+                                        if ext ~= "svg" and ext ~= "png" then
+                                            ctx_menu.UIManager:show(ctx_menu.InfoMessage:new{ text = _("Tab bar icons must be PNG or SVG."), timeout = 3 })
+                                            return
+                                        end
+                                    end
+                                    on_valid(safe)
                                 end
                                 _guardedSetIcon(new_path, function(safe_path)
                                     M.setIcon(slot.id, safe_path)
                                     QA.invalidateCustomQACache()
                                     plugin:_rebuildAllNavbars()
+                                    if slot.group == "sui_tabbar_icons" then
+                                        pcall(M.refreshLiveTabBars)
+                                    end
                                     local HS = package.loaded["sui_homescreen"]
                                     if HS and HS._instance then HS._instance:_refreshImmediate(false) end
                                     -- Reapply titlebar icons and dirty the root widget so the
@@ -1076,7 +1372,7 @@ function M.sui_build_system_icons(plugin, ctx_menu, ctx)
                                     end
                                     ctx.repaint()
                                 end)
-                            end, label, plugin, "_sysicon_picker_" .. slot.id, true)
+                            end, label, plugin, "_sysicon_picker_" .. slot.id, slot.group ~= "sui_tabbar_icons")
                         end
                     }
                 end
@@ -1088,6 +1384,7 @@ function M.sui_build_system_icons(plugin, ctx_menu, ctx)
         addGroup("sui_pager_icons", _("Pagination Bar"))
         addGroup("sui_navpager_icons", _("Navpager"))
         addGroup("sui_fc_icons", _("Folder Covers"))
+        addGroup("sui_tabbar_icons", _("Tab Bar"))
         return rows
     end
     

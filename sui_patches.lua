@@ -1219,6 +1219,170 @@ function M.patchFullscreenWidgets(plugin)
 end
 
 -- ---------------------------------------------------------------------------
+-- Cover Transition
+-- Shows the book cover full-screen for a brief moment right as the reader
+-- opens or closes, masking the layout/repaint flash that would otherwise be
+-- visible. Deliberately stateless and patch-free: it is only ever called
+-- from the two hooks that already exist for this purpose — the ReaderUI
+-- branch inside the single UIManager.show wrapper below (open side) and
+-- SimpleUIPlugin:onCloseDocument in main.lua (close side). No new
+-- monkey-patch is installed for this feature, so it cannot conflict with
+-- (or duplicate) any other UIManager.show / ReaderUI wrapper a user-supplied
+-- patch may already be maintaining.
+-- ---------------------------------------------------------------------------
+
+local CoverTransition = {}
+M.CoverTransition = CoverTransition
+
+local _ct_widget     = nil
+local _ct_close_task = nil
+
+-- Lazy-loaded, same pattern as module_books_shared.getBookInfoManager(): no
+-- package.path manipulation needed, CoverBrowser (if present) has already
+-- registered "bookinfomanager" in package.loaded by the time SimpleUI reads it.
+local _ct_BookInfoManager -- nil = not yet resolved, false = unavailable
+local function _ctBookInfoManager()
+    if _ct_BookInfoManager == nil then
+        local ok, bim = pcall(require, "bookinfomanager")
+        _ct_BookInfoManager = ok and bim or false
+    end
+    return _ct_BookInfoManager or nil
+end
+
+function CoverTransition.isOpenEnabled()
+    return SUISettings:isTrue("simpleui_reader_cover_open")
+end
+
+function CoverTransition.isCloseEnabled()
+    return SUISettings:isTrue("simpleui_reader_cover_close")
+end
+
+-- Only source: the CoverBrowser cache DB, if the plugin is installed and has
+-- already indexed the file. Deliberately does NOT fall back to opening the
+-- document directly (unlike a full re-implementation would) — that path
+-- means a second, temporary document render just to grab a thumbnail, which
+-- is the kind of extra SQLite/CRE work this feature exists to hide, not add.
+-- Cache misses simply skip the cover for that one transition.
+local function _ctFindCoverBB(filepath)
+    if not filepath or filepath == "" then return nil end
+    local BIM = _ctBookInfoManager()
+    if not BIM then return nil end
+
+    local ok, info = pcall(function() return BIM:getBookInfo(filepath, true) end)
+    if not ok or not info then return nil end
+    if not info.has_cover or info.ignore_cover or not info.cover_bb then return nil end
+    return info.cover_bb
+end
+
+-- Public: exposed so other SimpleUI modules can reuse the exact same cover
+-- source instead of re-implementing BookInfoManager lookup.
+--
+-- live_document, when given, is an already-open document object for
+-- `filepath` (e.g. widget.document in the ReaderUI-open branch below, or
+-- ui.document from onCloseDocument while a book is open).
+-- In that case the cover is read straight off the open document — the same
+-- zero-extra-I/O path KOReader's own BookInfo:getCoverImage() uses — instead
+-- of going through BookInfoManager. Custom covers (DocSettings custom cover
+-- file) are still honoured, since that is the one case where a *different*,
+-- normally tiny, file legitimately needs to be opened.
+function CoverTransition.findCoverBB(filepath, live_document)
+    if live_document then
+        local ok, bb = pcall(function()
+            local DocSettings = require("docsettings")
+            local custom_cover = DocSettings:findCustomCoverFile(filepath)
+            if custom_cover then
+                local DocumentRegistry = require("document/documentregistry")
+                local cover_doc = DocumentRegistry:openDocument(custom_cover)
+                if cover_doc then
+                    local cbb = cover_doc:getCoverPageImage()
+                    cover_doc:close()
+                    if cbb then return cbb end
+                end
+            end
+            return live_document:getCoverPageImage()
+        end)
+        if ok and bb then return bb end
+    end
+    return _ctFindCoverBB(filepath)
+end
+
+function CoverTransition.isShowing()
+    return _ct_widget ~= nil
+end
+
+-- Set by patchReaderShowCoroutine right before calling through to the
+-- original ReaderUI.showReaderCoroutine, and consumed by the very next
+-- UIManager.show call inside the wrapper below (which — in that narrow
+-- window — is always KOReader's own "Opening file '...'." InfoMessage).
+-- A plain string (the file being opened), not a boolean, so the wrapper
+-- doesn't need to re-derive the path from the InfoMessage's translated text.
+CoverTransition._pending_open_file = nil
+
+-- Cancels a pending scheduled close (used when a new transition starts
+-- before the previous one's auto-close has fired).
+local function _ctCancelPendingClose()
+    if _ct_close_task then
+        UIManager:unschedule(_ct_close_task)
+        _ct_close_task = nil
+    end
+end
+
+function CoverTransition.close()
+    _ctCancelPendingClose()
+    if _ct_widget then
+        pcall(function() UIManager:close(_ct_widget) end)
+        _ct_widget = nil
+    end
+end
+
+-- show(filepath, orig_show) — orig_show must be the pristine UIManager.show
+-- (i.e. the value captured before any wrapper ran), so the cover itself is
+-- never re-processed by the navbar-injection logic below.
+-- Returns true if a cover was actually displayed.
+function CoverTransition.show(filepath, orig_show, live_document)
+    local cover_bb = CoverTransition.findCoverBB(filepath, live_document)
+    if not cover_bb then return false end
+
+    CoverTransition.close()
+
+    local ok_iw, ImageWidget = pcall(require, "ui/widget/imagewidget")
+    if not ok_iw then return false end
+
+    local ok_w, widget_or_err = pcall(function()
+        return ImageWidget:new{
+            image             = cover_bb,
+            width             = Screen:getWidth(),
+            height            = Screen:getHeight(),
+            alpha             = true,
+            image_disposable  = false,
+        }
+    end)
+    if not ok_w then
+        logger.warn("simpleui/sui_patches: CoverTransition failed to build widget", widget_or_err)
+        return false
+    end
+
+    local widget = widget_or_err
+    local ok_show = pcall(orig_show, UIManager, widget, "full")
+    if not ok_show then return false end
+
+    UIManager:forceRePaint()
+    _ct_widget = widget
+    return true
+end
+
+-- Auto-closes the cover shortly after showing it, so it never lingers over
+-- the freshly-painted reader/FM if the caller forgets to close it explicitly.
+function CoverTransition.scheduleAutoClose(delay)
+    _ctCancelPendingClose()
+    _ct_close_task = function()
+        _ct_close_task = nil
+        CoverTransition.close()
+    end
+    UIManager:scheduleIn(delay or 0.15, _ct_close_task)
+end
+
+-- ---------------------------------------------------------------------------
 -- UIManager.show patch
 -- Injects the navbar into qualifying fullscreen widgets and closes the
 -- homescreen whenever another fullscreen widget appears on top of it.
@@ -1281,6 +1445,25 @@ function M.patchUIManagerShow(plugin)
         -- indicator drift out of sync with the widget actually on screen.
         local plugin = UIManager._simpleui_show_plugin or plugin
 
+        -- Cover Transition (open side, notice substitution): the very next
+        -- UIManager.show call after ReaderUI.showReaderCoroutine flagged a
+        -- file is, in that narrow window, always KOReader's own "Opening
+        -- file '...'." InfoMessage (timeout=0.0, no covers_fullscreen — see
+        -- patchReaderShowCoroutine). Swap the cover in for it so nothing
+        -- text-based ever flashes while the book loads. Falls through to
+        -- showing the InfoMessage normally when no cover is available, so
+        -- books with no cached cover still get their loading feedback.
+        local pending_open_file = CoverTransition._pending_open_file
+        if pending_open_file then
+            CoverTransition._pending_open_file = nil
+            if widget and widget.timeout == 0.0 and not widget.covers_fullscreen then
+                local ok_ct, shown = pcall(CoverTransition.show, pending_open_file, orig_show)
+                if ok_ct and shown then
+                    return
+                end
+            end
+        end
+
         -- Fast path: non-fullscreen widgets need no SimpleUI logic.
         if not (widget and widget.covers_fullscreen) then
             return orig_show(um_self, widget, ...)
@@ -1291,6 +1474,26 @@ function M.patchUIManagerShow(plugin)
         if widget.name == "ReaderUI" then
             pcall(M.wireReaderMenuFMTab,    plugin, widget)
             pcall(M.patchReloadDocument,    plugin, widget)
+
+            -- Cover Transition (open side): show the cover a beat before the
+            -- reader's own chrome paints, then auto-close shortly after —
+            -- entirely optional and off by default. Uses orig_show (the
+            -- pristine UIManager.show) so the cover widget itself never goes
+            -- through the navbar-injection path below.
+            if CoverTransition.isOpenEnabled() then
+                if CoverTransition.isShowing() then
+                    -- Already showing (put up earlier by the notice
+                    -- substitution above) — just push the auto-close out
+                    -- instead of closing and re-showing the same cover.
+                    CoverTransition.scheduleAutoClose(0.15)
+                else
+                    local fp = widget.document and widget.document.file
+                    local ok_ct, shown = pcall(CoverTransition.show, fp, orig_show, widget.document)
+                    if ok_ct and shown then
+                        CoverTransition.scheduleAutoClose(0.15)
+                    end
+                end
+            end
         end
 
         local n_extra    = select("#", ...)
@@ -2980,10 +3183,51 @@ function M.patchReloadDocument(plugin, readerui)
     if type(orig) ~= "function" then return end
     readerui.reloadDocument = function(self, ...)
         plugin._suppress_closing_notice = true
+        plugin._suppress_opening_cover  = true
         return orig(self, ...)
     end
     readerui._simpleui_reload_patched = true
 end
+
+-- ---------------------------------------------------------------------------
+-- ReaderUI.showReaderCoroutine — class-level patch, installed once.
+--
+-- KOReader shows a plain "Opening file '...'." InfoMessage synchronously at
+-- the very top of showReaderCoroutine, before the (potentially slow) actual
+-- document load happens on the next tick. When Cover Transition's open side
+-- is enabled, that notice is what stays on screen for the whole load — our
+-- existing ReaderUI-shown hook further down fires too late to hide it, it
+-- only masks the final instant the reader itself appears.
+--
+-- Rather than reimplementing showReaderCoroutine's coroutine/crash-handling
+-- body (out of scope for this feature, and a maintenance burden across
+-- KOReader versions), this only flags the file about to be opened; the
+-- existing single UIManager.show wrapper below recognises the very next
+-- InfoMessage call as that notice and substitutes the cover for it. Nothing
+-- here duplicates or second-guesses KOReader's own opening logic.
+-- ---------------------------------------------------------------------------
+function M.patchReaderShowCoroutine(plugin)
+    local ok, ReaderUI = pcall(require, "apps/reader/readerui")
+    if not ok or not ReaderUI then return end
+    if ReaderUI._simpleui_show_coroutine_patched then return end
+    ReaderUI._simpleui_show_coroutine_patched = true
+
+    local orig = ReaderUI.showReaderCoroutine
+    ReaderUI.showReaderCoroutine = function(self, file, provider, seamless)
+        -- This patch is only ever installed once, so the `plugin` upvalue
+        -- would go stale across FM recreations — resolve the live instance
+        -- the same way the UIManager.show wrapper does.
+        local live_plugin = UIManager._simpleui_show_plugin or plugin
+        local is_reload = live_plugin._suppress_opening_cover
+        live_plugin._suppress_opening_cover = nil
+
+        if not seamless and not is_reload and CoverTransition.isOpenEnabled() then
+            CoverTransition._pending_open_file = file
+        end
+        return orig(self, file, provider, seamless)
+    end
+end
+
 
 function M.wireReaderMenuFMTab(plugin, readerui)
     if not (readerui and readerui.menu) then return end
@@ -3739,6 +3983,7 @@ function M.installAll(plugin)
     M.patchCollections(plugin)
     M.patchFullscreenWidgets(plugin)
     M.patchUIManagerShow(plugin)
+    M.patchReaderShowCoroutine(plugin)
     M.patchUIManagerClose(plugin)
     M.patchMenuInitForPagination(plugin)
     M.patchMenuForNavpager(plugin)
@@ -3746,10 +3991,12 @@ function M.installAll(plugin)
     M.patchStatusButtons(plugin)
     M.patchResetSettingsButton(plugin)
     M.patchFontGetFace(plugin)
-    -- Install the FM tab icon patch so system icon overrides survive menu rebuilds.
+    -- Install the FM + Reader tab icon patches so system icon overrides
+    -- survive menu rebuilds.
     local ok_ss, SUIStyle = pcall(require, "sui_style")
     if ok_ss and SUIStyle then
         pcall(SUIStyle.installTabIconPatch, plugin)
+        pcall(SUIStyle.installReaderTabIconPatch, plugin)
     end
     -- Install button-bounds overlay when the debug setting is on at startup.
     if SUISettings:isTrue("simpleui_debug_button_bounds") then
@@ -3799,6 +4046,11 @@ function M.installAll(plugin)
 end
 
 function M.teardownAll(plugin)
+    -- Cover Transition holds no monkey-patch of its own (it is only ever
+    -- invoked from hooks owned by other patches in this file), but it can
+    -- have a widget on screen or a pending auto-close timer at teardown time.
+    pcall(CoverTransition.close)
+
     -- Restore ffi/util.purgeDir patch.
     local ffiUtil = package.loaded["ffi/util"]
     if ffiUtil and ffiUtil._simpleui_purgeDir_patched and plugin._orig_ffi_purgeDir then
@@ -3965,6 +4217,12 @@ function M.teardownAll(plugin)
         local ok_ss, SUIStyle = pcall(require, "sui_style")
         if ok_ss and SUIStyle then pcall(SUIStyle.removeTabIconPatch) end
         plugin._sysicon_fmmenu_patched = nil
+    end
+    -- Remove the Reader tab icon patch installed by SUIStyle.
+    if plugin._sysicon_rdmenu_patched then
+        local ok_ss, SUIStyle = pcall(require, "sui_style")
+        if ok_ss and SUIStyle then pcall(SUIStyle.removeReaderTabIconPatch) end
+        plugin._sysicon_rdmenu_patched = nil
     end
 
     local Dispatcher = package.loaded["dispatcher"]
