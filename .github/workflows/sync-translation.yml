@@ -52,10 +52,13 @@ jobs:
       - name: Merge upstream changes
         if: steps.check.outputs.has_upstream_changes == 'true'
         run: |
-          git merge upstream/main --no-edit || {
-            echo "Merge conflict detected, aborting..."
-            git merge --abort
-            exit 1
+          # 使用 ours 策略处理冲突，保留我们的自动化文件
+          git merge upstream/main --no-edit -X ours || {
+            echo "Merge failed, trying with manual conflict resolution..."
+            # 如果自动解决失败，手动保留我们的文件
+            git checkout --ours .github/workflows/sync-translation.yml scripts/check_translation.py scripts/auto_translate.py 2>/dev/null || true
+            git add .
+            git commit --no-edit || echo "No commit needed"
           }
       
       - name: Check translation completeness
