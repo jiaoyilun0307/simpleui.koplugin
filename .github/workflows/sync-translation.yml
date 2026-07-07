@@ -61,6 +61,15 @@ jobs:
             git commit --no-edit || echo "No commit needed"
           }
       
+      - name: Debug - List files
+        run: |
+          echo "=== Current directory ==="
+          pwd
+          echo "=== Scripts directory ==="
+          ls -la scripts/ || echo "scripts/ not found"
+          echo "=== All files ==="
+          find . -name "*.py" -type f
+      
       - name: Check translation completeness
         if: steps.check.outputs.has_upstream_changes == 'true'
         id: translate_check
