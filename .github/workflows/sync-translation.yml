@@ -65,7 +65,7 @@ jobs:
         if: steps.check.outputs.has_upstream_changes == 'true'
         id: translate_check
         run: |
-          python scripts/check_translation.py
+          python scripts/check_translation.py || true
           MISSING=$(python scripts/check_translation.py --count-missing | tr -d '[:space:]')
           echo "missing_count=${MISSING}" >> "$GITHUB_OUTPUT"
           echo "Missing count: ${MISSING}"
