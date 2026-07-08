@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+"""Generate auto_translate.py with correct UTF-8 encoding"""
+
+content = r'''#!/usr/bin/env python3
 """
 Auto-translate missing entries in zh_CN.po
 Uses a translation dictionary for common terms, falls back to keeping English
@@ -186,3 +189,9 @@ def main():
 
 if __name__ == '__main__':
     main()
+'''
+
+with open('scripts/auto_translate.py', 'w', encoding='utf-8') as f:
+    f.write(content)
+
+print("File generated successfully!")
