@@ -19,14 +19,6 @@ jobs:
         with:
           fetch-depth: 0
       
-      - name: Debug workspace
-        run: |
-          echo "GITHUB_WORKSPACE: $GITHUB_WORKSPACE"
-          echo "Current dir: $(pwd)"
-          ls -la
-          ls -la scripts/ || echo "scripts/ not found in current dir"
-          find . -name "auto_translate.py" 2>/dev/null
-      
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
