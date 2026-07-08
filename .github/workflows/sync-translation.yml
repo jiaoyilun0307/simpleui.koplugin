@@ -70,6 +70,13 @@ jobs:
           echo "missing_count=${MISSING}" >> "$GITHUB_OUTPUT"
           echo "Missing count: ${MISSING}"
       
+      - name: Ensure scripts exist
+        if: steps.check.outputs.has_upstream_changes == 'true'
+        run: |
+          # 确保我们的脚本文件存在（处理上游合并可能的冲突）
+          git checkout HEAD -- scripts/auto_translate.py scripts/check_translation.py 2>/dev/null || true
+          ls -la scripts/
+      
       - name: Auto-fix missing translations
         if: steps.check.outputs.has_upstream_changes == 'true' && steps.translate_check.outputs.missing_count != '0'
         run: |
