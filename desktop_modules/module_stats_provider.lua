@@ -323,32 +323,54 @@ end
 
 -- ---------------------------------------------------------------------------
 -- Sidecar scan: one pass → books_year + books_total simultaneously.
--- books_year counts books *completed* this year, based on summary.modified
--- (the sidecar's completion timestamp) only. We deliberately do NOT use the
--- statistics DB's last_open here — it updates on every session close, not
--- just on completion, so using it as a "read this year" signal inflates the
--- count whenever an already-finished book from a previous year is reopened.
+-- books_year counts books *completed* this year, based on summary.date_finished
+-- or, as a fallback, summary.modified — but ONLY when modified is a string.
+--
+-- Why the string-only restriction on modified:
+--   • When the user taps a status button in KOReader's library,
+--     filemanagerutil.saveSummary writes modified as a formatted date string
+--     (e.g. "2024-01-15 10:30:00"). That string is a reliable completion date.
+--   • On every normal reader session close, KOReader writes modified as a
+--     NUMBER (os.time() unix timestamp). This timestamp is refreshed on every
+--     close — even for books whose status has not changed. Using a numeric
+--     modified as a "completed this year" signal would inflate books_year
+--     whenever an old finished book from a previous year is merely reopened,
+--     because the timestamp would now reflect the current year.
+--   • SimpleUI writes date_finished as a YYYY-MM-DD string (preferred).
+--
+-- We deliberately do NOT use the statistics DB's last_open — same reason: it
+-- updates on every session close, not just on completion.
 -- Replaces two separate countMarkedRead() calls (previously O(2N) sidecar I/O).
 -- Uses the same _sidecar_cache from module_books_shared for cache hits.
 -- ---------------------------------------------------------------------------
 local _MAX_HIST = 200   -- hard cap: avoids unbounded scan on huge histories
 
--- modifiedInYear: KOReader always writes `modified` as an ISO-8601 string
--- ("YYYY-MM-DD ..."), a unix timestamp (number), or an os.date("*t") table.
+-- _modifiedInYear: returns true when the book's completion date falls in year_str.
+--
+-- Priority order:
+--   1. summary.date_finished  — SimpleUI-written "YYYY-MM-DD" string (most reliable).
+--   2. summary.modified       — only when it is a STRING (filemanagerutil date string).
+--      Numeric modified (KOReader unix timestamp, rewritten on every session close)
+--      is intentionally ignored: it cannot reliably indicate completion year.
 local function _modifiedInYear(summary, year_str)
-    local mod = summary and summary.modified
+    local mod
+    if summary then
+        if summary.date_finished ~= nil then
+            mod = summary.date_finished
+        elseif type(summary.modified) == "string" then
+            -- Only trust modified when it is a string (filemanagerutil date or
+            -- SimpleUI-written).  A numeric modified is a volatile KOReader
+            -- session timestamp — not a valid completion date.
+            mod = summary.modified
+        end
+        -- type(summary.modified) == "number"  →  mod stays nil → return false below.
+        -- type(summary.modified) == "table"   →  also ignored (os.date("*t") struct
+        --   produced by older KOReader builds; same volatility concern as numbers).
+    end
     if mod == nil then return false end
-    if type(mod) == "number" then
-        -- Unix timestamp: compare year component directly without os.date.
-        local mod_t = os.date("*t", mod)
-        return mod_t and tostring(mod_t.year) == year_str
-    end
     if type(mod) == "string" then
-        -- ISO-8601 "YYYY-MM-DD..." — prefix check is sufficient and free.
+        -- ISO-8601 "YYYY-MM-DD..." or "YYYY-MM-DD HH:MM:SS" — prefix check.
         return #mod >= 4 and mod:sub(1, 4) == year_str
-    end
-    if type(mod) == "table" and mod.year then
-        return tostring(mod.year) == year_str
     end
     return false
 end
@@ -419,21 +441,16 @@ local function countMarkedReadBoth(year_str)
                 end
             end
 
-            if type(summary) == "table" and summary.status == "complete" then
+            if type(summary) == "table" and summary.status == "complete" and not summary.exclude_from_goals then
                 books_total = books_total + 1
-                -- books_year counts books *completed* this year, based solely
-                -- on summary.modified (the sidecar's completion timestamp).
-                --
-                -- We used to also accept DB last_open >= year_start as an
-                -- alternative signal, on the theory that pre-SimpleUI-2.0
-                -- books could have a stale summary.modified that predates
-                -- their real completion date. In practice this made the
-                -- yearly count go up whenever an already-finished book from
-                -- a previous year was merely reopened (e.g. to re-read a
-                -- page) — last_open updates on every session close, not just
-                -- on completion, so it isn't a valid "completed this year"
-                -- signal. See GitHub issue: yearly count inflated by
-                -- reopening old finished books.
+                -- books_year counts books whose sidecar completion date falls in
+                -- year_str. The check uses _modifiedInYear which accepts only
+                -- summary.date_finished (SimpleUI-written) or a string-typed
+                -- summary.modified (set by filemanagerutil.saveSummary when the
+                -- user taps a status button in KOReader's library). Numeric
+                -- modified values (KOReader session-close timestamps) are ignored
+                -- because they are refreshed on every close and do not represent
+                -- the completion date.
                 if _modifiedInYear(summary, year_str) then
                     books_year = books_year + 1
                 end

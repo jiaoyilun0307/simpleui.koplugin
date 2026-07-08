@@ -2641,7 +2641,6 @@ local function _onStatusChanged(file)
     --    to disk before caller_callback() is invoked, so this is always current.
     pcall(function()
         local DB = SUISettings.DeletedBooks
-        if not (DB and DB.isEnabled()) then return end
         local ok_DS, DocSettings = pcall(require, "docsettings")
         if not ok_DS or not DocSettings then return end
         local ds = DocSettings:open(file)
@@ -2649,9 +2648,27 @@ local function _onStatusChanged(file)
         local new_status = type(summary) == "table" and summary.status or nil
         if new_status ~= "complete" then
             local md5 = ds:readSetting("partial_md5_checksum")
+            local changed = false
+            if type(summary) == "table" and summary.date_finished ~= nil then
+                summary.date_finished = nil
+                changed = true
+            end
+            if changed then
+                ds:saveSetting("summary", summary)
+                pcall(function() ds:flush() end)
+            end
             pcall(function() ds:close() end)
-            if md5 then DB.removeByMd5(md5) end
+            if DB and DB.isEnabled() and md5 then DB.removeByMd5(md5) end
         else
+            local changed = false
+            if type(summary) == "table" and summary.date_finished == nil then
+                summary.date_finished = os.date("%Y-%m-%d")
+                changed = true
+            end
+            if changed then
+                ds:saveSetting("summary", summary)
+                pcall(function() ds:flush() end)
+            end
             pcall(function() ds:close() end)
         end
     end)
@@ -2862,7 +2879,7 @@ function M.patchFontGetFace(plugin)
     local Font = require("ui/font")
     if Font._simpleui_getface_patched then return end
 
-    local scale = Config.getFontScalePct() / 100
+    local scale = (Config.getFontScalePct and Config.getFontScalePct() or 100) / 100
     if scale == 1 then return end  -- default: leave getFace fully untouched
 
     Font._simpleui_getface_patched = true
@@ -3875,9 +3892,9 @@ function M.patchDeleteFile(FileManager, plugin)
                 local doc_props = ds:readSetting("doc_props")
                 local title   = doc_props and doc_props.title   or ""
                 local authors = doc_props and doc_props.authors or ""
-                -- Derive year from summary.modified (same source as countMarkedReadBoth).
+                -- Derive year from summary.date_finished or summary.modified (same source as countMarkedReadBoth).
                 local year = 0
-                local mod = summary.modified
+                local mod = summary.date_finished or summary.modified
                 if type(mod) == "number" then
                     year = tonumber(os.date("%Y", mod)) or 0
                 elseif type(mod) == "string" and #mod >= 4 then

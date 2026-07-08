@@ -40,7 +40,24 @@ local UI              = require("sui_core")
 -- _riMonthlyChart, _buildInsightsPage2) take SZ as an explicit trailing
 -- parameter from their caller's ctx.SZ, falling back to UI.SZ if ever called
 -- without one.
-local function SZ(n) return UI.SZ(n) end
+local function SZ(n)
+    if UI.SZ then return UI.SZ(n) end
+    if UI.getLandscapeFactor then return math.floor(n * UI.getLandscapeFactor()) end
+    return n
+end
+local UI_SZ = UI.SZ or SZ
+
+--- Returns the portrait-mode screen height (the long axis), regardless of
+--- the current rotation. Falls back to a simple max(w, h) if sui_core is
+--- an older version that does not yet export getPortraitDims.
+local function _portraitH()
+    if UI.getPortraitDims then
+        return select(2, UI.getPortraitDims())
+    end
+    local w, h = Screen:getWidth(), Screen:getHeight()
+    return w > h and w or h
+end
+
 
 local StatsWindows = {}
 
@@ -66,18 +83,22 @@ local function _getFinishedBooksThisYear()
     local SH = package.loaded["desktop_modules/module_books_shared"]
 
     -- Mirrors _modifiedInYear from module_stats_provider — same logic, no dependency.
+    -- Only summary.date_finished or a STRING summary.modified is accepted as a
+    -- completion-year signal.  A numeric modified (KOReader unix timestamp) is
+    -- rewritten on every reader session close and must NOT be used as a
+    -- "completed this year" indicator — see module_stats_provider.lua for rationale.
     local function modifiedInYear(summary)
-        local mod = summary and summary.modified
-        if mod == nil then return false end
-        if type(mod) == "number" then
-            local t = os.date("*t", mod)
-            return t and tostring(t.year) == year_str
+        local mod
+        if summary then
+            if summary.date_finished ~= nil then
+                mod = summary.date_finished
+            elseif type(summary.modified) == "string" then
+                mod = summary.modified
+            end
         end
+        if mod == nil then return false end
         if type(mod) == "string" then
             return #mod >= 4 and mod:sub(1, 4) == year_str
-        end
-        if type(mod) == "table" and mod.year then
-            return tostring(mod.year) == year_str
         end
         return false
     end
@@ -134,9 +155,12 @@ local function _getFinishedBooksThisYear()
                     title         = title   or entry.text or fp,
                     authors       = authors or "",
                     filepath      = fp,
-                    date_finished = (type(summary.modified)    == "string" and summary.modified)    or nil,
+                    date_finished = (type(summary.date_finished) == "string" and summary.date_finished)
+                                    or (type(summary.modified)   == "string" and summary.modified)
+                                    or nil,
                     date_started  = (type(summary.date_started) == "string" and summary.date_started) or nil,
                     md5           = md5_checksum,
+                    exclude_from_goals = summary.exclude_from_goals,
                 })
             end
         end
@@ -498,6 +522,7 @@ local function _writeSummaryModified(filepath, date_str)
     if not ok_open or not ds then return false end
     local summary = ds:readSetting("summary") or {}
     summary.modified = date_str
+    summary.date_finished = date_str
     if summary.status ~= "complete" then
         summary.status = "complete"
     end
@@ -543,6 +568,29 @@ end
 -- Builds a date range card with independently tappable start/end halves.
 --
 -- Parameters:
+-- Writes summary.exclude_from_goals to the sidecar and flushes it.
+local function _writeSummaryExclude(filepath, val)
+    if not filepath then return false end
+    local ok_ds, DocSettings = pcall(require, "docsettings")
+    if not ok_ds then return false end
+    local ok_open, ds = pcall(function() return DocSettings:open(filepath) end)
+    if not ok_open or not ds then return false end
+    local summary = ds:readSetting("summary") or {}
+    summary.exclude_from_goals = val and true or nil
+    ds:saveSetting("summary", summary)
+    pcall(function() ds:flush() end)
+    pcall(function() ds:close() end)
+    local SH = package.loaded["desktop_modules/module_books_shared"]
+    if SH then
+        if SH._cacheInvalidate then
+            SH._cacheInvalidate(filepath)
+        elseif SH._cache and filepath then
+            SH._cache[filepath] = nil
+        end
+    end
+    return true
+end
+
 -- Removes a single key from summary in the sidecar (sets it to nil).
 -- Used by the Reset button to revert to the DB-derived fallback.
 local function _deleteSummaryField(filepath, key)
@@ -586,7 +634,7 @@ local function _makeDateCard(inner_w, PAD_H,
                              original_start_str, original_end_str,
                              filepath,
                              on_start_saved, on_end_saved, SZ)
-    SZ = SZ or UI.SZ
+    SZ = SZ or UI_SZ
     local face_date  = Font:getFace(SUIStyle.FACE_REGULAR, SZ(SUIStyle.FS_BODY))
     local face_arrow = Font:getFace(SUIStyle.FACE_ICONS,   SZ(SUIStyle.FS_BODY))
     local CLR_BLACK  = Blitbuffer.COLOR_BLACK
@@ -690,7 +738,10 @@ local function _makeDateCard(inner_w, PAD_H,
     local end_widget = makeSideTappable(
         date_end_str, _("Date finished"),
         _writeSummaryModified,
-        function(fp) _deleteSummaryField(fp, "modified") end,
+        function(fp)
+            _deleteSummaryField(fp, "date_finished")
+            _deleteSummaryField(fp, "modified")
+        end,
         original_end_str,
         on_end_saved)
 
@@ -800,11 +851,24 @@ function StatsWindows.showFinishedBooksDialog(initial_page)
         local rows = {}
         for i, book in ipairs(books) do
             local date_range = book_date_range[book.filepath] or "\xe2\x80\x93"
+            local sub_text
+            if book.authors and book.authors ~= "" then
+                if book.exclude_from_goals then
+                    sub_text = string.format("%s · %s", book.authors, _("Excluded"))
+                else
+                    sub_text = book.authors
+                end
+            else
+                if book.exclude_from_goals then
+                    sub_text = _("Excluded")
+                end
+            end
             rows[#rows + 1] = SUIWindow.ListRow{
                 inner_w      = inner_w,
                 title        = book.title,
-                subtitle     = (book.authors and book.authors ~= "") and book.authors or nil,
+                subtitle     = sub_text,
                 right_value  = date_range,
+                dim          = book.exclude_from_goals,
                 show_chevron = true,
                 separator    = true,
                 on_tap       = book.filepath and function()
@@ -1086,6 +1150,23 @@ function StatsWindows.showFinishedBooksDialog(initial_page)
                 makeIconRow(SUIStyle.icon("highlights"), _("Highlights"),     tostring(d.highlights), on_tap_highlights),
                 makeRowSep(),
                 makeIconRow(SUIStyle.icon("notes"),      _("Notes"),          tostring(d.notes),      on_tap_notes),
+                makeRowSep(),
+                makeIconRow(
+                    book.exclude_from_goals and SUIStyle.icon("check") or SUIStyle.icon("uncheck"),
+                    _("Exclude from goals"),
+                    book.exclude_from_goals and _("Yes") or _("No"),
+                    function()
+                        local next_val = not book.exclude_from_goals
+                        book.exclude_from_goals = next_val and true or nil
+                        _writeSummaryExclude(fp, book.exclude_from_goals)
+                        
+                        -- Force full stats invalidation so homescreen widget / stats provider update
+                        local SP = package.loaded["desktop_modules/module_stats_provider"]
+                        if SP and SP.invalidate then SP.invalidate() end
+                        
+                        ctx.repaint()
+                    end
+                ),
             },
         }
 
@@ -1135,15 +1216,21 @@ function StatsWindows.showFinishedBooksDialog(initial_page)
     end
 
     local function titleFn(ctx)
+        local count = 0
+        for _, book in ipairs(books) do
+            if not book.exclude_from_goals then
+                count = count + 1
+            end
+        end
         return string.format(
-            N_("%d book read in %s", "%d books read in %s", #books),
-            #books, year_str)
+            N_("%d book read in %s", "%d books read in %s", count),
+            count, year_str)
     end
 
     local win = SUIWindow:new{
         name           = "sui_win_reading_history",
         title          = titleFn,
-        height         = math.floor((select(2, UI.getPortraitDims())) * 0.75),
+        height         = math.floor(_portraitH() * 0.75),
         position       = "bottom",
         navpager_mode  = require("sui_config").isNavpagerEnabled(),
         screens        = {
@@ -1674,7 +1761,7 @@ end
 -- SZ threaded in by the caller (ctx.SZ); falls back to UI.SZ if ever called
 -- without one (identical value during a synchronous window build).
 local function _riYearHeader(inner_w, year, year_range, on_prev, on_next, SZ)
-    SZ = SZ or UI.SZ
+    SZ = SZ or UI_SZ
     local face = Font:getFace(SUIStyle.FACE_REGULAR, SZ(SUIStyle.FS_SUBTITLE))
     local face_chev = Font:getFace(SUIStyle.FACE_ICONS, math.floor(SZ(SUIStyle.FS_TITLE * 1.8)))
     local CLR_BLACK = Blitbuffer.COLOR_BLACK
@@ -1743,7 +1830,7 @@ end
 -- SZ threaded in by the caller (ctx.SZ); falls back to UI.SZ if ever called
 -- without one (identical value during a synchronous window build).
 local function _riYearlyRow(inner_w, yearly_stats, mode_key, on_toggle_mode, avail_h, SZ)
-    SZ = SZ or UI.SZ
+    SZ = SZ or UI_SZ
     local CLR_BLACK = Blitbuffer.COLOR_BLACK
     local face_val  = Font:getFace(SUIStyle.FACE_REGULAR, SZ(SUIStyle.FS_TITLE))
     local face_lbl  = Font:getFace(SUIStyle.FACE_REGULAR, SZ(SUIStyle.FS_DETAIL))
@@ -1813,7 +1900,7 @@ end
 -- SZ threaded in by the caller (ctx.SZ); falls back to UI.SZ if ever called
 -- without one (identical value during a synchronous window build).
 local function _riMonthlyChart(inner_w, monthly_data, value_key, selected_year, avail_h, SZ)
-    SZ = SZ or UI.SZ
+    SZ = SZ or UI_SZ
     if not monthly_data or #monthly_data == 0 then return VerticalGroup:new{} end
 
     local current_year  = tonumber(os.date("%Y"))
@@ -1919,7 +2006,7 @@ end
 -- SZ threaded in by the caller (ctx.SZ); falls back to UI.SZ if ever called
 -- without one (identical value during a synchronous window build).
 local function _buildInsightsPage2(inner_w, avail_h, streaks, SZ)
-    SZ = SZ or UI.SZ
+    SZ = SZ or UI_SZ
     _lazyLoad()      -- ensure _CenterContainer, _LeftContainer, etc. are loaded
     local Size    = require("ui/size")
     local sec_gap = math.max(SZ(Screen:scaleBySize(6)), math.floor(avail_h * 0.025))
@@ -2298,7 +2385,7 @@ function StatsWindows.showReadingInsightsWindow(on_close_extra)
         -- SUIWindow._rebuildFrame, so all sections can size themselves
         -- proportionally and the layout stays on one page on any screen.
         local Size       = require("ui/size")
-        local modal_h    = math.floor((select(2, UI.getPortraitDims())) * 0.75)
+        local modal_h    = math.floor(_portraitH() * 0.75)
         local border     = Size.border.window
         local pad_v      = Size.padding.large
         local title_h    = ctx.SZ(Screen:scaleBySize(50))  -- conservative TitleBar estimate
@@ -2506,7 +2593,7 @@ function StatsWindows.showReadingInsightsWindow(on_close_extra)
     local win = SUIWindow:new{
         name          = "sui_win_reading_insights",
         title         = titleFn,
-        height        = math.floor((select(2, UI.getPortraitDims())) * 0.75),
+        height        = math.floor(_portraitH() * 0.75),
         position      = "bottom",
         navpager_mode = Config.isNavpagerEnabled and Config.isNavpagerEnabled() or false,
         screens       = {
@@ -2551,16 +2638,19 @@ function StatsWindows.showBookStatsFromFile(filepath)
                 book.title   = doc_props.title
                 book.authors = doc_props.authors
             end
-            -- Read date_finished (summary.modified) and date_started so the
+            -- Read date_finished and date_started so the
             -- date card shows the user-visible dates rather than raw DB timestamps.
             local summary = ds:readSetting("summary")
             if type(summary) == "table" then
-                if summary.status == "complete" and type(summary.modified) == "string" then
-                    book.date_finished = summary.modified
+                if summary.status == "complete" then
+                    book.date_finished = (type(summary.date_finished) == "string" and summary.date_finished)
+                                         or (type(summary.modified)   == "string" and summary.modified)
+                                         or nil
                 end
                 if type(summary.date_started) == "string" then
                     book.date_started = summary.date_started
                 end
+                book.exclude_from_goals = summary.exclude_from_goals
             end
             pcall(function() ds:close() end)
         end
@@ -2862,7 +2952,7 @@ function StatsWindows.showBookStatsFromFile(filepath)
     local win = SUIWindow:new{
         name     = "sui_win_book_stats_standalone",
         title    = _("Book Statistics"),
-        height   = math.floor((select(2, UI.getPortraitDims())) * 0.75),
+        height   = math.floor(_portraitH() * 0.75),
         position = "bottom",
         navpager_mode = require("sui_config").isNavpagerEnabled(),
         screens  = { __root__ = buildStatsScreen },

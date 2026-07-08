@@ -197,8 +197,13 @@ function SUIWindow:new(opts)
     -- shrink on top of an already-swapped axis, squashing height instead of
     -- scaling both axes down uniformly. opts.width/opts.height, when passed
     -- explicitly by callers, are likewise expected to be portrait-based.
-    local portrait_w, portrait_h = UI.getPortraitDims()
-    local landscape_factor = UI.getLandscapeFactor()
+    local portrait_w, portrait_h
+    if UI.getPortraitDims then
+        portrait_w, portrait_h = UI.getPortraitDims()
+    else
+        portrait_w, portrait_h = sw < sh and sw or sh, sw < sh and sh or sw
+    end
+    local landscape_factor = UI.getLandscapeFactor and UI.getLandscapeFactor() or 1
     o._scale         = landscape_factor
     o._modal_w       = math.floor((opts.width  or math.floor(portrait_w * 5 / 6))  * landscape_factor)
     o._modal_h       = math.floor((opts.height or math.floor(portrait_h * 23 / 30)) * landscape_factor)
