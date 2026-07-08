@@ -4033,3 +4033,129 @@ msgstr "书籍统计"
 #: desktop_modules/module_quote.lua:1440
 msgid "Fixed Height"
 msgstr "固定高度"
+
+msgid "%d item"
+msgstr "%d item"
+
+msgid "A restart is required to apply the new text size everywhere.\n\nRestart now?"
+msgstr "A restart is required to apply the new text size everywhere.\n\nRestart now?"
+
+msgid "All recent books are finished."
+msgstr "All recent books are finished."
+
+msgid "Book Cover Transition"
+msgstr "Book Cover Transition"
+
+msgid "Book Statistics"
+msgstr "Book Statistics"
+
+msgid "Briefly show the book cover full-screen when opening or closing a book, masking the page-layout flash. Requires the book to already be indexed by the cover browser (its cover must have been seen at least once in a grid/list view)."
+msgstr "Briefly show the book cover full-screen 打开 or closing a book, masking the page-layout flash. Requires the book to already be indexed by the cover browser (its cover must have been seen at least once in a grid/list view)."
+
+msgid "Covers"
+msgstr "[待翻译] Covers"
+
+msgid "Date finished"
+msgstr "[待翻译] Date finished"
+
+msgid "Date started"
+msgstr "[待翻译] Date started"
+
+msgid "Default: Group"
+msgstr "Default: Group"
+
+msgid "Done"
+msgstr "[待翻译] Done"
+
+msgid "Global Text Size"
+msgstr "Global Text Size"
+
+msgid "Global scale applied to all of KOReader's interface text — menus, dialogs, titles, and Simple UI. It does not change the book's reading font size, which has its own setting.\n100% is the default size. Useful when a chosen UI font (see UI Font above) renders smaller or larger than usual."
+msgstr "Global scale applied to all of KOReader's interface text — menus, dialogs, titles, and Simple UI. It does not change the book's reading font size, which has its own setting.\n100% is the default size. Useful when a chosen UI font (see UI Font above) renders smaller or larger than usual."
+
+msgid "Group"
+msgstr "[待翻译] Group"
+
+msgid "Group (%d item)"
+msgstr "Group (%d item)"
+
+msgid "Group of Quick Actions"
+msgstr "Group of Quick Actions"
+
+msgid "Group: select actions"
+msgstr "Group: select actions"
+
+msgid "Loading statistics\xe2\x80\xa6"
+msgstr "正在加载统计数据\xe2\x80\xa6"
+
+msgid "No recent books."
+msgstr "No recent books."
+
+msgid "No statistics selected."
+msgstr "No statistics selected."
+
+msgid "Please enter a date in YYYY-MM-DD format."
+msgstr "Please enter a date in YYYY-MM-DD format."
+
+msgid "Recent"
+msgstr "[待翻译] Recent"
+
+msgid "Replaces the \\"Closing book…\\" notice above with the cover for that close, when a cover is available."
+msgstr "Replaces the \\"Closing book…\\" notice above with the cover for that close, when a cover is available."
+
+msgid "Return to Home Screen on Wakeup"
+msgstr "Return to Home Screen on Wakeup"
+
+msgid "Show a brief \\"Loading statistics\xe2\x80\xa6\\" notice when opening a statistics window, preventing accidental double-taps while e-ink refreshes."
+msgstr "Show a brief \\"正在加载统计数据\xe2\x80\xa6\\" notice 打开 a statistics window, 防止发生意外双击 在电子墨水屏刷新期间."
+
+msgid "Show on Close"
+msgstr "Show on Close"
+
+msgid "Show on Open"
+msgstr "Show on Open"
+
+msgid "Simple UI: Recent"
+msgstr "Simple UI: Recent"
+
+msgid "Statistics"
+msgstr "统计"
+
+msgid "Tab Bar"
+msgstr "Tab Bar"
+
+msgid "Tab bar icons must be PNG or SVG."
+msgstr "Tab bar icons must be PNG or SVG."
+
+msgid "Tab: Back to File Browser"
+msgstr "Tab: Back to File Browser"
+
+msgid "Tab: File Browser Settings"
+msgstr "Tab: File Browser Settings"
+
+msgid "Tab: Menu"
+msgstr "Tab: Menu"
+
+msgid "Tab: Reader Navigation"
+msgstr "Tab: Reader Navigation"
+
+msgid "Tab: Reader Typeset"
+msgstr "Tab: Reader Typeset"
+
+msgid "Tab: Search"
+msgstr "Tab: Search"
+
+msgid "Tab: Settings"
+msgstr "Tab: Settings"
+
+msgid "Tab: SimpleUI Quick Settings"
+msgstr "Tab: SimpleUI Quick Settings"
+
+msgid "Tab: Tools"
+msgstr "Tab: Tools"
+
+msgid "This group is empty.\nAdd actions to it from Settings → Quick Actions."
+msgstr "This group is empty.\nAdd actions to it from Settings → Quick Actions."
+
+msgid "When waking the device from sleep/suspend, always return to the Home Screen — even if a book was open when it went to sleep."
+msgstr "When waking the device from sleep/suspend, always return to the Home Screen — even if a book was open when it went to sleep."
