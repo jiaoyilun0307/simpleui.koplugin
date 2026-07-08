@@ -899,14 +899,19 @@ end-- Returns the total pixel height of the module including the section label.
 function M.getHeight(_ctx)
     local SH = getSH()
     if not SH then return Config.getScaledLabelH() end
-    local pfx         = _ctx and _ctx.pfx
-    local scale       = Config.getModuleScale("currently", pfx)
-    local lbl_scale   = Config.getItemLabelScale("currently", pfx)
-    local D           = SH.getDims(scale, Config.getThumbScale("currently", pfx))
-    local stats_style = getStatsStyle(pfx)
-    local bar_style   = getBarStyle(pfx)
+    local pfx = _ctx and _ctx.pfx
+    -- Use pre-read settings bundle from ctx when available (normal HS path).
+    -- ctx.cfg.currently.scale was captured while the landscape patch was active,
+    -- so it already carries the × 0.65 factor in landscape — giving the correct
+    -- height without needing a separate patch here.
+    local c           = _ctx and _ctx.cfg and _ctx.cfg.currently
+    local scale       = c and c.scale       or Config.getModuleScale("currently", pfx)
+    local lbl_scale   = c and c.lbl_scale   or Config.getItemLabelScale("currently", pfx)
+    local D           = SH.getDims(scale, c and c.thumb_scale or Config.getThumbScale("currently", pfx))
+    local stats_style = c and c.stats_style or getStatsStyle(pfx)
+    local bar_style   = c and c.bar_style   or getBarStyle(pfx)
 
-    local show = {
+    local show = c and c.show or {
         title    = _showElem(pfx, "title"),
         author   = _showElem(pfx, "author"),
         progress = _showElem(pfx, "progress"),
@@ -1576,6 +1581,17 @@ function M.updateStats(widget, ctx)
     
     local fp = actual_widget._fp
     if not fp then return false end
+
+    -- BUGFIX: the widget only carries data for the book it was built with
+    -- (_fp). If ctx.current_fp now points to a DIFFERENT book — e.g. the
+    -- user closed a book that wasn't already showing in "Currently
+    -- Reading" — patching stats in-place would silently refresh the WRONG
+    -- book's numbers while leaving the old book's cover/title on screen.
+    -- Force a full rebuild (return false) so module_currently.build() runs
+    -- again with the new ctx.current_fp and replaces the widget entirely,
+    -- mirroring the identity check module_recent.updateStats() already
+    -- does for its own fp list.
+    if ctx.current_fp ~= fp then return false end
 
     local bstats
     local pre = ctx.currently_book_stats

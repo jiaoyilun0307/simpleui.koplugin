@@ -23,6 +23,24 @@ local N_              = require("sui_i18n").ngettext
 local logger          = require("logger")
 local Config          = require("sui_config")
 local SUIStyle        = require("sui_style")
+local UI              = require("sui_core")
+
+-- Landscape-aware size multiplier for the few call sites in this file that
+-- run BEFORE any SUIWindow ctx exists — e.g. shared fonts computed once in
+-- StatsWindows.showFinishedBooksDialog's setup, ahead of its buildListScreen/
+-- buildStatsScreen closures. UI.SZ() is live (recomputed from screen
+-- dimensions on every call, see sui_core.lua), so it's correct to call here
+-- even before a window/ctx is built.
+--
+-- Every actual screen builder in this file (functions that receive ctx, and
+-- anything nested inside them) uses ctx.SZ(n) instead — the same scale
+-- SUIWindow's own chrome uses, handed in for free, no import needed. The
+-- handful of standalone helpers that build screen content but aren't
+-- themselves screen builders (_makeDateCard, _riYearHeader, _riYearlyRow,
+-- _riMonthlyChart, _buildInsightsPage2) take SZ as an explicit trailing
+-- parameter from their caller's ctx.SZ, falling back to UI.SZ if ever called
+-- without one.
+local function SZ(n) return UI.SZ(n) end
 
 local StatsWindows = {}
 
@@ -128,7 +146,7 @@ end
 
 -- Fetches all statistics for a book from statistics.sqlite3.
 -- Returns a data table on success, or nil + error string on failure.
-local function _fetchBookStatsData(book)
+local function _fetchBookStatsData(book, range_start, range_end)
     local fp = book and book.filepath
     if not fp then return nil, _("No filepath.") end
 
@@ -234,6 +252,14 @@ local function _fetchBookStatsData(book)
 
     local total_days, total_time_book, total_read_pages, book_read_time
     pcall(function()
+        -- Optional date-range filter: when the user has edited the start/end
+        -- date on this book's stats card, only sessions that started within
+        -- [range_start, range_end] count towards days/total time/avg per day
+        -- etc. Left unfiltered (both nil) this reproduces the full-history
+        -- query exactly as before.
+        local range_clause = ""
+        if range_start then range_clause = range_clause .. string.format(" AND start_time >= %d", range_start) end
+        if range_end   then range_clause = range_clause .. string.format(" AND start_time <= %d", range_end) end
         total_days, total_time_book, total_read_pages, book_read_time = conn:rowexec(
             string.format([[
                 WITH ps_agg AS (
@@ -241,7 +267,7 @@ local function _fetchBookStatsData(book)
                            sum(duration) AS page_dur,
                            min(start_time) AS first_start
                     FROM page_stat
-                    WHERE id_book = %d
+                    WHERE id_book = %d%s
                     GROUP BY page
                 )
                 SELECT
@@ -250,7 +276,7 @@ local function _fetchBookStatsData(book)
                     count(*),
                     sum(min(page_dur, %d))
                 FROM ps_agg
-            ]], id_book, MAX_SEC))
+            ]], id_book, range_clause, MAX_SEC))
     end)
 
     local first_open, last_page
@@ -435,6 +461,21 @@ local function _fmtDate(ts)
     return os.date("%Y-%m-%d", ts)
 end
 
+-- Converts a "YYYY-MM-DD" string to a unix timestamp: start of day (00:00:00)
+-- by default, or end of day (23:59:59) when end_of_day is true. Used to turn
+-- an edited date-range boundary into SQL-filterable timestamps.
+local function _dateStrToTs(date_str, end_of_day)
+    if type(date_str) ~= "string" then return nil end
+    local y, m, d = date_str:match("^(%d%d%d%d)-(%d%d)-(%d%d)$")
+    if not y then return nil end
+    return os.time{
+        year = tonumber(y), month = tonumber(m), day = tonumber(d),
+        hour = end_of_day and 23 or 0,
+        min  = end_of_day and 59 or 0,
+        sec  = end_of_day and 59 or 0,
+    }
+end
+
 -- Validates a YYYY-MM-DD string; returns true if the date is well-formed.
 local function _isValidDateStr(s)
     if type(s) ~= "string" then return false end
@@ -537,18 +578,22 @@ end
 --
 -- Returns a FrameContainer with each date half wrapped in its own
 -- InputContainer.  Tapping opens an InputDialog with Cancel / Reset / Save.
+-- SZ is threaded in by the caller (ctx.SZ) since this is a standalone helper,
+-- not itself a screen builder with ctx in scope; falls back to UI.SZ if ever
+-- called without one (identical value during a synchronous window build).
 local function _makeDateCard(inner_w, PAD_H,
                              date_start_str, date_end_str,
                              original_start_str, original_end_str,
                              filepath,
-                             on_start_saved, on_end_saved)
-    local face_date  = Font:getFace(SUIStyle.FACE_REGULAR, SUIStyle.FS_BODY)
-    local face_arrow = Font:getFace(SUIStyle.FACE_ICONS,   SUIStyle.FS_BODY)
+                             on_start_saved, on_end_saved, SZ)
+    SZ = SZ or UI.SZ
+    local face_date  = Font:getFace(SUIStyle.FACE_REGULAR, SZ(SUIStyle.FS_BODY))
+    local face_arrow = Font:getFace(SUIStyle.FACE_ICONS,   SZ(SUIStyle.FS_BODY))
     local CLR_BLACK  = Blitbuffer.COLOR_BLACK
     local ARROW      = SUIStyle.icon("arrow_right")
     local date_inner = inner_w - 2 * PAD_H
     local date_third = math.floor(date_inner / 3)
-    local date_row_h = Screen:scaleBySize(24)
+    local date_row_h = SZ(Screen:scaleBySize(24))
 
     -- Helper: open an InputDialog for a single date field.
     -- delete_fn  – called with filepath on Reset to remove the sidecar field
@@ -651,10 +696,10 @@ local function _makeDateCard(inner_w, PAD_H,
 
     return FrameContainer:new{
         bordersize     = 0,
-        radius         = Screen:scaleBySize(12),
+        radius         = SZ(Screen:scaleBySize(12)),
         background     = Blitbuffer.gray(0.08),
-        padding_top    = Screen:scaleBySize(14),
-        padding_bottom = Screen:scaleBySize(14),
+        padding_top    = SZ(Screen:scaleBySize(14)),
+        padding_bottom = SZ(Screen:scaleBySize(14)),
         padding_left   = PAD_H,
         padding_right  = PAD_H,
         HorizontalGroup:new{
@@ -715,10 +760,10 @@ function StatsWindows.showFinishedBooksDialog(initial_page)
         book_date_range[book.filepath] = _fmtDateRange(fo, book.date_finished)
     end
 
-    local face_stat_title  = Font:getFace(SUIStyle.FACE_REGULAR, SUIStyle.FS_SUBTITLE)
-    local face_stat_author = Font:getFace(SUIStyle.FACE_REGULAR, SUIStyle.FS_BODY)
-    local face_cell_lbl    = Font:getFace(SUIStyle.FACE_REGULAR, SUIStyle.FS_DETAIL)
-    local face_cell_val    = Font:getFace(SUIStyle.FACE_REGULAR, SUIStyle.FS_TITLE)
+    local face_stat_title  = Font:getFace(SUIStyle.FACE_REGULAR, SZ(SUIStyle.FS_SUBTITLE))
+    local face_stat_author = Font:getFace(SUIStyle.FACE_REGULAR, SZ(SUIStyle.FS_BODY))
+    local face_cell_lbl    = Font:getFace(SUIStyle.FACE_REGULAR, SZ(SUIStyle.FS_DETAIL))
+    local face_cell_val    = Font:getFace(SUIStyle.FACE_REGULAR, SZ(SUIStyle.FS_TITLE))
     local CLR_BLACK = Blitbuffer.COLOR_BLACK
 
     local _cell_geo
@@ -726,13 +771,13 @@ function StatsWindows.showFinishedBooksDialog(initial_page)
         if _cell_geo and _cell_geo.inner_w == inner_w then return _cell_geo end
         local sep_w      = SUIStyle.BORDER_SZ
         local cell_w     = math.floor((inner_w - 2 * sep_w) / 3)
-        local cell_v_pad = Screen:scaleBySize(16)
+        local cell_v_pad = SZ(Screen:scaleBySize(16))
         local lbl_h      = math.floor(face_cell_lbl.size * 2.2)
-        local val_h      = face_cell_val.size + Screen:scaleBySize(2)
-        local cell_h     = cell_v_pad * 2 + val_h + Screen:scaleBySize(2) + lbl_h
-        local row_gap    = Screen:scaleBySize(4)
-        local header_v   = Screen:scaleBySize(14)
-        local header_bot = Screen:scaleBySize(20)
+        local val_h      = face_cell_val.size + SZ(Screen:scaleBySize(2))
+        local cell_h     = cell_v_pad * 2 + val_h + SZ(Screen:scaleBySize(2)) + lbl_h
+        local row_gap    = SZ(Screen:scaleBySize(4))
+        local header_v   = SZ(Screen:scaleBySize(14))
+        local header_bot = SZ(Screen:scaleBySize(20))
         local text_w     = inner_w - 2 * _Size.padding.large
         _cell_geo = {
             inner_w    = inner_w,
@@ -781,15 +826,26 @@ function StatsWindows.showFinishedBooksDialog(initial_page)
     local function buildStatsScreen(ctx)
         local inner_w = ctx.inner_w
         local params  = ctx.current().params
-        local d       = params.stats
         local book    = params.book
+        -- Recompute the date-range-dependent aggregates (days, avg/day,
+        -- avg/page, total time, pages read) whenever the user has edited the
+        -- start/end date on this book. params.stats (the full-history fetch
+        -- done at push time) is the fallback when no date has been edited —
+        -- avoids re-querying the DB on every repaint for the common case.
+        local d = params.stats
+        if book and (type(book.date_started) == "string" or type(book.date_finished) == "string") then
+            local start_ts = _dateStrToTs(book.date_started, false)
+            local end_ts   = _dateStrToTs(book.date_finished, true)
+            local filtered = _fetchBookStatsData(book, start_ts, end_ts)
+            if filtered then d = filtered end
+        end
         local cg      = _buildCellGeo(inner_w)
 
         local CLR_BORDER = Blitbuffer.gray(0.72)
         local CLR_BLACK  = Blitbuffer.COLOR_BLACK
         local PAD_H      = _Size.padding.large
-        local ICON_FS    = SUIStyle.FS_BODY
-        local ROW_H      = Screen:scaleBySize(52)
+        local ICON_FS    = ctx.SZ(SUIStyle.FS_BODY)
+        local ROW_H      = ctx.SZ(Screen:scaleBySize(52))
 
         -- ── 1. Top card: title/author + 3-col metrics ──
 
@@ -797,13 +853,13 @@ function StatsWindows.showFinishedBooksDialog(initial_page)
 
         local meta_w      = inner_w
         local text_max_w  = inner_w - 2 * PAD_H
-        local face_title  = Font:getFace(SUIStyle.FACE_REGULAR, SUIStyle.FS_SUBTITLE)
-        local face_author = Font:getFace(SUIStyle.FACE_REGULAR, SUIStyle.FS_BODY)
-        local face_val    = Font:getFace(SUIStyle.FACE_REGULAR, SUIStyle.FS_TITLE)
-        local face_lbl    = Font:getFace(SUIStyle.FACE_REGULAR, SUIStyle.FS_DETAIL)
+        local face_title  = Font:getFace(SUIStyle.FACE_REGULAR, ctx.SZ(SUIStyle.FS_SUBTITLE))
+        local face_author = Font:getFace(SUIStyle.FACE_REGULAR, ctx.SZ(SUIStyle.FS_BODY))
+        local face_val    = Font:getFace(SUIStyle.FACE_REGULAR, ctx.SZ(SUIStyle.FS_TITLE))
+        local face_lbl    = Font:getFace(SUIStyle.FACE_REGULAR, ctx.SZ(SUIStyle.FS_DETAIL))
 
         -- 3-col metrics — widths derived from the right meta column
-        local card_gap = Screen:scaleBySize(10)
+        local card_gap = ctx.SZ(Screen:scaleBySize(10))
         local col_w    = math.floor((meta_w - 2 * card_gap) / 3)
 
         local pages_read_str = string.format("%d (%d%%)",
@@ -820,7 +876,7 @@ function StatsWindows.showFinishedBooksDialog(initial_page)
                     fgcolor   = CLR_BLACK,
                     alignment = "center",
                 },
-                VerticalSpan:new{ width = Screen:scaleBySize(2) },
+                VerticalSpan:new{ width = ctx.SZ(Screen:scaleBySize(2)) },
                 TextWidget:new{
                     text      = label,
                     face      = face_lbl,
@@ -831,7 +887,7 @@ function StatsWindows.showFinishedBooksDialog(initial_page)
 
             return FrameContainer:new{
             bordersize     = SUIStyle.BORDER_SZ, color = CLR_BORDER,
-                radius         = Screen:scaleBySize(12),
+                radius         = ctx.SZ(Screen:scaleBySize(12)),
                 padding        = 0, margin = 0,
                 _CenterContainer:new{
                     dimen = Geom:new{ w = w, h = cg.cell_h },
@@ -850,7 +906,7 @@ function StatsWindows.showFinishedBooksDialog(initial_page)
 
         local title_author_group = VerticalGroup:new{
             align = "center",
-            VerticalSpan:new{ width = Screen:scaleBySize(24) },
+            VerticalSpan:new{ width = ctx.SZ(Screen:scaleBySize(24)) },
             _TextBoxWidget:new{
                 text      = d.title,
                 face      = face_title,
@@ -863,14 +919,14 @@ function StatsWindows.showFinishedBooksDialog(initial_page)
                 max_lines = 1,
                 height_overflow_show_ellipsis = true,
             },
-            VerticalSpan:new{ width = Screen:scaleBySize(4) },
+            VerticalSpan:new{ width = ctx.SZ(Screen:scaleBySize(4)) },
             TextWidget:new{
                 text      = d.authors or "",
                 face      = face_author,
                 fgcolor   = CLR_BLACK,
                 max_width = text_max_w,
             },
-            VerticalSpan:new{ width = Screen:scaleBySize(16) },
+            VerticalSpan:new{ width = ctx.SZ(Screen:scaleBySize(16)) },
         }
 
         local tappable_title
@@ -898,7 +954,7 @@ function StatsWindows.showFinishedBooksDialog(initial_page)
         local meta_col = VerticalGroup:new{
             align = "center",
             tappable_title,
-            VerticalSpan:new{ width = Screen:scaleBySize(16) },
+            VerticalSpan:new{ width = ctx.SZ(Screen:scaleBySize(16)) },
             metrics_row,
         }
 
@@ -940,13 +996,13 @@ function StatsWindows.showFinishedBooksDialog(initial_page)
         end
 
         local icon_face  = Font:getFace(SUIStyle.FACE_ICONS,   ICON_FS)
-        local lbl_face   = Font:getFace(SUIStyle.FACE_REGULAR, SUIStyle.FS_BODY)
-        local val_face   = Font:getFace(SUIStyle.FACE_REGULAR, SUIStyle.FS_BODY)
-        local ICON_W     = Screen:scaleBySize(36)
+        local lbl_face   = Font:getFace(SUIStyle.FACE_REGULAR, ctx.SZ(SUIStyle.FS_BODY))
+        local val_face   = Font:getFace(SUIStyle.FACE_REGULAR, ctx.SZ(SUIStyle.FS_BODY))
+        local ICON_W     = ctx.SZ(Screen:scaleBySize(36))
         local row_inner  = inner_w - 2 * PAD_H
 
         local function makeIconRow(icon_glyph, label, value_str, on_tap)
-            local val_w = Screen:scaleBySize(160)
+            local val_w = ctx.SZ(Screen:scaleBySize(160))
             local lbl_w = row_inner - ICON_W - val_w
 
             local row_content = HorizontalGroup:new{
@@ -1019,7 +1075,7 @@ function StatsWindows.showFinishedBooksDialog(initial_page)
         local rows_block = FrameContainer:new{
             bordersize = SUIStyle.BORDER_SZ,
             color      = CLR_BORDER,
-            radius     = Screen:scaleBySize(12),
+            radius     = ctx.SZ(Screen:scaleBySize(12)),
             padding    = 0,
             VerticalGroup:new{
                 align = "left",
@@ -1062,13 +1118,14 @@ function StatsWindows.showFinishedBooksDialog(initial_page)
                 book_date_range[fp] = _fmtDateRange(
                     book.date_started or start_dates[fp], new_date)
                 ctx.repaint()
-            end
+            end,
+            ctx.SZ
         )
 
-        local block_gap = VerticalSpan:new{ width = Screen:scaleBySize(10) }
+        local block_gap = VerticalSpan:new{ width = ctx.SZ(Screen:scaleBySize(10)) }
 
         return {
-            VerticalSpan:new{ width = Screen:scaleBySize(6) },
+            VerticalSpan:new{ width = ctx.SZ(Screen:scaleBySize(6)) },
             top_card,
             block_gap,
             rows_block,
@@ -1086,7 +1143,7 @@ function StatsWindows.showFinishedBooksDialog(initial_page)
     local win = SUIWindow:new{
         name           = "sui_win_reading_history",
         title          = titleFn,
-        height         = math.floor(Screen:getHeight() * 0.75),
+        height         = math.floor((select(2, UI.getPortraitDims())) * 0.75),
         position       = "bottom",
         navpager_mode  = require("sui_config").isNavpagerEnabled(),
         screens        = {
@@ -1614,16 +1671,19 @@ end
 
 
 
-local function _riYearHeader(inner_w, year, year_range, on_prev, on_next)
-    local face = Font:getFace(SUIStyle.FACE_REGULAR, SUIStyle.FS_SUBTITLE)
-    local face_chev = Font:getFace(SUIStyle.FACE_ICONS, math.floor(SUIStyle.FS_TITLE * 1.8))
+-- SZ threaded in by the caller (ctx.SZ); falls back to UI.SZ if ever called
+-- without one (identical value during a synchronous window build).
+local function _riYearHeader(inner_w, year, year_range, on_prev, on_next, SZ)
+    SZ = SZ or UI.SZ
+    local face = Font:getFace(SUIStyle.FACE_REGULAR, SZ(SUIStyle.FS_SUBTITLE))
+    local face_chev = Font:getFace(SUIStyle.FACE_ICONS, math.floor(SZ(SUIStyle.FS_TITLE * 1.8)))
     local CLR_BLACK = Blitbuffer.COLOR_BLACK
 
     local prev_enabled = year > year_range.min_year
     local next_enabled = year < year_range.max_year
 
-    local gap = Screen:scaleBySize(16)
-    local btn_w = Screen:scaleBySize(60)
+    local gap = SZ(Screen:scaleBySize(16))
+    local btn_w = SZ(Screen:scaleBySize(60))
 
     local year_lbl = TextWidget:new{
         text    = tostring(year),
@@ -1680,22 +1740,25 @@ end
 
 -- Builds the two-column yearly stat row (days/hours | pages).
 -- Returns a HorizontalGroup of two tappable cells.
-local function _riYearlyRow(inner_w, yearly_stats, mode_key, on_toggle_mode, avail_h)
+-- SZ threaded in by the caller (ctx.SZ); falls back to UI.SZ if ever called
+-- without one (identical value during a synchronous window build).
+local function _riYearlyRow(inner_w, yearly_stats, mode_key, on_toggle_mode, avail_h, SZ)
+    SZ = SZ or UI.SZ
     local CLR_BLACK = Blitbuffer.COLOR_BLACK
-    local face_val  = Font:getFace(SUIStyle.FACE_REGULAR, SUIStyle.FS_TITLE)
-    local face_lbl  = Font:getFace(SUIStyle.FACE_REGULAR, SUIStyle.FS_DETAIL)
+    local face_val  = Font:getFace(SUIStyle.FACE_REGULAR, SZ(SUIStyle.FS_TITLE))
+    local face_lbl  = Font:getFace(SUIStyle.FACE_REGULAR, SZ(SUIStyle.FS_DETAIL))
 
     local sep_w  = SUIStyle.BORDER_SZ
     local col_w  = math.floor((inner_w - sep_w) / 2)
-    local cell_h = math.max(Screen:scaleBySize(48),
-                       math.min(Screen:scaleBySize(90),
+    local cell_h = math.max(SZ(Screen:scaleBySize(48)),
+                       math.min(SZ(Screen:scaleBySize(90)),
                            math.floor(avail_h * 0.12)))
 
     local function makeCell(val_str, lbl_str, on_tap)
         local content = VerticalGroup:new{ align = "center",
             TextWidget:new{ text = val_str, face = face_val,
                             fgcolor = CLR_BLACK, bold = true },
-            VerticalSpan:new{ width = Screen:scaleBySize(2) },
+            VerticalSpan:new{ width = SZ(Screen:scaleBySize(2)) },
             TextWidget:new{ text = lbl_str, face = face_lbl,
                             fgcolor = CLR_BLACK },
         }
@@ -1731,7 +1794,7 @@ local function _riYearlyRow(inner_w, yearly_stats, mode_key, on_toggle_mode, ava
     local sep = _CenterContainer:new{
         dimen = Geom:new{ w = sep_w, h = cell_h },
         LineWidget:new{
-            dimen      = Geom:new{ w = sep_w, h = cell_h - Screen:scaleBySize(24) },
+            dimen      = Geom:new{ w = sep_w, h = cell_h - SZ(Screen:scaleBySize(24)) },
             background = CLR_BLACK,
         }
     }
@@ -1747,7 +1810,10 @@ end
 
 
 
-local function _riMonthlyChart(inner_w, monthly_data, value_key, selected_year, avail_h)
+-- SZ threaded in by the caller (ctx.SZ); falls back to UI.SZ if ever called
+-- without one (identical value during a synchronous window build).
+local function _riMonthlyChart(inner_w, monthly_data, value_key, selected_year, avail_h, SZ)
+    SZ = SZ or UI.SZ
     if not monthly_data or #monthly_data == 0 then return VerticalGroup:new{} end
 
     local current_year  = tonumber(os.date("%Y"))
@@ -1762,13 +1828,13 @@ local function _riMonthlyChart(inner_w, monthly_data, value_key, selected_year, 
 
     local chart_w  = inner_w
     -- bar_h is 12% of available height per row (2 rows); clamped for legibility.
-    local bar_h    = math.max(Screen:scaleBySize(20),
-                        math.min(Screen:scaleBySize(60),
+    local bar_h    = math.max(SZ(Screen:scaleBySize(20)),
+                        math.min(SZ(Screen:scaleBySize(60)),
                             math.floor(avail_h * 0.12)))
-    local bar_w    = math.floor(chart_w / 6) - Screen:scaleBySize(8)
+    local bar_w    = math.floor(chart_w / 6) - SZ(Screen:scaleBySize(8))
     local bar_gap  = math.floor((chart_w - bar_w * 6) / 5)
-    local face_lbl = Font:getFace(SUIStyle.FACE_REGULAR, SUIStyle.FS_CAPTION - 2)
-    local lbl_h    = face_lbl.size + Screen:scaleBySize(2)
+    local face_lbl = Font:getFace(SUIStyle.FACE_REGULAR, SZ(SUIStyle.FS_CAPTION - 2))
+    local lbl_h    = face_lbl.size + SZ(Screen:scaleBySize(2))
 
     local function makeBarRow(slice)
         local bars  = HorizontalGroup:new{ align = "bottom" }
@@ -1804,7 +1870,7 @@ local function _riMonthlyChart(inner_w, monthly_data, value_key, selected_year, 
                 })
             end
             table.insert(col, LineWidget:new{
-                dimen      = Geom:new{ w = bar_w, h = Screen:scaleBySize(2) },
+                dimen      = Geom:new{ w = bar_w, h = SZ(Screen:scaleBySize(2)) },
                 background = bar_color,
             })
 
@@ -1830,7 +1896,7 @@ local function _riMonthlyChart(inner_w, monthly_data, value_key, selected_year, 
 
         return VerticalGroup:new{ align = "center",
             bars,
-            VerticalSpan:new{ width = Screen:scaleBySize(2) },
+            VerticalSpan:new{ width = SZ(Screen:scaleBySize(2)) },
             lbls,
         }
     end
@@ -1841,7 +1907,7 @@ local function _riMonthlyChart(inner_w, monthly_data, value_key, selected_year, 
     for i = 1,  6 do table.insert(row1, monthly_data[i]) end
     for i = 7, 12 do table.insert(row2, monthly_data[i]) end
     table.insert(chart, makeBarRow(row1))
-    table.insert(chart, VerticalSpan:new{ width = Screen:scaleBySize(8) })
+    table.insert(chart, VerticalSpan:new{ width = SZ(Screen:scaleBySize(8)) })
     table.insert(chart, makeBarRow(row2))
     return chart
 end
@@ -1850,33 +1916,36 @@ end
 -- Page 2 — "Today, Last Week & All-Time" deep-stats screen
 -- ---------------------------------------------------------------------------
 
-local function _buildInsightsPage2(inner_w, avail_h, streaks)
+-- SZ threaded in by the caller (ctx.SZ); falls back to UI.SZ if ever called
+-- without one (identical value during a synchronous window build).
+local function _buildInsightsPage2(inner_w, avail_h, streaks, SZ)
+    SZ = SZ or UI.SZ
     _lazyLoad()      -- ensure _CenterContainer, _LeftContainer, etc. are loaded
     local Size    = require("ui/size")
-    local sec_gap = math.max(Screen:scaleBySize(6), math.floor(avail_h * 0.025))
+    local sec_gap = math.max(SZ(Screen:scaleBySize(6)), math.floor(avail_h * 0.025))
 
     local CLR_BLACK  = Blitbuffer.COLOR_BLACK
     local CLR_BORDER = Blitbuffer.gray(0.72)
 
-    local face_val  = Font:getFace(SUIStyle.FACE_REGULAR, SUIStyle.FS_TITLE)
-    local face_lbl  = Font:getFace(SUIStyle.FACE_REGULAR, SUIStyle.FS_DETAIL)
-    local face_sub  = Font:getFace(SUIStyle.FACE_REGULAR, SUIStyle.FS_CAPTION)
+    local face_val  = Font:getFace(SUIStyle.FACE_REGULAR, SZ(SUIStyle.FS_TITLE))
+    local face_lbl  = Font:getFace(SUIStyle.FACE_REGULAR, SZ(SUIStyle.FS_DETAIL))
+    local face_sub  = Font:getFace(SUIStyle.FACE_REGULAR, SZ(SUIStyle.FS_CAPTION))
 
     local lastweek = _riGetLastWeekStats()
     local thisweek_stats = _riGetThisWeekStats()
     local month_stats = _riGetThisMonthStats()
     local alltime  = _riGetAllTimeStats()
 
-    local face_c3_lbl = Font:getFace(SUIStyle.FACE_REGULAR, SUIStyle.FS_DETAIL)
-    local face_c3_val = Font:getFace(SUIStyle.FACE_REGULAR, SUIStyle.FS_TITLE)
+    local face_c3_lbl = Font:getFace(SUIStyle.FACE_REGULAR, SZ(SUIStyle.FS_DETAIL))
+    local face_c3_val = Font:getFace(SUIStyle.FACE_REGULAR, SZ(SUIStyle.FS_TITLE))
 
-    local col_gap3    = Screen:scaleBySize(8)
+    local col_gap3    = SZ(Screen:scaleBySize(8))
     local cell_w3     = math.floor((inner_w - 2 * col_gap3) / 3)
-    local cell_vpad3  = Screen:scaleBySize(16)
-    local icon_h3     = Screen:scaleBySize(26)
-    local lbl_h3      = face_c3_lbl.size + Screen:scaleBySize(2)
-    local val_h3      = face_c3_val.size + Screen:scaleBySize(2)
-    local cell_h3     = cell_vpad3 * 2 + icon_h3 + Screen:scaleBySize(6) + val_h3 + Screen:scaleBySize(2) + lbl_h3
+    local cell_vpad3  = SZ(Screen:scaleBySize(16))
+    local icon_h3     = SZ(Screen:scaleBySize(26))
+    local lbl_h3      = face_c3_lbl.size + SZ(Screen:scaleBySize(2))
+    local val_h3      = face_c3_val.size + SZ(Screen:scaleBySize(2))
+    local cell_h3     = cell_vpad3 * 2 + icon_h3 + SZ(Screen:scaleBySize(6)) + val_h3 + SZ(Screen:scaleBySize(2)) + lbl_h3
 
     local function make3Cell(icon_char, value, label)
         return FrameContainer:new{
@@ -1889,13 +1958,13 @@ local function _buildInsightsPage2(inner_w, avail_h, streaks)
                     dimen = Geom:new{ w = cell_w3, h = icon_h3 },
                     TextWidget:new{
                         text      = icon_char,
-                        face      = Font:getFace(SUIStyle.FACE_ICONS, SUIStyle.FS_TITLE),
+                        face      = Font:getFace(SUIStyle.FACE_ICONS, SZ(SUIStyle.FS_TITLE)),
                         fgcolor   = CLR_BLACK,
                         width     = cell_w3,
                         alignment = "center",
                     },
                 },
-                VerticalSpan:new{ width = Screen:scaleBySize(6) },
+                VerticalSpan:new{ width = SZ(Screen:scaleBySize(6)) },
                 _CenterContainer:new{
                     dimen = Geom:new{ w = cell_w3, h = val_h3 },
                     TextWidget:new{
@@ -1907,7 +1976,7 @@ local function _buildInsightsPage2(inner_w, avail_h, streaks)
                         alignment = "center",
                     },
                 },
-                VerticalSpan:new{ width = Screen:scaleBySize(2) },
+                VerticalSpan:new{ width = SZ(Screen:scaleBySize(2)) },
                 _CenterContainer:new{
                     dimen = Geom:new{ w = cell_w3, h = lbl_h3 },
                     TextWidget:new{
@@ -1929,12 +1998,12 @@ local function _buildInsightsPage2(inner_w, avail_h, streaks)
             _CenterContainer:new{ dimen = Geom:new{ w = cw, h = cell_h3 }, c1 },
             _CenterContainer:new{
                 dimen = Geom:new{ w = sep_w, h = cell_h3 },
-                LineWidget:new{ dimen = Geom:new{ w = sep_w, h = cell_h3 - Screen:scaleBySize(32) }, background = CLR_BORDER }
+                LineWidget:new{ dimen = Geom:new{ w = sep_w, h = cell_h3 - SZ(Screen:scaleBySize(32)) }, background = CLR_BORDER }
             },
             _CenterContainer:new{ dimen = Geom:new{ w = cw, h = cell_h3 }, c2 },
             _CenterContainer:new{
                 dimen = Geom:new{ w = sep_w, h = cell_h3 },
-                LineWidget:new{ dimen = Geom:new{ w = sep_w, h = cell_h3 - Screen:scaleBySize(32) }, background = CLR_BORDER }
+                LineWidget:new{ dimen = Geom:new{ w = sep_w, h = cell_h3 - SZ(Screen:scaleBySize(32)) }, background = CLR_BORDER }
             },
             _CenterContainer:new{ dimen = Geom:new{ w = cw, h = cell_h3 }, c3 },
         }
@@ -1948,7 +2017,7 @@ local function _buildInsightsPage2(inner_w, avail_h, streaks)
     local alltime_block = FrameContainer:new{
         bordersize = SUIStyle.BORDER_SZ,
         color      = CLR_BORDER,
-        radius     = Screen:scaleBySize(12),
+        radius     = SZ(Screen:scaleBySize(12)),
         padding    = 0, margin = 0,
         alltime_row,
     }
@@ -1959,16 +2028,16 @@ local function _buildInsightsPage2(inner_w, avail_h, streaks)
     local avg_pages_val = math.floor(lastweek.avg_pages + 0.5)
     local avg_pages_str = _riFmtCount(avg_pages_val)
 
-    local face_icon_row = Font:getFace(SUIStyle.FACE_ICONS, SUIStyle.FS_BODY)
-    local face_lbl_row  = Font:getFace(SUIStyle.FACE_REGULAR, SUIStyle.FS_BODY)
-    local face_val_row  = Font:getFace(SUIStyle.FACE_REGULAR, SUIStyle.FS_BODY)
-    local ROW_H         = Screen:scaleBySize(52)
+    local face_icon_row = Font:getFace(SUIStyle.FACE_ICONS, SZ(SUIStyle.FS_BODY))
+    local face_lbl_row  = Font:getFace(SUIStyle.FACE_REGULAR, SZ(SUIStyle.FS_BODY))
+    local face_val_row  = Font:getFace(SUIStyle.FACE_REGULAR, SZ(SUIStyle.FS_BODY))
+    local ROW_H         = SZ(Screen:scaleBySize(52))
     local PAD_H         = Size.padding.large
-    local ICON_W        = Screen:scaleBySize(36)
+    local ICON_W        = SZ(Screen:scaleBySize(36))
     local row_inner     = inner_w - 2 * PAD_H
 
     local function makeIconRow(icon_glyph, label, value_str, sub_label)
-        local val_w = Screen:scaleBySize(160)
+        local val_w = SZ(Screen:scaleBySize(160))
         local lbl_w = row_inner - ICON_W - val_w
 
         local lbl_widget
@@ -2048,7 +2117,7 @@ local function _buildInsightsPage2(inner_w, avail_h, streaks)
     local week_row = FrameContainer:new{
         bordersize = SUIStyle.BORDER_SZ,
         color      = CLR_BORDER,
-        radius     = Screen:scaleBySize(12),
+        radius     = SZ(Screen:scaleBySize(12)),
         padding    = 0, margin = 0,
         VerticalGroup:new{
             align = "left",
@@ -2065,7 +2134,7 @@ local function _buildInsightsPage2(inner_w, avail_h, streaks)
     local thisweek_row = FrameContainer:new{
         bordersize = SUIStyle.BORDER_SZ,
         color      = CLR_BORDER,
-        radius     = Screen:scaleBySize(12),
+        radius     = SZ(Screen:scaleBySize(12)),
         padding    = 0, margin = 0,
         VerticalGroup:new{
             align = "left",
@@ -2081,7 +2150,7 @@ local function _buildInsightsPage2(inner_w, avail_h, streaks)
     local month_row = FrameContainer:new{
         bordersize = SUIStyle.BORDER_SZ,
         color      = CLR_BORDER,
-        radius     = Screen:scaleBySize(12),
+        radius     = SZ(Screen:scaleBySize(12)),
         padding    = 0, margin = 0,
         VerticalGroup:new{
             align = "left",
@@ -2104,7 +2173,7 @@ local function _buildInsightsPage2(inner_w, avail_h, streaks)
     local streak_row = FrameContainer:new{
         bordersize = SUIStyle.BORDER_SZ,
         color      = CLR_BORDER,
-        radius     = Screen:scaleBySize(12),
+        radius     = SZ(Screen:scaleBySize(12)),
         padding    = 0, margin = 0,
         VerticalGroup:new{
             align = "left",
@@ -2127,7 +2196,7 @@ local function _buildInsightsPage2(inner_w, avail_h, streaks)
     local wstreak_row = FrameContainer:new{
         bordersize = SUIStyle.BORDER_SZ,
         color      = CLR_BORDER,
-        radius     = Screen:scaleBySize(12),
+        radius     = SZ(Screen:scaleBySize(12)),
         padding    = 0, margin = 0,
         VerticalGroup:new{
             align = "left",
@@ -2192,7 +2261,7 @@ end
 --- Opens the Reading Insights window.
 --- Can be called from module_reading_stats (streak card tap) or any other
 --- SimpleUI touch-point.
-function StatsWindows.showReadingInsightsWindow()
+function StatsWindows.showReadingInsightsWindow(on_close_extra)
     _lazyLoad()
     local SUIWindow = require("sui_window")
 
@@ -2229,20 +2298,17 @@ function StatsWindows.showReadingInsightsWindow()
         -- SUIWindow._rebuildFrame, so all sections can size themselves
         -- proportionally and the layout stays on one page on any screen.
         local Size       = require("ui/size")
-        local modal_h    = math.floor(Screen:getHeight() * 0.75)
+        local modal_h    = math.floor((select(2, UI.getPortraitDims())) * 0.75)
         local border     = Size.border.window
         local pad_v      = Size.padding.large
-        local title_h    = Screen:scaleBySize(50)  -- conservative TitleBar estimate
-        local dot_h      = Screen:scaleBySize(28) + Screen:scaleBySize(18)
+        local title_h    = ctx.SZ(Screen:scaleBySize(50))  -- conservative TitleBar estimate
+        local dot_h      = ctx.SZ(Screen:scaleBySize(28)) + ctx.SZ(Screen:scaleBySize(18))
         local avail_h    = modal_h - 2 * border - pad_v - title_h - dot_h
-
-        -- Spacing between sections: 2% of avail_h, min 6px.
-        local sec_gap = math.max(Screen:scaleBySize(6), math.floor(avail_h * 0.02))
 
         local CLR_BLACK  = Blitbuffer.COLOR_BLACK
         local CLR_BORDER = Blitbuffer.gray(0.72)
 
-        local face_sec    = Font:getFace(SUIStyle.FACE_REGULAR, SUIStyle.FS_DETAIL)
+        local face_sec    = Font:getFace(SUIStyle.FACE_REGULAR, ctx.SZ(SUIStyle.FS_DETAIL))
 
         local function sectionLabel(text)
             return TextWidget:new{
@@ -2257,18 +2323,18 @@ function StatsWindows.showReadingInsightsWindow()
         if today.seconds < 60 then today_time_str = "0m" end
         local today_pages_str = _riFmtCount(today.pages)
 
-        local today_gap = Screen:scaleBySize(12)
+        local today_gap = ctx.SZ(Screen:scaleBySize(12))
         local today_card_w = math.floor((inner_w - today_gap) / 2)
-        local cell_h2 = math.max(Screen:scaleBySize(70), math.min(Screen:scaleBySize(110), math.floor(avail_h * 0.16)))
-        local today_card_h = cell_h2 + Screen:scaleBySize(24)
+        local cell_h2 = math.max(ctx.SZ(Screen:scaleBySize(70)), math.min(ctx.SZ(Screen:scaleBySize(110)), math.floor(avail_h * 0.16)))
+        local today_card_h = cell_h2 + ctx.SZ(Screen:scaleBySize(24))
 
         local function makeTodayCard(icon_char, value, label)
-            local face_today_val = Font:getFace(SUIStyle.FACE_REGULAR, math.floor(SUIStyle.FS_TITLE * 1.6))
-            local face_lbl       = Font:getFace(SUIStyle.FACE_REGULAR, SUIStyle.FS_DETAIL)
+            local face_today_val = Font:getFace(SUIStyle.FACE_REGULAR, math.floor(ctx.SZ(SUIStyle.FS_TITLE * 1.6)))
+            local face_lbl       = Font:getFace(SUIStyle.FACE_REGULAR, ctx.SZ(SUIStyle.FS_DETAIL))
 
             local icon_w = TextWidget:new{
                 text    = icon_char,
-                face    = Font:getFace(SUIStyle.FACE_ICONS, math.floor(SUIStyle.FS_TITLE * 1.6)),
+                face    = Font:getFace(SUIStyle.FACE_ICONS, math.floor(ctx.SZ(SUIStyle.FS_TITLE * 1.6))),
                 fgcolor = CLR_BLACK,
             }
 
@@ -2279,7 +2345,7 @@ function StatsWindows.showReadingInsightsWindow()
                     fgcolor = CLR_BLACK,
                     bold    = true,
                 },
-                VerticalSpan:new{ width = Screen:scaleBySize(2) },
+                VerticalSpan:new{ width = ctx.SZ(Screen:scaleBySize(2)) },
                 TextWidget:new{
                     text    = label,
                     face    = face_lbl,
@@ -2289,14 +2355,14 @@ function StatsWindows.showReadingInsightsWindow()
 
             local hg = HorizontalGroup:new{ align = "center",
                 icon_w,
-                HorizontalSpan:new{ width = Screen:scaleBySize(12) },
+                HorizontalSpan:new{ width = ctx.SZ(Screen:scaleBySize(12)) },
                 text_vg
             }
 
             return FrameContainer:new{
                 bordersize = SUIStyle.BORDER_SZ,
                 color      = CLR_BORDER,
-                radius     = Screen:scaleBySize(12),
+                radius     = ctx.SZ(Screen:scaleBySize(12)),
                 padding    = 0, margin = 0,
                 _CenterContainer:new{
                     dimen = Geom:new{ w = today_card_w, h = today_card_h },
@@ -2329,86 +2395,103 @@ function StatsWindows.showReadingInsightsWindow()
         end
 
         local year_header = _riYearHeader(inner_w, selected_year,
-                                          year_range, goPrev, goNext)
+                                          year_range, goPrev, goNext, ctx.SZ)
 
         local function toggleMode()
             _ri_mode_key = (_ri_mode_key == "hours") and "days" or "hours"
             ctx.repaint()
         end
 
-        local yearly_row = _riYearlyRow(inner_w, yearly, _ri_mode_key, toggleMode, avail_h)
+        local yearly_row = _riYearlyRow(inner_w, yearly, _ri_mode_key, toggleMode, avail_h, ctx.SZ)
 
         -- ── Section 3: monthly chart ──────────────────────────────────
         local value_key = _ri_mode_key == "hours" and "hours" or "days"
-        local chart     = _riMonthlyChart(inner_w, monthly, value_key, selected_year, avail_h)
+        local chart     = _riMonthlyChart(inner_w, monthly, value_key, selected_year, avail_h, ctx.SZ)
 
-        -- ── Assemble into a single VerticalGroup ─────────────────────────
-        -- Returning one widget prevents SUIWindow._buildPages from splitting
-        -- the content across multiple pages.
-        local alltime_block, week_row, thisweek_row, month_row, streak_row, wstreak_row = _buildInsightsPage2(inner_w, avail_h, streaks)
+        -- ── Assemble into independent per-section widgets ────────────────
+        local alltime_block, week_row, thisweek_row, month_row, streak_row, wstreak_row = _buildInsightsPage2(inner_w, avail_h, streaks, ctx.SZ)
 
-        local all1 = VerticalGroup:new{ align = "left",
-        VerticalSpan:new{ width = Screen:scaleBySize(16) },
-            sectionLabel(_("TODAY'S SUMMARY")),
-            VerticalSpan:new{ width = Screen:scaleBySize(8) },
-            today_row,
-            VerticalSpan:new{ width = sec_gap },
-            sectionLabel(_("DAY STREAK")),
-            VerticalSpan:new{ width = Screen:scaleBySize(8) },
-            streak_row,
-            VerticalSpan:new{ width = sec_gap },
-            sectionLabel(_("WEEK STREAK")),
-            VerticalSpan:new{ width = Screen:scaleBySize(8) },
-            wstreak_row,
-            VerticalSpan:new{ width = sec_gap },
-        }
-        
-        local all2 = VerticalGroup:new{ align = "left",
-            VerticalSpan:new{ width = Screen:scaleBySize(16) },
-            sectionLabel(_("LAST 7 DAYS")),
-            VerticalSpan:new{ width = Screen:scaleBySize(8) },
-            week_row,
-            VerticalSpan:new{ width = sec_gap },
-            sectionLabel(_("THIS WEEK")),
-            VerticalSpan:new{ width = Screen:scaleBySize(8) },
-            thisweek_row,
-            VerticalSpan:new{ width = sec_gap },
-            sectionLabel(_("THIS MONTH")),
-            VerticalSpan:new{ width = Screen:scaleBySize(8) },
-            month_row,
-            VerticalSpan:new{ width = sec_gap },
-        }
+        -- Each section is its own top-level item in the returned array, so
+        -- SUIWindow's real pagination (_buildPages in sui_window.lua)
+        -- measures its TRUE rendered height and packs sections onto pages
+        -- accordingly — starting a new page whenever the next section
+        -- wouldn't fit, instead of a page's content silently overflowing
+        -- past the modal's bounds.
+        --
+        -- NOTE: these blocks are deliberately NOT marked is_section. That
+        -- flag exists in _buildPages for the *bare label* case (see
+        -- SUIWindow.Section / MenuTable's is_title rows), where a lone
+        -- section-header widget is followed by its content as a SEPARATE
+        -- array item — on overflow, _buildPages pulls the already-placed
+        -- header back out and re-pairs it with the incoming item so the
+        -- header never sits orphaned at the bottom of a page.
+        -- Here, title + content are already fused into one atomic widget
+        -- (there is nothing to re-pair). Marking these is_section made
+        -- _buildPages treat the PREVIOUS already-placed section as an
+        -- orphan-prone header and glue it to the current (often much
+        -- larger, e.g. the chart-containing alltime_and_year) block on the
+        -- new page — so the new page ended up holding two full sections
+        -- instead of one, still overflowing avail_h and getting clipped.
+        -- Leaving is_section unset makes _buildPages fall back to its plain
+        -- page-break path: whichever section doesn't fit starts a fresh
+        -- page alone, with the full avail_h to itself.
+        --
+        -- Previously this screen hand-grouped sections into exactly three
+        -- FrameContainers, each forced to report height = avail_h
+        -- regardless of its child's actual size — so when the real content
+        -- (translated strings, larger fonts, etc.) ran taller than the
+        -- avail_h estimate, the excess simply painted past the frame
+        -- instead of moving to a new page.
+        local function section(title, content)
+            return VerticalGroup:new{ align = "left",
+                VerticalSpan:new{ width = ctx.SZ(Screen:scaleBySize(16)) },
+                sectionLabel(title),
+                VerticalSpan:new{ width = ctx.SZ(Screen:scaleBySize(8)) },
+                content,
+            }
+        end
 
-        local all3 = VerticalGroup:new{ align = "left",
-            VerticalSpan:new{ width = Screen:scaleBySize(16) },
+        local alltime_section = VerticalGroup:new{ align = "left",
+            VerticalSpan:new{ width = ctx.SZ(Screen:scaleBySize(16)) },
             sectionLabel(_("ALL TIME")),
-            VerticalSpan:new{ width = Screen:scaleBySize(8) },
+            VerticalSpan:new{ width = ctx.SZ(Screen:scaleBySize(8)) },
             alltime_block,
-            VerticalSpan:new{ width = sec_gap + Screen:scaleBySize(24) },
-            year_header,
-            VerticalSpan:new{ width = Screen:scaleBySize(4) },
-            yearly_row,
-            VerticalSpan:new{ width = sec_gap + Screen:scaleBySize(16) },
-            chart,
-            VerticalSpan:new{ width = sec_gap },
         }
 
-        local page1 = FrameContainer:new{
-            bordersize = 0, padding = 0, margin = 0,
-            dimen = Geom:new{ w = inner_w, h = avail_h },
-            all1,
+        -- year_header already renders its own year number + prev/next nav,
+        -- so it doubles as this group's title — no separate sectionLabel
+        -- needed. Split out from the old combined alltime_and_year block:
+        -- that single item bundled ALL TIME + year nav + yearly row + the
+        -- monthly chart into one ~5-widget block that, on any screen where
+        -- it ran taller than avail_h (larger fonts, longer translated
+        -- strings, landscape's reduced avail_h), had nowhere to go — a
+        -- single oversized item can only be moved whole to a fresh page,
+        -- never split further, so it kept clipping regardless of which
+        -- page it landed on. Breaking it into alltime_section and
+        -- year_chart_section gives _buildPages two much smaller atomic
+        -- units instead of one large one, so each has a real chance of
+        -- fitting standalone within avail_h, and they can land on separate
+        -- pages if needed instead of being forced to move (and overflow)
+        -- together.
+        local year_chart_section = VerticalGroup:new{ align = "left",
+            VerticalSpan:new{ width = ctx.SZ(Screen:scaleBySize(16)) },
+            year_header,
+            VerticalSpan:new{ width = ctx.SZ(Screen:scaleBySize(4)) },
+            yearly_row,
+            VerticalSpan:new{ width = ctx.SZ(Screen:scaleBySize(16)) },
+            chart,
         }
-        local page2 = FrameContainer:new{
-            bordersize = 0, padding = 0, margin = 0,
-            dimen = Geom:new{ w = inner_w, h = avail_h },
-            all2,
+
+        return {
+            section(_("TODAY'S SUMMARY"), today_row),
+            section(_("DAY STREAK"), streak_row),
+            section(_("WEEK STREAK"), wstreak_row),
+            section(_("LAST 7 DAYS"), week_row),
+            section(_("THIS WEEK"), thisweek_row),
+            section(_("THIS MONTH"), month_row),
+            alltime_section,
+            year_chart_section,
         }
-        local page3 = FrameContainer:new{
-            bordersize = 0, padding = 0, margin = 0,
-            dimen = Geom:new{ w = inner_w, h = avail_h },
-            all3,
-        }
-        return { page1, page2, page3 }
     end
 
     -- Swipe navigation: swipe left = next year, swipe right = prev year.
@@ -2423,7 +2506,7 @@ function StatsWindows.showReadingInsightsWindow()
     local win = SUIWindow:new{
         name          = "sui_win_reading_insights",
         title         = titleFn,
-        height        = math.floor(Screen:getHeight() * 0.75),
+        height        = math.floor((select(2, UI.getPortraitDims())) * 0.75),
         position      = "bottom",
         navpager_mode = Config.isNavpagerEnabled and Config.isNavpagerEnabled() or false,
         screens       = {
@@ -2431,6 +2514,7 @@ function StatsWindows.showReadingInsightsWindow()
         },
         on_close = function()
             _riClearCache()
+            if on_close_extra then on_close_extra() end
         end,
     }
     win_ref = win
@@ -2509,23 +2593,32 @@ function StatsWindows.showBookStatsFromFile(filepath)
             d    = params.stats or d
             book = params.book  or book
         end
+        -- Recompute the date-range-dependent aggregates whenever the user
+        -- has edited the start/end date on this book (see the sibling
+        -- buildStatsScreen in showFinishedBooksDialog for the full rationale).
+        if book and (type(book.date_started) == "string" or type(book.date_finished) == "string") then
+            local start_ts = _dateStrToTs(book.date_started, false)
+            local end_ts   = _dateStrToTs(book.date_finished, true)
+            local filtered = _fetchBookStatsData(book, start_ts, end_ts)
+            if filtered then d = filtered end
+        end
 
         local CLR_BORDER = Blitbuffer.gray(0.72)
         local CLR_BLACK  = Blitbuffer.COLOR_BLACK
         local PAD_H      = _Size.padding.large
-        local ICON_FS    = SUIStyle.FS_BODY
-        local ROW_H      = Screen:scaleBySize(52)
+        local ICON_FS    = ctx.SZ(SUIStyle.FS_BODY)
+        local ROW_H      = ctx.SZ(Screen:scaleBySize(52))
 
         -- ── cell geometry (3-col top metrics) ──────────────────────────
         local sep_w      = SUIStyle.BORDER_SZ
-        local col_w      = math.floor((inner_w - 2 * (Screen:scaleBySize(10))) / 3)
-        local cell_v_pad = Screen:scaleBySize(16)
-        local face_val   = Font:getFace(SUIStyle.FACE_REGULAR, SUIStyle.FS_TITLE)
-        local face_lbl   = Font:getFace(SUIStyle.FACE_REGULAR, SUIStyle.FS_DETAIL)
+        local col_w      = math.floor((inner_w - 2 * (ctx.SZ(Screen:scaleBySize(10)))) / 3)
+        local cell_v_pad = ctx.SZ(Screen:scaleBySize(16))
+        local face_val   = Font:getFace(SUIStyle.FACE_REGULAR, ctx.SZ(SUIStyle.FS_TITLE))
+        local face_lbl   = Font:getFace(SUIStyle.FACE_REGULAR, ctx.SZ(SUIStyle.FS_DETAIL))
         local lbl_h      = math.floor(face_lbl.size * 2.2)
-        local val_h      = face_val.size + Screen:scaleBySize(2)
-        local cell_h     = cell_v_pad * 2 + val_h + Screen:scaleBySize(2) + lbl_h
-        local card_gap   = Screen:scaleBySize(10)
+        local val_h      = face_val.size + ctx.SZ(Screen:scaleBySize(2))
+        local cell_h     = cell_v_pad * 2 + val_h + ctx.SZ(Screen:scaleBySize(2)) + lbl_h
+        local card_gap   = ctx.SZ(Screen:scaleBySize(10))
         local text_max_w = inner_w - 2 * PAD_H
 
         -- ── helpers ────────────────────────────────────────────────────
@@ -2539,7 +2632,7 @@ function StatsWindows.showBookStatsFromFile(filepath)
                     fgcolor   = CLR_BLACK,
                     alignment = "center",
                 },
-                VerticalSpan:new{ width = Screen:scaleBySize(2) },
+                VerticalSpan:new{ width = ctx.SZ(Screen:scaleBySize(2)) },
                 TextWidget:new{
                     text      = label,
                     face      = face_lbl,
@@ -2549,7 +2642,7 @@ function StatsWindows.showBookStatsFromFile(filepath)
             }
             return FrameContainer:new{
                 bordersize = SUIStyle.BORDER_SZ, color = CLR_BORDER,
-                radius     = Screen:scaleBySize(12),
+                radius     = ctx.SZ(Screen:scaleBySize(12)),
                 padding    = 0, margin = 0,
                 _CenterContainer:new{
                     dimen = Geom:new{ w = w, h = cell_h },
@@ -2570,12 +2663,12 @@ function StatsWindows.showBookStatsFromFile(filepath)
             makeTopCell(pages_read_str,                   _("Pages"),  col_w),
         }
 
-        local face_title  = Font:getFace(SUIStyle.FACE_REGULAR, SUIStyle.FS_SUBTITLE)
-        local face_author = Font:getFace(SUIStyle.FACE_REGULAR, SUIStyle.FS_BODY)
+        local face_title  = Font:getFace(SUIStyle.FACE_REGULAR, ctx.SZ(SUIStyle.FS_SUBTITLE))
+        local face_author = Font:getFace(SUIStyle.FACE_REGULAR, ctx.SZ(SUIStyle.FS_BODY))
 
         local title_author_group = VerticalGroup:new{
             align = "center",
-            VerticalSpan:new{ width = Screen:scaleBySize(24) },
+            VerticalSpan:new{ width = ctx.SZ(Screen:scaleBySize(24)) },
             _TextBoxWidget:new{
                 text      = d.title,
                 face      = face_title,
@@ -2588,14 +2681,14 @@ function StatsWindows.showBookStatsFromFile(filepath)
                 max_lines = 1,
                 height_overflow_show_ellipsis = true,
             },
-            VerticalSpan:new{ width = Screen:scaleBySize(4) },
+            VerticalSpan:new{ width = ctx.SZ(Screen:scaleBySize(4)) },
             TextWidget:new{
                 text      = d.authors or "",
                 face      = face_author,
                 fgcolor   = CLR_BLACK,
                 max_width = text_max_w,
             },
-            VerticalSpan:new{ width = Screen:scaleBySize(16) },
+            VerticalSpan:new{ width = ctx.SZ(Screen:scaleBySize(16)) },
         }
 
         local fp = book.filepath
@@ -2626,7 +2719,7 @@ function StatsWindows.showBookStatsFromFile(filepath)
             VerticalGroup:new{
                 align = "center",
                 tappable_title,
-                VerticalSpan:new{ width = Screen:scaleBySize(16) },
+                VerticalSpan:new{ width = ctx.SZ(Screen:scaleBySize(16)) },
                 metrics_row,
             },
         }
@@ -2651,13 +2744,13 @@ function StatsWindows.showBookStatsFromFile(filepath)
         end
 
         local icon_face = Font:getFace(SUIStyle.FACE_ICONS,   ICON_FS)
-        local lbl_face  = Font:getFace(SUIStyle.FACE_REGULAR, SUIStyle.FS_BODY)
-        local val_face  = Font:getFace(SUIStyle.FACE_REGULAR, SUIStyle.FS_BODY)
-        local ICON_W    = Screen:scaleBySize(36)
+        local lbl_face  = Font:getFace(SUIStyle.FACE_REGULAR, ctx.SZ(SUIStyle.FS_BODY))
+        local val_face  = Font:getFace(SUIStyle.FACE_REGULAR, ctx.SZ(SUIStyle.FS_BODY))
+        local ICON_W    = ctx.SZ(Screen:scaleBySize(36))
         local row_inner = inner_w - 2 * PAD_H
 
         local function makeIconRow(icon_glyph, label, value_str, on_tap)
-            local val_w = Screen:scaleBySize(160)
+            local val_w = ctx.SZ(Screen:scaleBySize(160))
             local lbl_w = row_inner - ICON_W - val_w
             local row_content = HorizontalGroup:new{
                 align = "center",
@@ -2712,7 +2805,7 @@ function StatsWindows.showBookStatsFromFile(filepath)
         local rows_block = FrameContainer:new{
             bordersize = SUIStyle.BORDER_SZ,
             color      = CLR_BORDER,
-            radius     = Screen:scaleBySize(12),
+            radius     = ctx.SZ(Screen:scaleBySize(12)),
             padding    = 0,
             VerticalGroup:new{
                 align = "left",
@@ -2750,12 +2843,13 @@ function StatsWindows.showBookStatsFromFile(filepath)
             function(new_date)   -- on_end_saved / on_end_reset
                 book.date_finished = (new_date ~= original_end_str) and new_date or nil
                 ctx.repaint()
-            end
+            end,
+            ctx.SZ
         )
 
-        local block_gap = VerticalSpan:new{ width = Screen:scaleBySize(10) }
+        local block_gap = VerticalSpan:new{ width = ctx.SZ(Screen:scaleBySize(10)) }
         return {
-            VerticalSpan:new{ width = Screen:scaleBySize(6) },
+            VerticalSpan:new{ width = ctx.SZ(Screen:scaleBySize(6)) },
             top_card,
             block_gap,
             rows_block,
@@ -2768,7 +2862,7 @@ function StatsWindows.showBookStatsFromFile(filepath)
     local win = SUIWindow:new{
         name     = "sui_win_book_stats_standalone",
         title    = _("Book Statistics"),
-        height   = math.floor(Screen:getHeight() * 0.75),
+        height   = math.floor((select(2, UI.getPortraitDims())) * 0.75),
         position = "bottom",
         navpager_mode = require("sui_config").isNavpagerEnabled(),
         screens  = { __root__ = buildStatsScreen },

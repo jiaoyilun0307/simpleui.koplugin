@@ -61,6 +61,7 @@ M.ICON = {
     library        = _P .. "library.svg",
     collections    = _P .. "collections.svg",
     history        = _P .. "history.svg",
+    recent         = _P .. "recent.svg",
     continue_      = _P .. "continue.svg",       -- trailing _ avoids clash with Lua keyword
     frontlight     = _P .. "frontlight.svg",
     night          = _P .. "night.svg",
@@ -69,6 +70,7 @@ M.ICON = {
     plus_alt       = _P .. "plus_alt.svg",
     custom         = _P .. "custom.svg",
     custom_dir     = _P .. "custom",
+    group          = _P .. "group.svg",
     plugin         = _P .. "plugin.svg",
     author         = _P .. "author.svg",
     series         = _P .. "series.svg",
@@ -88,6 +90,7 @@ M.ICON = {
 M.CUSTOM_ICON            = M.ICON.custom
 M.CUSTOM_PLUGIN_ICON     = M.ICON.plugin
 M.CUSTOM_DISPATCHER_ICON = M.ICON.ko_settings
+M.CUSTOM_GROUP_ICON      = M.ICON.group
 
 -- ===========================================================================
 -- 2. Core Constants & Action Registry
@@ -113,6 +116,7 @@ M.ALL_ACTIONS = {
     { id = "homescreen",       label = _("Home"),             icon = M.ICON.ko_home     },
     { id = "collections",      label = _("Collections"),      icon = M.ICON.collections },
     { id = "history",          label = _("History"),          icon = M.ICON.history     },
+    { id = "recent",           label = _("Recent"),           icon = M.ICON.recent      },
     { id = "continue",         label = _("Continue"),         icon = M.ICON.continue_   },
     { id = "favorites",        label = _("Favorites"),        icon = M.ICON.ko_star     },
     { id = "bookmark_browser", label = _("Bookmarks"),        icon = M.ICON.ko_bookmark },
@@ -138,7 +142,9 @@ local function _QA_lazy() return package.loaded["sui_quickactions"] or require("
 function M.getCustomQAList()         return _QA_lazy().getCustomQAList()                                                              end
 function M.saveCustomQAList(list)    return _QA_lazy().saveCustomQAList(list)                                                         end
 function M.getCustomQAConfig(id)     return _QA_lazy().getCustomQAConfig(id)                                                          end
-function M.saveCustomQAConfig(id, label, path, coll, icon, pk, pm, da) return _QA_lazy().saveCustomQAConfig(id, label, path, coll, icon, pk, pm, da) end
+function M.saveCustomQAConfig(id, label, path, coll, icon, pk, pm, da, is_folder) return _QA_lazy().saveCustomQAConfig(id, label, path, coll, icon, pk, pm, da, is_folder) end
+function M.getQAFolderItems(id)      return _QA_lazy().getQAFolderItems(id)                                                            end
+function M.saveQAFolderItems(id, items) return _QA_lazy().saveQAFolderItems(id, items)                                                 end
 function M.deleteCustomQA(id)        return _QA_lazy().deleteCustomQA(id)                                                             end
 function M.purgeQACollection(coll)   return _QA_lazy().purgeQACollection(coll)                                                        end
 function M.renameQACollection(o, n)  return _QA_lazy().renameQACollection(o, n)                                                       end
@@ -625,6 +631,33 @@ M.NAVBAR_LABEL_SCALE_DEF  = NAVBAR_LABEL_SCALE_DEF
 M.NAVBAR_LABEL_SCALE_MIN  = NAVBAR_LABEL_SCALE_MIN
 M.NAVBAR_LABEL_SCALE_MAX  = NAVBAR_LABEL_SCALE_MAX
 M.NAVBAR_LABEL_SCALE_STEP = SCALE_STEP
+
+-- Global Font Scale (Style ▸ Text Size)
+-- Multiplies SUIStyle's five FS_* typographic levels (title/subtitle/body/
+-- detail/caption). Unlike the per-bar scales above, FS_* is baked into
+-- module-level constants at sui_style.lua load time, so a change here only
+-- takes full effect after a restart — mirrors the UI Font picker.
+local FONT_SCALE_KEY  = "simpleui_style_font_scale_pct"
+local FONT_SCALE_DEF  = 100
+local FONT_SCALE_MIN  = 50
+local FONT_SCALE_MAX  = 150
+
+function M.getFontScalePct()
+    local v = SUISettings:get(FONT_SCALE_KEY)
+    local n = tonumber(v)
+    if not n then return FONT_SCALE_DEF end
+    return math_max(FONT_SCALE_MIN, math_min(FONT_SCALE_MAX, math_floor(n)))
+end
+
+function M.setFontScalePct(pct)
+    SUISettings:set(FONT_SCALE_KEY,
+        math_max(FONT_SCALE_MIN, math_min(FONT_SCALE_MAX, math_floor(pct))))
+end
+
+M.FONT_SCALE_DEF  = FONT_SCALE_DEF
+M.FONT_SCALE_MIN  = FONT_SCALE_MIN
+M.FONT_SCALE_MAX  = FONT_SCALE_MAX
+M.FONT_SCALE_STEP = SCALE_STEP
 
 -- Link Scale
 function M.isScaleLinked()

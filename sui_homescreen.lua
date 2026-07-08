@@ -446,7 +446,7 @@ end
 
 -- Returns true when the screen is in landscape orientation.
 local function _isLandscape()
-    return Screen:getWidth() > Screen:getHeight()
+    return UI.isLandscape()
 end
 
 -- Computes a landscape page step (2 in landscape spread mode, 1 in portrait).
@@ -1542,12 +1542,13 @@ function HomescreenWidget:_buildCtx()
                 thumb_scale   = Config.getThumbScale("coverdeck", PFX),
                 lbl_scale     = Config.getItemLabelScale("coverdeck", PFX),
                 source        = SUISettings:readSetting(PFX .. "coverdeck_source") or "recent",
-                title_pos     = SUISettings:readSetting(PFX .. "coverdeck_title_pos") or "below",
                 show_finished = SUISettings:readSetting(PFX .. "coverdeck_show_finished") == true,
+                main_order    = SUISettings:readSetting(PFX .. "coverdeck_main_order"),
                 show = {
                     title    = SUISettings:nilOrTrue(PFX .. "coverdeck_show_title"),
                     author   = SUISettings:nilOrTrue(PFX .. "coverdeck_show_author"),
                     progress = SUISettings:nilOrTrue(PFX .. "coverdeck_show_progress"),
+                    stats    = SUISettings:nilOrTrue(PFX .. "coverdeck_show_stats"),
                     percent  = SUISettings:nilOrTrue(PFX .. "coverdeck_show_percent"),
                     book_days      = SUISettings:nilOrTrue(PFX .. "coverdeck_show_book_days"),
                     book_time      = SUISettings:nilOrTrue(PFX .. "coverdeck_show_book_time"),
@@ -1617,7 +1618,7 @@ function HomescreenWidget:_buildCtx()
     -- and never requires a DB query.
     local cd_cfg = cfg and cfg.coverdeck
     local coverdeck_needs_db = mod_cd and Registry.isEnabled(mod_cd, PFX) and (
-        (cd_cfg and cd_cfg.show and
+        (cd_cfg and cd_cfg.show and cd_cfg.show.stats ~= false and
             (cd_cfg.show.book_days or cd_cfg.show.book_time or cd_cfg.show.book_remaining))
         or (not (cd_cfg and cd_cfg.show) and (
             SUISettings:nilOrTrue(PFX .. "coverdeck_show_book_days") or
@@ -1976,6 +1977,50 @@ function HomescreenWidget:_updatePage(keep_cache, books_only, stats_only)
         end
     end
 
+    -- Declared early so the landscape patch below (applied before _buildCtx) can
+    -- use it.  The same value is reused further down for layout branching.
+    local is_landscape = _isLandscape()
+
+    -- In landscape, patch ALL Config scale accessors before _buildCtx and keep
+    -- them active for the entire build (ctx population + module build loop).
+    -- This ensures every module — regardless of whether it reads scale from ctx
+    -- or calls Config.get* directly at build time — sees the landscape factor.
+    -- Restored unconditionally at the end of _updatePage via a local helper.
+    local _lf_orig = {}
+    local function _applyLandscapePatch(factor)
+        _lf_orig.getModuleScale    = Config.getModuleScale
+        _lf_orig.getLabelScale     = Config.getLabelScale
+        _lf_orig.getThumbScale     = Config.getThumbScale
+        _lf_orig.getItemLabelScale = Config.getItemLabelScale
+        _lf_orig.getRSTextScalePct = Config.getRSTextScalePct
+        Config.getModuleScale    = function(mod_id, pfx) return _lf_orig.getModuleScale(mod_id, pfx)     * factor end
+        Config.getLabelScale     = function()            return _lf_orig.getLabelScale()                 * factor end
+        Config.getThumbScale     = function(mod_id, pfx) return _lf_orig.getThumbScale(mod_id, pfx)     * factor end
+        Config.getItemLabelScale = function(mod_id, pfx) return _lf_orig.getItemLabelScale(mod_id, pfx) * factor end
+        Config.getRSTextScalePct = function()            return _lf_orig.getRSTextScalePct()             * factor end
+    end
+    local function _restoreLandscapePatch()
+        if _lf_orig.getModuleScale then
+            Config.getModuleScale    = _lf_orig.getModuleScale
+            Config.getLabelScale     = _lf_orig.getLabelScale
+            Config.getThumbScale     = _lf_orig.getThumbScale
+            Config.getItemLabelScale = _lf_orig.getItemLabelScale
+            Config.getRSTextScalePct = _lf_orig.getRSTextScalePct
+            _lf_orig = {}
+        end
+    end
+
+    -- Compute landscape scale factor (single source of truth: UI.getLandscapeFactor,
+    -- shared with any other SimpleUI surface that needs the same reduction —
+    -- e.g. SUIWindow) and apply the Config patch.
+    -- Declared here (function scope) so the second is_landscape block below can
+    -- read it when storing _clock_landscape_factor for the clock tick path.
+    local _landscape_factor
+    if is_landscape then
+        _landscape_factor = UI.getLandscapeFactor()
+        _applyLandscapePatch(_landscape_factor)
+    end
+
     local ctx
     if keep_cache and self._ctx_cache then
         ctx = self._ctx_cache
@@ -1985,7 +2030,7 @@ function HomescreenWidget:_updatePage(keep_cache, books_only, stats_only)
     end
     local inner_w = self._layout_inner_w or (Screen:getWidth() - SIDE_PAD * 2)
     local body    = self._body
-    if not body then return end
+    if not body then _restoreLandscapePatch() ; return end
 
     -- Module list cache — rebuilt whenever layout changes.
     local layout = SUISettings:readSetting("simpleui_layout")
@@ -2090,7 +2135,6 @@ function HomescreenWidget:_updatePage(keep_cache, books_only, stats_only)
     -- Clamp current page and normalise to odd index in landscape (spread mode).
     if self._current_page > total_pages then self._current_page = total_pages end
     if self._current_page < 1           then self._current_page = 1           end
-    local is_landscape = _isLandscape()
     if is_landscape and total_pages > 1 and self._current_page % 2 == 0 then
         self._current_page = self._current_page - 1
     end
@@ -2154,23 +2198,11 @@ function HomescreenWidget:_updatePage(keep_cache, books_only, stats_only)
     local page_has_covers = false
 
     if is_landscape then
-        -- In landscape, temporarily override Config scale accessors by a fixed
-        -- factor so all module builds and getHeight() calls use the scaled value.
-        -- Originals are restored immediately after the build loop.
-        local LANDSCAPE_FACTOR = 0.65
+        -- Config scale accessors are already patched above (active for the full
+        -- build). _landscape_factor was computed at the top of this branch and
+        -- is stored here for the clock tick path which rebuilds outside _updatePage.
+        local LANDSCAPE_FACTOR = _landscape_factor
         self._clock_landscape_factor = LANDSCAPE_FACTOR
-        local _orig_getModuleScale = Config.getModuleScale
-        local _orig_getLabelScale  = Config.getLabelScale
-        local _orig_getThumbScale  = Config.getThumbScale
-        Config.getModuleScale = function(mod_id, pfx)
-            return _orig_getModuleScale(mod_id, pfx) * LANDSCAPE_FACTOR
-        end
-        Config.getLabelScale = function()
-            return _orig_getLabelScale() * LANDSCAPE_FACTOR
-        end
-        Config.getThumbScale = function(mod_id, pfx)
-            return _orig_getThumbScale(mod_id, pfx) * LANDSCAPE_FACTOR
-        end
 
         local COL_GAP = PAD
         local col_w   = math.floor((inner_w - COL_GAP) / 2)
@@ -2329,9 +2361,6 @@ function HomescreenWidget:_updatePage(keep_cache, books_only, stats_only)
             end
         end
 
-        Config.getModuleScale = _orig_getModuleScale
-        Config.getLabelScale  = _orig_getLabelScale
-        Config.getThumbScale  = _orig_getThumbScale
     else
         -- Portrait single-column layout.
         self._clock_landscape_factor = nil
@@ -2492,6 +2521,9 @@ function HomescreenWidget:_updatePage(keep_cache, books_only, stats_only)
     if Config.cover_extraction_pending and not self._cover_poll_timer then
         self:_scheduleCoverPoll()
     end
+
+    -- Restore Config scale accessors patched at the top of this function.
+    _restoreLandscapePatch()
 end
 
 -- ---------------------------------------------------------------------------
@@ -2539,6 +2571,41 @@ function HomescreenWidget:_refresh(keep_cache, books_only, stats_only)
                             self._ctx_cache.prefetched = new_bs.prefetched_data
                             self._ctx_cache.current_fp = new_bs.current_fp
                             self._ctx_cache.recent_fps = new_bs.recent_fps
+                        end
+                    end
+
+                    -- Cold-open fix: onShow() seeds _cached_books_state with a
+                    -- best-effort stub via SH.getStaleBooks() — instant,
+                    -- zero-cost reuse of the last successful prefetchBooks()
+                    -- result (in-memory, or a single lazy disk read on a
+                    -- fresh process) — so the first paint can already show
+                    -- real covers/titles. That stub can still be incomplete
+                    -- or genuinely missing (e.g. the very first run ever,
+                    -- with no cache in memory or on disk), so an is_book_mod
+                    -- module (currently, coverdeck, recent) can still return
+                    -- nil/empty from build() on that first pass and never get
+                    -- a slot in _book_mod_slots. Now that the authoritative
+                    -- prefetchBooks() data has landed above, check for any
+                    -- such module and force a full rebuild so build() runs
+                    -- again with complete data (the in-place updateStats path
+                    -- below only touches slots that already exist, so a
+                    -- module that never got a slot would otherwise stay
+                    -- invisible until the next full _updatePage(false), e.g.
+                    -- a page turn). Cheap to check unconditionally — just an
+                    -- iteration over the small set of registered modules.
+                    do
+                        local missing_slot = false
+                        for _, mod in ipairs(Registry.list()) do
+                            if mod.is_book_mod
+                               and not self._book_mod_slots[mod.id]
+                               and Registry.isEnabled(mod, PFX) then
+                                missing_slot = true
+                                break
+                            end
+                        end
+                        if missing_slot then
+                            self:_updatePage(false)
+                            UIManager:setDirty(self, "ui")
                         end
                     end
 
@@ -2596,17 +2663,30 @@ function HomescreenWidget:_refresh(keep_cache, books_only, stats_only)
                                     UIManager:setDirty(self, "ui")
                                 end
                             else
-                                -- Fallback: rebuild completo (módulo sem updateStats ou erro).
+                                -- Fallback: rebuild completo (módulo sem updateStats,
+                                -- ou updateStats devolveu false por identidade do
+                                -- livro ter mudado — ver module_currently/
+                                -- module_coverdeck.updateStats).
                                 local new_widget = slot.mod.build(slot.col_w, self._ctx_cache)
                                 if new_widget then
                                     if slot.has_menu then
                                         local wrapper = self._wrapper_pool[id]
                                         if wrapper then
                                             wrapper[1] = new_widget
+                                            -- BUGFIX: slot.widget tinha de ser atualizado
+                                            -- aqui também (mirroring _refreshBookModSlot),
+                                            -- senão o próximo updateStats(slot.widget, ctx)
+                                            -- continuava a operar sobre o widget antigo,
+                                            -- já desligado da árvore (sem efeito visível,
+                                            -- só desperdício de CPU em cada ciclo seguinte).
+                                            slot.widget = new_widget
                                             UIManager:setDirty(self, function() return "ui", wrapper.dimen, true end)
                                         end
                                     else
                                         slot.parent[slot.index] = new_widget
+                                        -- BUGFIX: ver nota acima — mesmo problema no
+                                        -- ramo sem menu.
+                                        slot.widget = new_widget
                                         UIManager:setDirty(self, function() return "ui", new_widget.dimen, true end)
                                     end
                                 end
@@ -2664,6 +2744,52 @@ function HomescreenWidget:_setCoverdeckIdx(idx)
     if self._ctx_cache then
         self._ctx_cache.coverdeck_cur_idx = idx
     end
+end
+
+-- ---------------------------------------------------------------------------
+-- _refreshBookModSlot — surgical, single-module repaint for is_book_mod
+-- modules (currently, coverdeck, recent) that need an immediate full
+-- rebuild outside the normal debounced _refresh() cycle — e.g. coverdeck's
+-- onTap/onSwipe handlers, which previously called _refreshImmediate(true)
+-- and paid for a full-page rebuild (every module on the homescreen,
+-- including stats/clock/quote/etc.) plus an UNSCOPED UIManager:setDirty(self,
+-- "ui") — that is, a dirty region covering the ENTIRE screen (self.dimen =
+-- {w=Screen:getWidth(), h=Screen:getHeight()}, see HomescreenWidget:init()),
+-- causing a full e-ink screen refresh/flash on every single swipe.
+--
+-- This mirrors the EXACT same in-place rebuild + scoped setDirty technique
+-- already used by the deferred async path inside _refresh() ("Fix 3" /
+-- Fallback branch above): rebuild just this module's widget via
+-- slot.mod.build(), splice it back into its slot (parent[index] or the
+-- has_menu wrapper), and call UIManager:setDirty with the new widget's own
+-- `dimen` instead of the whole-screen `self`. UIManager then only refreshes
+-- that widget's screen region on the next e-ink update — no other module
+-- repaints, no full-screen flash.
+--
+-- Returns true if the slot was found and repainted, false otherwise (caller
+-- should fall back to _refreshImmediate as a safety net — e.g. if the slot
+-- doesn't exist yet, build() returned nil, or anything is missing).
+function HomescreenWidget:_refreshBookModSlot(mod_id)
+    if not self._ctx_cache or not self._book_mod_slots then return false end
+    local slot = self._book_mod_slots[mod_id]
+    if not slot or not slot.mod or type(slot.mod.build) ~= "function" then return false end
+
+    local ok, new_widget = pcall(slot.mod.build, slot.col_w, self._ctx_cache)
+    if not ok or not new_widget then return false end
+
+    if slot.has_menu then
+        local wrapper = self._wrapper_pool and self._wrapper_pool[mod_id]
+        if not wrapper then return false end
+        wrapper[1] = new_widget
+        slot.widget = new_widget
+        UIManager:setDirty(self, function() return "ui", wrapper.dimen, true end)
+    else
+        if not slot.parent then return false end
+        slot.parent[slot.index] = new_widget
+        slot.widget = new_widget
+        UIManager:setDirty(self, function() return "ui", new_widget.dimen, true end)
+    end
+    return true
 end
 
 -- Immediate full rebuild — bypasses debounce. Used by showSettingsMenu's
@@ -2803,6 +2929,46 @@ function HomescreenWidget:onShow()
         Homescreen._stats_need_refresh = nil
         need_async = true
     end
+
+    -- Cold-open path: _cached_books_state is nil, so _buildCtx would call
+    -- prefetchBooks() (sidecar I/O for every recent book) and SP.get() (DB
+    -- queries) synchronously, blocking the first paint. This mirrors the
+    -- EXACT same pattern already used for reading_stats: _defer_stats below
+    -- makes _buildCtx call SP.getStale() — a zero-cost return of the last
+    -- DB query result, falling back to `{}` (zeros/placeholder for one
+    -- frame) when nothing has ever been cached — instead of SP.get(). The
+    -- equivalent here is SH.getStaleBooks(): an instant reference to the
+    -- last successful SH.prefetchBooks() result, now persisted across
+    -- process restarts too (see module_books_shared.lua), with NO
+    -- ReadHistory walk, NO lfs.attributes, NO sidecar cache lookups, NO new
+    -- work of any kind — just a table reference (or a single lazy disk
+    -- read, at most once per process). is_book_mod modules (currently,
+    -- coverdeck, recent) render with the exact same data they last had,
+    -- identical in spirit to how reading_stats never flashes to zero on
+    -- return.
+    --
+    -- getStaleBooks() returns nil only in the genuinely-first-ever-run case
+    -- (no in-memory cache AND no on-disk mirror — e.g. right after install,
+    -- or settings were cleared). Deliberately, NO active resolution (like
+    -- the previous SH.peekRecentBooks() fallback) is attempted in that
+    -- case: this mirrors SP.getStale() exactly, which has no equivalent
+    -- fallback either and simply lets reading_stats render `{}` for that
+    -- one frame. is_book_mod modules fall back to their own "no data yet"
+    -- path (build() returns nil/empty) the same way reading_stats shows
+    -- zeros — a single harmless frame, corrected by the deferred refresh
+    -- moments later, with zero extra work spent avoiding it.
+    --
+    -- need_async stays true regardless, so the full, authoritative
+    -- prefetchBooks() pass still runs ~50ms later via the deferred
+    -- _refresh() and corrects anything the stale data got wrong (book
+    -- finished, new book opened since the cache was built, etc.).
+    if not self._cached_books_state then
+        local SH = _getBookShared()
+        local stale = SH and SH.getStaleBooks and SH.getStaleBooks()
+        self._cached_books_state = stale or { current_fp = nil, recent_fps = {}, prefetched_data = {} }
+        need_async = true
+    end
+
     if self._navbar_container then
         local overlap = self:_initLayout()
         local old = self._navbar_container[1]
@@ -2978,14 +3144,21 @@ function HomescreenWidget:onSetRotationMode(mode)
 
     Homescreen._cached_books_state = self._cached_books_state
     Homescreen._current_page       = self._current_page
-    Homescreen._cfg_cache          = self._cfg_cache
+    -- _cfg_cache intentionally not propagated: the new instance must rebuild it
+    -- with the landscape patch active so scale values are correct for the new
+    -- orientation.  Book state and page are cheap to preserve; cfg is not.
 
     Homescreen._rotation_on_qa_tap   = on_qa_tap
     Homescreen._rotation_on_goal_tap = on_goal_tap
     Homescreen._rotation_pending     = true
 
     UIManager:close(self)
-    return true
+    -- Do NOT return true here. The broadcast must continue so that
+    -- FileManager:onSetRotationMode runs, which calls reinit() -> setupLayout().
+    -- Our patched setupLayout consumes _rotation_pending and opens the new HS.
+    -- On devices where FM drives the rotation (e.g. Kobo), blocking propagation
+    -- would prevent Screen:setRotationMode() from being called and leave the
+    -- layout unrebuilt at the new dimensions.
 end
 
 function HomescreenWidget:onCloseWidget()

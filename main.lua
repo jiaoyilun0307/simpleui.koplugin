@@ -809,6 +809,38 @@ function SimpleUIPlugin:init()
         end
         -- -------------------------------------------------------------------
 
+        -- Settings migration v8:
+        -- Introduces the unified Cover Deck arrange list (coverdeck_main_order),
+        -- replacing the old coverdeck_title_pos above/below/hidden radio and
+        -- the separate "Show status bar" toggle for the progress bar.
+        --   1. Legacy title_pos == "hidden" had no dedicated key of its own;
+        --      fold it into coverdeck_show_title so upgrading users keep the
+        --      title hidden instead of it reappearing under the new model.
+        --   2. coverdeck_main_order is seeded from title_pos ("above"/"below")
+        --      so existing layouts render identically the first time they're
+        --      opened under the new arrange list, instead of silently
+        --      reverting to the "below" default.
+        if not SUISettings:isTrue("simpleui_settings_migrated_v8") then
+            pcall(function()
+                local PFX       = "simpleui_hs_"
+                local title_pos = SUISettings:get(PFX .. "coverdeck_title_pos")
+                if title_pos == "hidden" and SUISettings:get(PFX .. "coverdeck_show_title") == nil then
+                    SUISettings:set(PFX .. "coverdeck_show_title", false)
+                    logger.info("simpleui: migration v8 — folded coverdeck_title_pos=hidden into coverdeck_show_title=false")
+                end
+                if SUISettings:get(PFX .. "coverdeck_main_order") == nil then
+                    local order = (title_pos == "above")
+                        and { "title", "author", "covers", "progress", "stats" }
+                        or  { "covers", "title", "author", "progress", "stats" }
+                    SUISettings:set(PFX .. "coverdeck_main_order", order)
+                    logger.info("simpleui: migration v8 — seeded coverdeck_main_order from legacy title_pos")
+                end
+            end)
+            SUISettings:set("simpleui_settings_migrated_v8", true)
+            SUISettings:flush()
+        end
+        -- -------------------------------------------------------------------
+
         Config.applyFirstRunDefaults()
         Config.migrateOldCustomSlots()
         -- Always run sanitizeQASlots: it cleans both custom QA slot references
@@ -853,6 +885,12 @@ function SimpleUIPlugin:init()
         category = "none",
         event    = "SimpleUISettingsWindow",
         title    = _("Simple UI: Settings"),
+        general  = true,
+    })
+    Dispatcher:registerAction("simpleui_recent_window", {
+        category = "none",
+        event    = "SimpleUIRecentWindow",
+        title    = _("Simple UI: Recent"),
         general  = true,
     })
 
@@ -1288,6 +1326,12 @@ function SimpleUIPlugin:onSimpleUISettingsWindow()
     return true
 end
 
+function SimpleUIPlugin:onSimpleUIRecentWindow()
+    local ok, QA = pcall(require, "sui_quickactions")
+    if ok and QA and QA.showRecentWindow then QA.showRecentWindow() end
+    return true
+end
+
 -- onCloseWidget fires on the plugin when the FM (self.ui) closes.
 -- We use this — mirroring the Bookshelf plugin pattern — to close the
 -- homescreen whenever the FM shuts down for a real exit.
@@ -1516,6 +1560,14 @@ function SimpleUIPlugin:onSuspend()
         UIManager:unschedule(self._topbar_timer)
         self._topbar_timer = nil
     end
+    -- Flush any settings written via SUISettings:setNoFlush() (currently:
+    -- module_books_shared.lua's stale-books cache, refreshed in-memory on
+    -- every prefetchBooks() success but never fsync'd on that hot path —
+    -- see the WRITE COST / FLUSH COST notes there). Device suspend is
+    -- infrequent and off the reader-return critical path, so this is a
+    -- safe, low-cost point to make those writes durable across a full
+    -- KOReader process restart.
+    pcall(function() SUISettings:flush() end)
 end
 
 function SimpleUIPlugin:onResume()
@@ -1532,6 +1584,21 @@ function SimpleUIPlugin:onResume()
     -- causing the homescreen to open on wakeup instead of returning to the reader.
     local reader_active = self._simpleui_reader_was_active
     self._simpleui_reader_was_active = nil  -- consume; next suspend will repopulate
+
+    -- "Return to Home Screen on Wakeup": unlike "Start with Homescreen" (which
+    -- only ever fires when the reader was already closed), this setting must
+    -- also override a reader that WAS open at suspend time. Handle it first,
+    -- via the live RUI check (not the snapshot) so we don't try to close a
+    -- reader that already tore itself down during the races described above.
+    if SUISettings:nilOrTrue("simpleui_enabled")
+            and SUISettings:isTrue("simpleui_hs_return_on_wakeup") then
+        local RUI_live = package.loaded["apps/reader/readerui"]
+        if RUI_live and RUI_live.instance then
+            Patches.showHSAfterResume(self, true)
+            return
+        end
+    end
+
     -- Outside the reader: restore the Homescreen.
     -- RS and RG have a built-in date-key guard (_stats_cache_day): they re-query
     -- automatically on a new calendar day and serve the in-memory cache otherwise.
@@ -1573,9 +1640,51 @@ function SimpleUIPlugin:onCloseDocument()
     local via_gesture = self._closing_via_gesture
     self._closing_via_gesture = nil
 
+    -- Consume the reload-suppress flag once, up front (rather than deep
+    -- inside the notice block below), so it is also visible to the HS
+    -- visual-refresh guard near the end of this function. Set by
+    -- patchReloadDocument just before ReaderUI:reloadDocument() runs —
+    -- covers font size, margins, line spacing, and any other CRE setting
+    -- change that triggers a background reflow + seamless reload. Those
+    -- calls close and reopen ReaderUI in the same synchronous call chain;
+    -- CloseDocument fires exactly the same as on a real close, so we need
+    -- this flag to tell the two apart.
+    local is_reload = self._suppress_closing_notice
+    self._suppress_closing_notice = nil
+
     if self._simpleui_suspended then return end
     local HS = package.loaded["sui_homescreen"]
     if not HS then return end
+
+    -- Filepath of the book that just closed. readhistory.hist[1] is still the
+    -- closing book at this point (the reader has not yet handed control back
+    -- to the FM, so the history order has not been updated). Computed here,
+    -- ahead of the notice block below, so both the cover-transition call and
+    -- the later stats-invalidation block (which also needs it) share one
+    -- lookup instead of repeating it.
+    local rh        = package.loaded["readhistory"]
+    local closed_fp = rh and rh.hist and rh.hist[1] and rh.hist[1].file
+
+    -- Cover Transition (close side): show the book cover instead of the
+    -- plain "Closing book…" notice below, for a less jarring exit from the
+    -- reader. Off by default; only takes effect for closes that would have
+    -- shown the notice anyway (an internal reload never reaches this point
+    -- with is_reload false, so it is never affected). If no cover is found
+    -- (e.g. CoverBrowser not installed, or the book was never indexed) this
+    -- silently falls through to the ordinary text notice further down.
+    local cover_shown = false
+    if not is_reload then
+        local Patches = package.loaded["sui_patches"]
+        if Patches and Patches.CoverTransition and Patches.CoverTransition.isCloseEnabled() then
+            local orig_show = UIManager._simpleui_show_orig or UIManager.show
+            local live_doc  = self.ui and self.ui.document
+            local ok_ct, shown = pcall(Patches.CoverTransition.show, closed_fp, orig_show, live_doc)
+            cover_shown = ok_ct and shown
+            if cover_shown then
+                Patches.CoverTransition.scheduleAutoClose(0.5)
+            end
+        end
+    end
 
     -- Show a brief "closing book" notice whenever a book is closed.
     -- onCloseDocument is the single, authoritative place for this: it fires on
@@ -1607,9 +1716,7 @@ function SimpleUIPlugin:onCloseDocument()
             notice_mode = SUISettings:nilOrTrue("simpleui_hs_closing_notice") and "always" or "never"
         end
 
-        -- Consume suppress flag unconditionally so it never leaks to a later close.
-        local suppress = self._suppress_closing_notice
-        self._suppress_closing_notice = nil
+        local suppress = is_reload or cover_shown
 
         if (notice_mode == "always" and not suppress)
                 or (notice_mode == "gesture_only" and via_gesture) then
@@ -1660,12 +1767,9 @@ function SimpleUIPlugin:onCloseDocument()
     -- Registry.get + Registry.isEnabled are cheap table lookups; the module
     -- is guaranteed already loaded when enabled (required by the HS on open).
 
-    -- Determine the filepath of the book that just closed.
-    -- readhistory.hist[1] is still the closing book at this point (the reader
-    -- has not yet handed control back to the FM, so the history order has not
-    -- been updated).
-    local rh         = package.loaded["readhistory"]
-    local closed_fp  = rh and rh.hist and rh.hist[1] and rh.hist[1].file
+    -- closed_fp (filepath of the book that just closed) was already resolved
+    -- near the top of this function, ahead of the Cover Transition / notice
+    -- block, which also needs it.
 
     -- Invalidate the shared stats provider when either stats module is active.
     -- One SP.invalidate() covers both reading_goals and reading_stats — they
@@ -1833,8 +1937,26 @@ function SimpleUIPlugin:onCloseDocument()
             end
         end
         -- Invalidate _cached_books_state so prefetchBooks() re-reads the
-        -- updated history order (closed book moves to position 1 = new centre).
-        -- Also reset the session index so the carousel returns to fps[1].
+        -- updated history order (closed book moves to position 1 = new centre)
+        -- on the next deferred _refresh() tick. Also reset the session index
+        -- so the carousel returns to fps[1] once fresh data lands.
+        --
+        -- Deliberately mirrors SP.invalidate() in module_stats_provider.lua:
+        -- that function clears only _cache_day (the "needs recompute" flag)
+        -- and explicitly does NOT touch _cache, so SP.getStale() keeps
+        -- returning the previous day's numbers for one frame after a
+        -- reading session ends — accepted as fine, since SP.get() overwrites
+        -- everything ~50ms later anyway. Earlier versions of this code tried
+        -- to eagerly fix HS._instance._ctx_cache.current_fp/recent_fps right
+        -- here via SH.peekRecentBooks(), to avoid the carousel/title showing
+        -- the previous book for that one frame — but that traded a few stat
+        -- syscalls per close for a guarantee that wasn't actually needed:
+        -- exactly like the stats case, _ctx_cache.current_fp/recent_fps
+        -- being one step stale for ~50ms is harmless, since the deferred
+        -- _refresh() tick (see _refresh()'s scheduleIn(0.05, ...) in
+        -- sui_homescreen.lua) unconditionally re-resolves both from a real
+        -- SH.prefetchBooks() call and repaints. So: touch nothing here,
+        -- exactly like SP.invalidate() touches nothing in _cache.
         if HS._instance then
             HS._instance._cached_books_state = nil
             if HS._instance._ctx_cache then
@@ -1868,12 +1990,32 @@ function SimpleUIPlugin:onCloseDocument()
     end
 
     if HS._instance then
-        -- Determine what changed and use the narrowest refresh that covers it:
-        --   books_only  → book module(s) active; prefetchBooks() must re-run.
-        --   stats_only  → only stats modules active; SP.get() must re-run but
-        --                  no sidecar I/O is needed (_cached_books_state kept).
-        -- keep_cache is always false — we never want to reuse a stale _ctx_cache.
-        HS.refresh(false, book_mod_active, not book_mod_active)
+        if is_reload then
+            -- The old ReaderUI is being torn down and a new one is about to
+            -- be shown in its place, in the same synchronous call chain
+            -- (ReaderUI:reloadDocument, triggered by a font size, margin,
+            -- line spacing, or other CRE setting change). HS._instance is
+            -- the hidden HomescreenWidget kept under the reader per the
+            -- _live_widget/_raiseInPlace architecture — calling HS.refresh()
+            -- here would UIManager:setDirty() it while it is briefly the
+            -- topmost widget (old reader gone, new reader not shown yet),
+            -- producing a visible flash to the homescreen and back.
+            --
+            -- Nothing homescreen-relevant has actually changed: the book's
+            -- status/percent_finished are unaffected by a reformat, and the
+            -- reading session survives the reload via PreserveCurrentSession
+            -- (see readerui.lua:reloadDocument). So just flag the widget for
+            -- a refresh the next time it genuinely becomes visible, instead
+            -- of repainting it now.
+            HS._instance._stats_need_refresh = true
+        else
+            -- Determine what changed and use the narrowest refresh that covers it:
+            --   books_only  → book module(s) active; prefetchBooks() must re-run.
+            --   stats_only  → only stats modules active; SP.get() must re-run but
+            --                  no sidecar I/O is needed (_cached_books_state kept).
+            -- keep_cache is always false — we never want to reuse a stale _ctx_cache.
+            HS.refresh(false, book_mod_active, not book_mod_active)
+        end
     else
         -- Homescreen not visible yet — flag it for rebuild on next open.
         HS._stats_need_refresh = true
@@ -2012,7 +2154,7 @@ end
 
 function SimpleUIPlugin:_showFrontlightDialog()
     local QA = package.loaded["sui_quickactions"] or require("sui_quickactions")
-    QA.showFrontlightDialog()
+    QA.showFrontlightDialog(self)
 end
 
 function SimpleUIPlugin:_scheduleRebuild()

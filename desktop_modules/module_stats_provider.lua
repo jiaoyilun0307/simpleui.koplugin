@@ -47,6 +47,119 @@ local SP = {}
 local _cache     = nil   -- the stats table
 local _cache_day = nil   -- "YYYY-MM-DD" string when cache was built
 
+-- ── Cross-process-restart persistence ──────────────────────────────────────
+-- _cache is a plain Lua local: it lives only as long as this module stays
+-- required, i.e. for the lifetime of the current KOReader process. On a
+-- genuine cold start (KOReader just launched, this module's first ever
+-- require in this run) it starts nil, so SP.getStale() returns nil and the
+-- very first onShow() renders a "no data yet" placeholder for one frame —
+-- exactly like SH._last_books_state in module_books_shared.lua starts nil
+-- on cold start. To avoid that one-time placeholder flash on every fresh
+-- KOReader launch (not just on reader-return within an already-running
+-- session, which the in-memory cache already covers for free), the last
+-- successful result is ALSO mirrored to disk via sui_store, with the same
+-- two deliberate performance constraints used for _last_books_state:
+--
+--   1. WRITE COST: _persistStaleStats() below calls
+--      SUISettings:setNoFlush(), which only mutates the in-memory settings
+--      table (LuaSettings' own Lua table) — zero disk I/O. This is called
+--      every time SP.get() recomputes _cache, so the in-memory disk mirror
+--      is always fresh, at zero extra I/O cost over what was already
+--      happening (none) on this hot path.
+--   2. FLUSH COST: the actual fsync-to-disk (:flush()) is intentionally
+--      NEVER triggered from this module. It piggy-backs on
+--      SimpleUIPlugin:onSuspend() in main.lua, which already calls
+--      SUISettings:flush() once per suspend — shared with
+--      module_books_shared.lua's _persistStaleBooks(), since both write
+--      into the same underlying LuaSettings instance. Device suspend is
+--      infrequent (not on the hot reader-return path) and KOReader has
+--      idle time before sleeping. Worst case if the device loses power
+--      before ever suspending: the on-disk copy is simply absent or one
+--      session behind, and SP.getStale() falls back to nil exactly as
+--      today — callers render the same "no data yet" placeholder,
+--      never a correctness issue, only a missed optimisation for that run.
+--
+-- Net effect: reading the persisted copy back costs one disk read,
+-- performed AT MOST ONCE per process lifetime (lazy, on the first
+-- SP.getStale() call when _cache is still nil) — small, bounded, and off
+-- the hot path entirely after that single read.
+-- ---------------------------------------------------------------------------
+local _disk_load_tried = false  -- guards the single lazy disk read
+
+local _STALE_STATS_SETTING_KEY = "simpleui_stale_stats_v1"
+
+-- Lazily resolve sui_store without a hard require at module load time —
+-- same defensive, lazy-require style as module_books_shared.lua's
+-- _getSUIStore(), to avoid any chance of a circular dependency.
+local _SUIStore = nil
+local function _getSUIStore()
+    if not _SUIStore then
+        local ok, m = pcall(require, "sui_store")
+        if ok then _SUIStore = m end
+    end
+    return _SUIStore
+end
+
+-- Writes a stale-safe snapshot of `state` into the in-memory settings table
+-- only — see the WRITE COST note above. Safe to call unconditionally after
+-- every successful SP.get() recompute; never performs disk I/O itself.
+--
+-- Only the final numeric/boolean result fields are persisted — NOT the
+-- whole `result` table as-is:
+--   • `streak` IS persisted: it is the final computed value for the day,
+--     not a transient flag, and is exactly what SP.getStale() callers
+--     expect to read (reading_stats shows it directly).
+--   • `_streak_cache_valid` / `_books_cache_valid` (module-local carry-over
+--     flags, never part of `result` itself) and `result._changed` /
+--     `result._has_books` (single-process bookkeeping: which categories
+--     were re-fetched on THIS call, and whether THIS cache entry has
+--     books data) are deliberately NOT persisted. They describe a
+--     transition relative to in-memory state that does not exist yet in a
+--     freshly-started process — a brand-new process has no "previous
+--     value" to diff against, so carrying them over would be meaningless
+--     at best and misleading at worst (e.g. a stale `_changed.books = false`
+--     would wrongly tell a fresh-process caller that books data is
+--     unchanged from a value it never had).
+local function _persistStaleStats(state)
+    local SUIStore = _getSUIStore()
+    if not SUIStore or not SUIStore.setNoFlush then return end
+    -- All of these are plain numbers/booleans (see SP.get()'s `result`
+    -- shape) — safe for LuaSettings to serialise as-is, no special-casing
+    -- needed, same guarantee module_books_shared.lua relies on for
+    -- prefetched_data.
+    local snapshot = {
+        today_secs    = state.today_secs,
+        today_pages   = state.today_pages,
+        week_secs     = state.week_secs,
+        week_pages    = state.week_pages,
+        avg_secs      = state.avg_secs,
+        avg_pages     = state.avg_pages,
+        month_secs    = state.month_secs,
+        month_pages   = state.month_pages,
+        year_secs     = state.year_secs,
+        total_secs    = state.total_secs,
+        streak        = state.streak,
+        books_year    = state.books_year,
+        books_total   = state.books_total,
+        db_conn_fatal = state.db_conn_fatal,
+    }
+    pcall(SUIStore.setNoFlush, SUIStore, _STALE_STATS_SETTING_KEY, snapshot)
+end
+
+-- Reads the on-disk mirror back exactly once per process lifetime. Returns
+-- nil silently on any failure (missing key, corrupt entry, sui_store
+-- unavailable) — SP.getStale()'s caller already treats nil as "no stale
+-- data available" and falls back accordingly (an empty `{}`), so this never
+-- needs to raise.
+local function _loadStaleStatsFromDisk()
+    _disk_load_tried = true
+    local SUIStore = _getSUIStore()
+    if not SUIStore then return nil end
+    local ok, v = pcall(SUIStore.readSetting, SUIStore, _STALE_STATS_SETTING_KEY)
+    if not ok or type(v) ~= "table" then return nil end
+    return v
+end
+
 -- ---------------------------------------------------------------------------
 -- Internal helpers
 -- ---------------------------------------------------------------------------
@@ -210,20 +323,11 @@ end
 
 -- ---------------------------------------------------------------------------
 -- Sidecar scan: one pass → books_year + books_total simultaneously.
--- db_conn is passed in so we can cross-reference last_open from the statistics
--- DB as a more reliable "read this year" signal than summary.modified.
--- summary.modified reflects when the sidecar was last written — for books
--- marked finished before SimpleUI 2.0, this timestamp predates the current
--- year even if the user read the book this year.  last_open in the DB is set
--- to os.time() on every session close and is always current.
-local function _dbLastOpenForMd5(conn, md5)
-    if not conn or not md5 then return nil end
-    local ok, row = pcall(function()
-        return conn:rowexec(string.format(
-            "SELECT last_open FROM book WHERE md5 = '%s' LIMIT 1", md5))
-    end)
-    return ok and row and tonumber(row) or nil
-end
+-- books_year counts books *completed* this year, based on summary.modified
+-- (the sidecar's completion timestamp) only. We deliberately do NOT use the
+-- statistics DB's last_open here — it updates on every session close, not
+-- just on completion, so using it as a "read this year" signal inflates the
+-- count whenever an already-finished book from a previous year is reopened.
 -- Replaces two separate countMarkedRead() calls (previously O(2N) sidecar I/O).
 -- Uses the same _sidecar_cache from module_books_shared for cache hits.
 -- ---------------------------------------------------------------------------
@@ -249,7 +353,7 @@ local function _modifiedInYear(summary, year_str)
     return false
 end
 
-local function countMarkedReadBoth(year_str, year_start, db_conn)
+local function countMarkedReadBoth(year_str)
     local books_year  = 0
     local books_total = 0
 
@@ -317,23 +421,20 @@ local function countMarkedReadBoth(year_str, year_start, db_conn)
 
             if type(summary) == "table" and summary.status == "complete" then
                 books_total = books_total + 1
-                -- Prefer DB last_open for the year check: it is updated on every
-                -- session close and is always current, unlike summary.modified
-                -- which reflects the sidecar write time and can predate the
-                -- current year for books finished before SimpleUI 2.0.
-                local in_year = false
-                if db_conn and md5 and year_start then
-                    local lo = _dbLastOpenForMd5(db_conn, md5)
-                    if lo then
-                        in_year = lo >= year_start
-                    end
-                end
-                -- Fallback to summary.modified when the DB has no record for
-                -- this book (e.g. statistics plugin was never enabled for it).
-                if not in_year then
-                    in_year = _modifiedInYear(summary, year_str)
-                end
-                if in_year then
+                -- books_year counts books *completed* this year, based solely
+                -- on summary.modified (the sidecar's completion timestamp).
+                --
+                -- We used to also accept DB last_open >= year_start as an
+                -- alternative signal, on the theory that pre-SimpleUI-2.0
+                -- books could have a stale summary.modified that predates
+                -- their real completion date. In practice this made the
+                -- yearly count go up whenever an already-finished book from
+                -- a previous year was merely reopened (e.g. to re-read a
+                -- page) — last_open updates on every session close, not just
+                -- on completion, so it isn't a valid "completed this year"
+                -- signal. See GitHub issue: yearly count inflated by
+                -- reopening old finished books.
+                if _modifiedInYear(summary, year_str) then
                     books_year = books_year + 1
                 end
             end
@@ -446,10 +547,7 @@ function SP.get(db_conn, year_str, needs_books)
             -- streak were already correct and are carried over unchanged.
             _changed      = { timeseries = false, streak = false, books = true },
         }
-        local by, bt = countMarkedReadBoth(
-            year_str or tostring(t.year),
-            os.time{ year = t.year, month = 1, day = 1, hour = 0, min = 0, sec = 0 },
-            db_conn)
+        local by, bt = countMarkedReadBoth(year_str or tostring(t.year))
         result.books_year  = by
         result.books_total = bt
         _cache     = result
@@ -566,10 +664,7 @@ function SP.get(db_conn, year_str, needs_books)
         result.books_total = (_cache and _cache.books_total) or 0
         _books_cache_valid = false
     else
-        local by, bt = countMarkedReadBoth(
-            year_str or tostring(t.year),
-            year_start,
-            db_conn)
+        local by, bt = countMarkedReadBoth(year_str or tostring(t.year))
         result.books_year  = by
         result.books_total = bt
     end
@@ -579,6 +674,13 @@ function SP.get(db_conn, year_str, needs_books)
     result._has_books = true
     _cache     = result
     _cache_day = today_str
+    -- Mirror to the in-memory settings table (zero disk I/O — see the
+    -- WRITE COST note above _persistStaleStats). This keeps the on-disk
+    -- copy fresh so the NEXT KOReader process launch can skip the
+    -- zeros/placeholder flash on its very first onShow(), the same way
+    -- SH._last_books_state already avoids it for every reader-return WITHIN
+    -- a single running process.
+    _persistStaleStats(result)
     return result
 end
 
@@ -661,7 +763,31 @@ end
 SP._cacheGet = nil  -- populated lazily from SH on first use inside countMarkedReadBoth
 SP._cachePut = nil  -- same
 
+-- ---------------------------------------------------------------------------
+-- SP.getStale() — instant, zero-cost return of the last successful
+-- SP.get() result. See the cross-process-restart persistence comment above
+-- the cache declaration for the full rationale; this mirrors
+-- module_books_shared.lua's SH.getStaleBooks() exactly, with the same
+-- addition: a single lazy disk read on cold start (see
+-- _loadStaleStatsFromDisk above) so a freshly launched KOReader process can
+-- also benefit from the previous run's last-known stats, not just
+-- reader-returns within the same run.
+--
+-- No active-resolution fallback is added beyond the disk read: if both the
+-- in-memory cache and the on-disk mirror are empty (or sui_store is
+-- unavailable), this returns nil exactly as it did before this change —
+-- callers already fall back to an empty `{}` stub in that case.
+-- ---------------------------------------------------------------------------
 function SP.getStale()
+    if not _cache and not _disk_load_tried then
+        -- Lazy, at-most-once-per-process disk read. Deliberately NOT done
+        -- eagerly at module load time, for the same reason
+        -- SH.getStaleBooks() defers it: the first relevant call usually
+        -- happens from the homescreen's very first onShow(), which is
+        -- exactly the latency-sensitive moment this mechanism protects —
+        -- so the read only happens if and when it's actually needed.
+        _cache = _loadStaleStatsFromDisk()
+    end
     return _cache
 end
 

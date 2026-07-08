@@ -104,6 +104,34 @@ function SUISettings:set(key, value)
     if _store then _store:flush() end
 end
 
+--- Write a value to the in-memory settings table WITHOUT flushing to disk.
+--- Use this for values written frequently from hot/latency-sensitive paths
+--- (e.g. a stale-data cache refreshed on every background prefetch) where an
+--- immediate flush() on every write would reintroduce the exact synchronous
+--- I/O cost the caller is trying to avoid.
+---
+--- The value stays durable in memory for the rest of this process (readable
+--- immediately via :get()/:readSetting()), but is only guaranteed to survive
+--- a crash/power-loss once something else calls :flush() (or :set()/:del(),
+--- which always flush). Callers that need eventual durability should ensure
+--- a :flush() happens on a low-frequency, non-critical-path event instead
+--- (e.g. SimpleUIPlugin:onSuspend() in main.lua already does this for all
+--- pending settings, including any written via this method).
+function SUISettings:setNoFlush(key, value)
+    if value == nil then
+        _getStore():delSetting(key)
+    else
+        _getStore():saveSetting(key, value)
+    end
+    -- Deliberately no :flush() call here — see docstring above.
+end
+
+--- Delete a value from the in-memory settings table WITHOUT flushing to disk.
+--- Companion to :setNoFlush() for the same latency-sensitive use case.
+function SUISettings:delNoFlush(key)
+    _getStore():delSetting(key)
+end
+
 --- Delete a key and persist to disk immediately.
 function SUISettings:del(key)
     _getStore():delSetting(key)

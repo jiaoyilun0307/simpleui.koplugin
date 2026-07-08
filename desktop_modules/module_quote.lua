@@ -873,7 +873,7 @@ local function buildFromCustomQuote(inner_w, face_quote, face_attr, vspan_gap, p
 
         return TextBoxWidget:new{
 
-            text    = _("No custom quotes found. Add a .lua file to the plugin\'s sui_quotes/ folder and select it in Settings."),
+            text    = _("No custom quotes found. Add a .lua file to the plugin's sui_quotes/ folder and select it in Settings."),
 
             face    = face_quote,
 

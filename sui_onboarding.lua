@@ -23,6 +23,10 @@ local SUIStyle    = require("sui_style")
 local SUISettings = require("sui_store")
 local SUIPresets  = require("sui_presets")
 local Config      = require("sui_config")
+
+-- Landscape-aware scaling for this file's screens comes from ctx.SZ(n),
+-- handed to every screen builder by SUIWindow itself (single source of
+-- truth, see sui_window.lua) — no local wrapper needed here anymore.
 local Screen      = Device.screen
 
 local Onboarding = {}
@@ -41,23 +45,23 @@ function Onboarding.show(on_finish)
         local iw = ctx.inner_w
         local rows = {}
 
-        table.insert(rows, VerticalSpan:new{ width = Screen:scaleBySize(30) })
+        table.insert(rows, VerticalSpan:new{ width = ctx.SZ(Screen:scaleBySize(30)) })
         table.insert(rows, FrameContainer:new{
             bordersize = 0, padding = 0,
-            padding_left = Screen:scaleBySize(20), padding_right = Screen:scaleBySize(20),
+            padding_left = ctx.SZ(Screen:scaleBySize(20)), padding_right = ctx.SZ(Screen:scaleBySize(20)),
             VerticalGroup:new{
                 align = "left",
                 TextWidget:new{
                     text    = _("Choose your initial layout"),
-                    face    = Font:getFace(SUIStyle.FACE_REGULAR, SUIStyle.FS_TITLE),
+                    face    = Font:getFace(SUIStyle.FACE_REGULAR, ctx.SZ(SUIStyle.FS_TITLE)),
                     bold    = true,
                     fgcolor = SUIStyle.getThemeColor("fg") or Blitbuffer.COLOR_BLACK,
                 },
-                VerticalSpan:new{ width = Screen:scaleBySize(4) },
+                VerticalSpan:new{ width = ctx.SZ(Screen:scaleBySize(4)) },
                 TextBoxWidget:new{
                     text      = _("Start with a ready-made layout. You can change everything later."),
-                    face      = Font:getFace(SUIStyle.FACE_REGULAR, SUIStyle.FS_BODY),
-                    width     = iw - Screen:scaleBySize(40),
+                    face      = Font:getFace(SUIStyle.FACE_REGULAR, ctx.SZ(SUIStyle.FS_BODY)),
+                    width     = iw - ctx.SZ(Screen:scaleBySize(40)),
                     alignment = "left",
                     fgcolor   = SUIStyle.getThemeColor("text_secondary") or Blitbuffer.COLOR_DARK_GRAY,
                 },
@@ -75,14 +79,14 @@ function Onboarding.show(on_finish)
         local rows = {}
         local builtins = SUIPresets.getBuiltinPresets and SUIPresets.getBuiltinPresets() or {}
 
-        table.insert(rows, VerticalSpan:new{ width = Screen:scaleBySize(30) })
+        table.insert(rows, VerticalSpan:new{ width = ctx.SZ(Screen:scaleBySize(30)) })
 
         local preset_rows_args = { align = "left" }
         for _, bp in ipairs(builtins) do
             table.insert(preset_rows_args, SUI.ListRow{
                 title    = bp.name,
                 subtitle = bp.desc,
-                inner_w  = iw - Screen:scaleBySize(40),
+                inner_w  = iw - ctx.SZ(Screen:scaleBySize(40)),
                 radio    = true,
                 checked  = (st.selected_preset == bp.id),
                 on_tap   = function()
@@ -97,8 +101,8 @@ function Onboarding.show(on_finish)
         end
         table.insert(rows, FrameContainer:new{
             bordersize    = 0, padding = 0,
-            padding_left  = Screen:scaleBySize(20),
-            padding_right = Screen:scaleBySize(20),
+            padding_left  = ctx.SZ(Screen:scaleBySize(20)),
+            padding_right = ctx.SZ(Screen:scaleBySize(20)),
             VerticalGroup:new(preset_rows_args),
         })
 
@@ -112,23 +116,23 @@ function Onboarding.show(on_finish)
         local iw = ctx.inner_w
         local rows = {}
 
-        table.insert(rows, VerticalSpan:new{ width = Screen:scaleBySize(30) })
+        table.insert(rows, VerticalSpan:new{ width = ctx.SZ(Screen:scaleBySize(30)) })
         table.insert(rows, FrameContainer:new{
             bordersize = 0, padding = 0,
-            padding_left = Screen:scaleBySize(20), padding_right = Screen:scaleBySize(20),
+            padding_left = ctx.SZ(Screen:scaleBySize(20)), padding_right = ctx.SZ(Screen:scaleBySize(20)),
             VerticalGroup:new{
                 align = "left",
                 TextWidget:new{
                     text    = _("Make it yours"),
-                    face    = Font:getFace(SUIStyle.FACE_REGULAR, SUIStyle.FS_TITLE),
+                    face    = Font:getFace(SUIStyle.FACE_REGULAR, ctx.SZ(SUIStyle.FS_TITLE)),
                     bold    = true,
                     fgcolor = SUIStyle.getThemeColor("fg") or Blitbuffer.COLOR_BLACK,
                 },
-                VerticalSpan:new{ width = Screen:scaleBySize(4) },
+                VerticalSpan:new{ width = ctx.SZ(Screen:scaleBySize(4)) },
                 TextBoxWidget:new{
                     text      = _("Simple UI is designed to be simple and flexible. Here are a few tips to get the most out of it."),
-                    face      = Font:getFace(SUIStyle.FACE_REGULAR, SUIStyle.FS_BODY),
-                    width     = iw - Screen:scaleBySize(40),
+                    face      = Font:getFace(SUIStyle.FACE_REGULAR, ctx.SZ(SUIStyle.FS_BODY)),
+                    width     = iw - ctx.SZ(Screen:scaleBySize(40)),
                     alignment = "left",
                     fgcolor   = SUIStyle.getThemeColor("text_secondary") or Blitbuffer.COLOR_DARK_GRAY,
                 },
@@ -145,11 +149,11 @@ function Onboarding.show(on_finish)
     -- ---------------------------------------------------------------------------
     local function buildTipsList(ctx)
         local iw      = ctx.inner_w
-        local text_w  = iw - Screen:scaleBySize(40)
-        local vpad    = Screen:scaleBySize(16)
+        local text_w  = iw - ctx.SZ(Screen:scaleBySize(40))
+        local vpad    = ctx.SZ(Screen:scaleBySize(16))
         local rows    = {}
 
-        table.insert(rows, VerticalSpan:new{ width = Screen:scaleBySize(30) })
+        table.insert(rows, VerticalSpan:new{ width = ctx.SZ(Screen:scaleBySize(30)) })
 
         local tips = {
             {
@@ -187,14 +191,14 @@ function Onboarding.show(on_finish)
                     align = "left",
                     TextWidget:new{
                         text    = tip.title,
-                        face    = Font:getFace(SUIStyle.FACE_REGULAR, SUIStyle.FS_BODY),
+                        face    = Font:getFace(SUIStyle.FACE_REGULAR, ctx.SZ(SUIStyle.FS_BODY)),
                         bold    = true,
                         fgcolor = fg,
                     },
-                    VerticalSpan:new{ width = Screen:scaleBySize(4) },
+                    VerticalSpan:new{ width = ctx.SZ(Screen:scaleBySize(4)) },
                     TextBoxWidget:new{
                         text      = tip.desc,
-                        face      = Font:getFace(SUIStyle.FACE_REGULAR, SUIStyle.FS_CAPTION),
+                        face      = Font:getFace(SUIStyle.FACE_REGULAR, ctx.SZ(SUIStyle.FS_CAPTION)),
                         width     = text_w,
                         alignment = "left",
                         fgcolor   = fg_sub,
@@ -214,8 +218,8 @@ function Onboarding.show(on_finish)
 
         table.insert(rows, FrameContainer:new{
             bordersize    = 0, padding = 0,
-            padding_left  = Screen:scaleBySize(20),
-            padding_right = Screen:scaleBySize(20),
+            padding_left  = ctx.SZ(Screen:scaleBySize(20)),
+            padding_right = ctx.SZ(Screen:scaleBySize(20)),
             tip_vg,
         })
 

@@ -119,6 +119,23 @@ local Screen          = Device.screen
 local logger          = require("logger")
 
 local SUIStyle = require("sui_style")
+local UI       = require("sui_core")
+
+-- Landscape-aware size multiplier — the counterpart, inside SUIWindow, of the
+-- home screen's Config-scale patch. In portrait _sui_scale is 1 (no-op); in
+-- landscape it is UI.getLandscapeFactor(), the same factor the home screen
+-- uses to fit its two-column spread. Every pixel/font size computed in this
+-- file should be wrapped in SZ(...) so the whole window — chrome, rows,
+-- buttons, text — shrinks together, proportionally, instead of just the
+-- outer modal box.
+--
+-- Set once per window, at the top of SUIWindow:show() and SUIWindow:_repaint()
+-- (self._scale is frozen at construction time in SUIWindow:new(), same as
+-- _modal_w/_modal_h). Safe as a shared upvalue because window content is
+-- always built synchronously, start to finish, before any other window's
+-- build can begin.
+local _sui_scale = 1
+local function SZ(n) return math.floor(n * _sui_scale) end
 
 -- ===========================================================================
 -- SUIWindow — public API
@@ -136,7 +153,13 @@ SUIWindow._open_instances = {}
 ---
 --- @param opts table
 ---   screens        table<string, function(ctx)→widget[]>
----                  — screen map; __root__ is the entry screen (required)
+---                  — screen map; __root__ is the entry screen (required).
+---                    Every screen builder receives ctx.SZ(n): the same
+---                    landscape scale multiplier already applied to this
+---                    window's own chrome (frame/padding/title). Wrap any
+---                    raw pixel/font size in ctx.SZ(...) and it shrinks in
+---                    landscape automatically — no import, no per-file
+---                    "local function SZ(n) ... end" needed.
 ---   title          string | function(ctx)→string | { text, icon }
 ---                  — static or dynamic title for all screens (used when
 ---                    screen_titles is absent or has no entry for the current screen)
@@ -162,14 +185,36 @@ function SUIWindow:new(opts)
 
     local sw = Screen:getWidth()
     local sh = Screen:getHeight()
-    o._modal_w       = opts.width  or math.floor(sw * 5 / 6)
-    o._modal_h       = opts.height or math.floor(sh * 23 / 30)
+    -- In landscape, shrink the modal by the same factor the home screen uses
+    -- to fit its two-column spread (single source of truth: UI.getLandscapeFactor),
+    -- so a window opened while rotated looks proportionate to one instead of
+    -- stretching across almost the entire long axis of the screen.
+    --
+    -- The base size that factor gets applied to must be the *notional
+    -- portrait* size, not the current (possibly rotated) sw/sh: in landscape,
+    -- sw is the long axis and sh is the short axis, swapped relative to
+    -- portrait. Deriving modal_w/modal_h straight from sw/sh applies the
+    -- shrink on top of an already-swapped axis, squashing height instead of
+    -- scaling both axes down uniformly. opts.width/opts.height, when passed
+    -- explicitly by callers, are likewise expected to be portrait-based.
+    local portrait_w, portrait_h = UI.getPortraitDims()
+    local landscape_factor = UI.getLandscapeFactor()
+    o._scale         = landscape_factor
+    o._modal_w       = math.floor((opts.width  or math.floor(portrait_w * 5 / 6))  * landscape_factor)
+    o._modal_h       = math.floor((opts.height or math.floor(portrait_h * 23 / 30)) * landscape_factor)
     o._screen_w      = sw
     o._screen_h      = sh
-    o._pad_v         = Size.padding.large
-    o._pad_h         = Screen:scaleBySize(20)
+    o._pad_v         = math.floor(Size.padding.large   * landscape_factor)
+    o._pad_h         = math.floor(Screen:scaleBySize(20) * landscape_factor)
     o._inner_w       = o._modal_w - 2 * o._pad_h
     o._navpager_mode = opts.navpager_mode == true
+    -- When true, the window shrinks to fit its (single-page) content instead
+    -- of always occupying the full opts.height/default height. Only applied
+    -- on the window's first paint, and only while content fits on one page
+    -- at the full height — once content needs more than one page, the window
+    -- uses the full height and paginates as usual.
+    o._auto_height   = opts.auto_height == true
+    o._first_paint_done = false
     -- Position of the modal within the usable area (between topbar and navbar).
     -- "center"  — centred vertically in the usable area (default)
     -- "top"     — flush to the top of the usable area
@@ -201,8 +246,9 @@ end
 
 --- Assembles and presents the window.
 function SUIWindow:show()
+    _sui_scale = self._scale
     self._modal_frame = FrameContainer:new{
-        radius         = Size.radius.window,
+        radius         = SZ(Size.radius.window),
         bordersize     = SUIStyle.BORDER_SZ,
         padding        = 0,
         padding_left   = self._pad_h,
@@ -237,6 +283,13 @@ function SUIWindow:show()
         self._modal_h = usable_h
         mf.dimen.h    = usable_h
     end
+    -- Cache the geometry of the usable area and the (clamped) max height so
+    -- _rebuildFrame can recompute the modal's position if auto_height later
+    -- shrinks or restores self._modal_h.
+    self._modal_max_h    = self._modal_h
+    self._top_h_cache    = top_h
+    self._bot_h_cache    = bot_h
+    self._usable_h_cache = usable_h
     local pad       = Size.padding.small
     local modal_x   = math.floor((self._screen_w - self._modal_w) / 2)
     local modal_y
@@ -599,9 +652,17 @@ function SUIWindow:_buildTitleBar(ctx)
         left_cb   = function() win:_navPop() end
     end
 
+    -- KOReader's TitleBar defaults to a fixed named face (x_smalltfont for
+    -- fullscreen = false) when title_face isn't provided — a static point
+    -- size that ignores SZ()/landscape_factor entirely, so the title stayed
+    -- full-size while the rest of the modal's content shrunk around it in
+    -- landscape. Passing an explicit title_face built through SZ() keeps it
+    -- in step with everything else. FACE_BOLD/FS_TITLE is the pairing this
+    -- codebase already documents for "titles that need weight".
     local tb = TitleBar:new{
         show_parent            = self._wrapper,
         title                  = display_title,
+        title_face             = Font:getFace(SUIStyle.FACE_BOLD, SZ(SUIStyle.FS_TITLE)),
         width                  = self._inner_w,
         fullscreen             = false,
         align                  = "center",
@@ -617,7 +678,7 @@ end
 
 function SUIWindow:_rebuildFrame(ctx, items)
     local border  = Size.border.window
-    local dot_h   = Screen:scaleBySize(28) + Screen:scaleBySize(18)
+    local dot_h   = SZ(Screen:scaleBySize(28)) + SZ(Screen:scaleBySize(18))
     local inner_h = self._modal_h - 2 * border - self._pad_v
 
     local tb, title_h = self:_buildTitleBar(ctx)
@@ -675,10 +736,11 @@ function SUIWindow:_rebuildFrame(ctx, items)
     local avail_h = inner_h - title_h - footer_h
 
     local req_dot_space = false
-    local pages = self:_buildPages(items, avail_h)
+    local shrink_to_fit = self._auto_height and not self._has_settings_btn and not self._first_paint_done
+    local pages = self:_buildPages(items, avail_h, shrink_to_fit)
     local np    = #pages
     if np > 1 or self._has_settings_btn then
-        pages = self:_buildPages(items, avail_h - dot_h)
+        pages = self:_buildPages(items, avail_h - dot_h, shrink_to_fit)
         np    = #pages
         req_dot_space = true
     end
@@ -712,7 +774,7 @@ function SUIWindow:_rebuildFrame(ctx, items)
 
     if self._has_settings_btn then
         local IconWidget = require("ui/widget/iconwidget")
-        local btn_size = Screen:scaleBySize(40)
+        local btn_size = SZ(Screen:scaleBySize(40))
         local icon_size = math.floor(btn_size * 0.70)
         local border_sz = SUIStyle.BORDER_SZ
         
@@ -720,7 +782,7 @@ function SUIWindow:_rebuildFrame(ctx, items)
             dimen = Geom:new{ w = btn_size, h = btn_size },
             [1] = FrameContainer:new{
                 dimen      = Geom:new{ w = btn_size, h = btn_size },
-                radius     = Screen:scaleBySize(8),
+                radius     = SZ(Screen:scaleBySize(8)),
                 bordersize = border_sz,
                 background = Blitbuffer.COLOR_WHITE,
                 color      = Blitbuffer.gray(0.75),
@@ -740,7 +802,7 @@ function SUIWindow:_rebuildFrame(ctx, items)
             TapSettings = {
                 GestureRange:new{ ges = "tap", range = function()
                     local d = settings_btn.dimen
-                    local p = Screen:scaleBySize(20)
+                    local p = SZ(Screen:scaleBySize(20))
                     return Geom:new{ x = d.x - p, y = d.y - p, w = d.w + p * 2, h = d.h + p * 2 }
                 end }
             }
@@ -770,10 +832,41 @@ function SUIWindow:_rebuildFrame(ctx, items)
         }
     end
 
+    if shrink_to_fit then
+        local wanted_h
+        if np == 1 then
+            -- Content plus chrome fit within the max height — shrink to it.
+            local extra = req_dot_space and dot_h or 0
+            local content_h = page_widget:getSize().h
+            wanted_h = 2 * border + self._pad_v + title_h + footer_h + content_h + extra
+            local min_h = title_h + SZ(Screen:scaleBySize(96))
+            wanted_h = math.max(min_h, math.min(wanted_h, self._modal_max_h))
+        else
+            -- Content needs pagination even at the max height — use it as-is.
+            wanted_h = self._modal_max_h
+        end
+        if math.abs(wanted_h - self._modal_h) > 1 then
+            self._modal_h = wanted_h
+            local mf = self._modal_frame
+            mf.dimen.h = wanted_h
+            local new_x = mf.overlap_offset and mf.overlap_offset[1] or 0
+            local new_y
+            if self._position == "top" then
+                new_y = self._top_h_cache + Size.padding.small
+            elseif self._position == "bottom" then
+                new_y = self._screen_h - self._bot_h_cache - wanted_h - Size.padding.small
+            else
+                new_y = self._top_h_cache + math.floor((self._usable_h_cache - wanted_h) / 2)
+            end
+            mf.overlap_offset = { new_x, new_y }
+        end
+    end
+
     self._modal_frame[1] = final_widget
 end
 
 function SUIWindow:_repaint()
+    _sui_scale = self._scale
     local win   = self
     local frame = self:_navCurrent()
     logger.dbg("SUIWindow:_repaint screen='" .. tostring(frame.id) .. "'")
@@ -781,6 +874,13 @@ function SUIWindow:_repaint()
     local ctx = {
         inner_w       = self._inner_w,
         pad           = self._pad_h,
+        -- Universal landscape-aware size multiplier: same SZ()/_sui_scale
+        -- used for this window's own chrome (frame, title bar), handed to
+        -- every screen builder for free. Any screen — existing or new —
+        -- gets correct-by-construction scaling on ctx.SZ(n) with zero setup:
+        -- no require("sui_core"), no per-file "local function SZ(n) ... end"
+        -- boilerplate, and no risk of drifting from the chrome's own factor.
+        SZ            = SZ,
         current       = function() return win:_navCurrent() end,
         push          = function(id, params) win:_navPush(id, params) end,
         pop           = function(opts)
@@ -840,6 +940,7 @@ function SUIWindow:_repaint()
     end
 
     self:_rebuildFrame(ctx, items)
+    self._first_paint_done = true
 
     -- Keep page_num in sync so _callPageFn sees the correct total.
     if self._navpager_mode and self._wrapper then
@@ -920,7 +1021,7 @@ function SUIWindow:_updateNavbarArrows()
     UIManager:setDirty(target, "ui")
 end
 
-function SUIWindow:_buildPages(widgets, avail_h)
+function SUIWindow:_buildPages(widgets, avail_h, shrink_to_fit)
     -- Restaura os separadores caso a função seja chamada mais que uma vez
     -- (ex: recalcular a paginação para acomodar os pontos).
     for _, w in ipairs(widgets) do
@@ -975,9 +1076,17 @@ function SUIWindow:_buildPages(widgets, avail_h)
 
     local inner_w = self._inner_w
     local total_p = #pages
+    -- When shrink_to_fit is requested and everything fit on one page, size
+    -- that page's tap/paint area to the content it actually holds (cur_h)
+    -- instead of the full avail_h, so the caller can shrink the window to match.
+    local single_page_h = avail_h
+    if shrink_to_fit and total_p == 1 then
+        single_page_h = math.min(avail_h, cur_h)
+    end
     for i, vg in ipairs(pages) do
+        local area_h = (total_p == 1) and single_page_h or avail_h
         local area = InputContainer:new{
-            dimen = Geom:new{ w = inner_w, h = avail_h },
+            dimen = Geom:new{ w = inner_w, h = area_h },
             [1]   = vg,
         }
         area.ges_events = {}
@@ -1021,9 +1130,9 @@ local function _getPageDotClass()
     _PageDotClass = BaseWidget:extend{
         current_page = 1,
         total_pages  = 1,
-        dot_size     = Screen:scaleBySize(7),
-        dot_bar_h    = Screen:scaleBySize(28),
-        dot_touch_w  = Screen:scaleBySize(32),
+        dot_size     = SZ(Screen:scaleBySize(7)),
+        dot_bar_h    = SZ(Screen:scaleBySize(28)),
+        dot_touch_w  = SZ(Screen:scaleBySize(32)),
     }
     function _PageDotClass:getSize()
         return Geom:new{ w = self.total_pages * self.dot_touch_w, h = self.dot_bar_h }
@@ -1042,8 +1151,8 @@ local function _getPageDotClass()
 end
 
 function SUIWindow:_buildDotBar(total_pages)
-    local DOT_H   = Screen:scaleBySize(28)
-    local LABEL_H = Screen:scaleBySize(18)
+    local DOT_H   = SZ(Screen:scaleBySize(28))
+    local LABEL_H = SZ(Screen:scaleBySize(18))
     local total_h = LABEL_H + DOT_H
 
     if total_pages <= 1 then
@@ -1053,9 +1162,9 @@ function SUIWindow:_buildDotBar(total_pages)
         return VerticalSpan:new{ width = 0 }
     end
 
-    local TOUCH_W = Screen:scaleBySize(32)
+    local TOUCH_W = SZ(Screen:scaleBySize(32))
 
-    local label_face = Font:getFace(SUIStyle.FACE_REGULAR, SUIStyle.FS_CAPTION)
+    local label_face = Font:getFace(SUIStyle.FACE_REGULAR, SZ(SUIStyle.FS_CAPTION))
     local label_text = TextWidget:new{
         text    = T(_("Page %1 of %2"), self._current_page, total_pages),
         face    = label_face,
@@ -1069,7 +1178,7 @@ function SUIWindow:_buildDotBar(total_pages)
     local dot = _getPageDotClass():new{
         current_page = self._current_page,
         total_pages  = total_pages,
-        dot_size     = Screen:scaleBySize(7),
+        dot_size     = SZ(Screen:scaleBySize(7)),
         dot_bar_h    = DOT_H,
         dot_touch_w  = TOUCH_W,
     }
@@ -1130,7 +1239,7 @@ function SUIWindow:_buildDotBar(total_pages)
             -- So btn_abs_y = OverlapGroup_top + sby = (bar.dimen.y - (inner_h - dot_total_h)) + sby
             -- Easier: btn always sits inside the dot bar region (by construction), so just
             -- check horizontal overlap within the dot bar's y-range.
-            local pad = Screen:scaleBySize(20)
+            local pad = SZ(Screen:scaleBySize(20))
             if ges.pos.x >= btn_abs_x - pad then
                 return false
             end
@@ -1213,7 +1322,7 @@ end
 --- @param opts table  icon, size, color, on_tap, w, h
 --- @return InputContainer
 function SUIWindow.Input.iconButton(opts)
-    local sz  = opts.size  or Screen:scaleBySize(SUIStyle.FS_DETAIL)
+    local sz  = opts.size  or SZ(Screen:scaleBySize(SUIStyle.FS_DETAIL))
     local w   = opts.w     or sz * 2
     local h   = opts.h     or sz
     local clr = opts.color or Blitbuffer.COLOR_BLACK
@@ -1251,20 +1360,20 @@ local function _clrSecondary() return SUIStyle.getThemeColor("text_secondary") o
 local function _clrSeparator() return Blitbuffer.gray(0.85) end
 
 local function _facePrimary()
-    return Font:getFace(SUIStyle.FACE_REGULAR, SUIStyle.FS_BODY)
+    return Font:getFace(SUIStyle.FACE_REGULAR, SZ(SUIStyle.FS_BODY))
 end
 local function _faceSecondary()
-    return Font:getFace(SUIStyle.FACE_REGULAR, SUIStyle.FS_CAPTION)
+    return Font:getFace(SUIStyle.FACE_REGULAR, SZ(SUIStyle.FS_CAPTION))
 end
 local function _faceIcon()
-    return Font:getFace(SUIStyle.FACE_ICONS, SUIStyle.FS_TITLE)
+    return Font:getFace(SUIStyle.FACE_ICONS, SZ(SUIStyle.FS_TITLE))
 end
 local function _faceChevron()
-    return Font:getFace(SUIStyle.FACE_ICONS, SUIStyle.FS_BODY)
+    return Font:getFace(SUIStyle.FACE_ICONS, SZ(SUIStyle.FS_BODY))
 end
 
-local _CHEVRON_W = Screen:scaleBySize(20)
-local _ITEM_VPAD = Screen:scaleBySize(16)
+local function _CHEVRON_W() return SZ(Screen:scaleBySize(20)) end
+local function _ITEM_VPAD() return SZ(Screen:scaleBySize(16)) end
 
 -- ===========================================================================
 -- SUIWindow.ListRow
@@ -1278,6 +1387,8 @@ local _ITEM_VPAD = Screen:scaleBySize(16)
 ---   title        string
 ---   subtitle     string|nil
 ---   left_icon    string|nil    — SUIStyle icon key
+---   left_widget  widget|nil    — custom widget before the title (e.g. an icon
+---                                preview); takes precedence over left_icon
 ---   right_icon   string|nil
 ---   right_value  string|nil    — current value label before the chevron
 ---   right_widget widget|nil    — custom widget before the chevron
@@ -1308,17 +1419,17 @@ function SUIWindow.ListRow(opts)
     local has_right_widget = opts.right_widget ~= nil
     local has_right  = has_delete or has_edit or has_update or has_more or opts.show_chevron or opts.checked ~= nil or opts.right_icon or has_value or has_right_widget
 
-    local del_w   = has_delete and (_CHEVRON_W * 2) or 0
-    local edit_w  = has_edit and (_CHEVRON_W * 2) or 0
-    local upd_w   = has_update and (_CHEVRON_W * 2) or 0
-    local more_w  = has_more   and (_CHEVRON_W * 2) or 0
-    local val_w   = has_value and Screen:scaleBySize(120) or 0
+    local del_w   = has_delete and (_CHEVRON_W() * 2) or 0
+    local edit_w  = has_edit and (_CHEVRON_W() * 2) or 0
+    local upd_w   = has_update and (_CHEVRON_W() * 2) or 0
+    local more_w  = has_more   and (_CHEVRON_W() * 2) or 0
+    local val_w   = has_value and SZ(Screen:scaleBySize(120)) or 0
     local widget_w = 0
     if has_right_widget then
         local sz = type(opts.right_widget.getSize) == "function" and opts.right_widget:getSize() or opts.right_widget.dimen
         widget_w = sz and sz.w or 0
     end
-    local extra_w = (opts.show_chevron or opts.checked ~= nil or opts.right_icon) and _CHEVRON_W or 0
+    local extra_w = (opts.show_chevron or opts.checked ~= nil or opts.right_icon) and _CHEVRON_W() or 0
     local left_w  = math.max(1, inner_w - del_w - edit_w - upd_w - more_w - val_w - widget_w - extra_w)
 
     local left_vg = VerticalGroup:new{ align = "left" }
@@ -1330,7 +1441,22 @@ function SUIWindow.ListRow(opts)
     local title_face = opts.title_face or _facePrimary()
 
     local title_widget
-    if opts.left_icon and opts.left_icon ~= "" then
+    if opts.left_widget then
+        local lw_sz = type(opts.left_widget.getSize) == "function" and opts.left_widget:getSize() or opts.left_widget.dimen
+        local lw_w  = (lw_sz and lw_sz.w) or 0
+        local lw_gap = SZ(Screen:scaleBySize(8))
+        title_widget = HorizontalGroup:new{ align = "center",
+            opts.left_widget,
+            HorizontalSpan:new{ width = lw_gap },
+            TextWidget:new{
+                text      = opts.title,
+                face      = title_face,
+                fgcolor   = fg_color,
+                bold      = true,
+                max_width = math.max(1, left_w - lw_w - lw_gap),
+            },
+        }
+    elseif opts.left_icon and opts.left_icon ~= "" then
         title_widget = HorizontalGroup:new{ align = "center",
             TextWidget:new{
                 text    = SUIStyle.icon(opts.left_icon),
@@ -1359,7 +1485,7 @@ function SUIWindow.ListRow(opts)
 
     local sub = type(opts.subtitle) == "function" and opts.subtitle() or opts.subtitle
     if sub and sub ~= "" then
-        table.insert(left_vg, VerticalSpan:new{ width = Screen:scaleBySize(4) })
+        table.insert(left_vg, VerticalSpan:new{ width = SZ(Screen:scaleBySize(4)) })
         table.insert(left_vg, TextWidget:new{
             text                   = sub,
             face                   = _faceSecondary(),
@@ -1385,7 +1511,7 @@ function SUIWindow.ListRow(opts)
         if has_update then
             table.insert(right_hg, SUIWindow.Input.iconButton{
                 icon   = "update",
-                w      = _CHEVRON_W * 2,
+                w      = _CHEVRON_W() * 2,
                 h      = left_h,
                 on_tap = opts.on_update,
             })
@@ -1394,7 +1520,7 @@ function SUIWindow.ListRow(opts)
         if has_edit then
             table.insert(right_hg, SUIWindow.Input.iconButton{
                 icon   = "edit",
-                w      = _CHEVRON_W * 2,
+                w      = _CHEVRON_W() * 2,
                 h      = left_h,
                 on_tap = opts.on_edit,
             })
@@ -1403,7 +1529,7 @@ function SUIWindow.ListRow(opts)
         if has_delete then
             table.insert(right_hg, SUIWindow.Input.iconButton{
                 icon   = "delete",
-                w      = _CHEVRON_W * 2,
+                w      = _CHEVRON_W() * 2,
                 h      = left_h,
                 on_tap = opts.on_delete,
             })
@@ -1412,12 +1538,12 @@ function SUIWindow.ListRow(opts)
         if has_more then
             local more_ic
             more_ic = InputContainer:new{
-                dimen = Geom:new{ w = _CHEVRON_W * 2, h = left_h },
+                dimen = Geom:new{ w = _CHEVRON_W() * 2, h = left_h },
                 [1]   = CenterContainer:new{
-                    dimen = Geom:new{ w = _CHEVRON_W * 2, h = left_h },
+                    dimen = Geom:new{ w = _CHEVRON_W() * 2, h = left_h },
                     TextWidget:new{
                         text    = SUIStyle.icon("more"),
-                        face    = Font:getFace(SUIStyle.FACE_ICONS, Screen:scaleBySize(SUIStyle.FS_DETAIL)),
+                        face    = Font:getFace(SUIStyle.FACE_ICONS, SZ(Screen:scaleBySize(SUIStyle.FS_DETAIL))),
                         fgcolor = _clrPrimary(),
                     },
                 },
@@ -1448,7 +1574,7 @@ function SUIWindow.ListRow(opts)
                 dimen = Geom:new{ w = val_w, h = left_h },
                 TextWidget:new{
                     text                   = opts.right_value,
-                    face                   = Font:getFace(SUIStyle.FACE_REGULAR, SUIStyle.FS_DETAIL),
+                    face                   = Font:getFace(SUIStyle.FACE_REGULAR, SZ(SUIStyle.FS_DETAIL)),
                     fgcolor                = _clrPrimary(),
                     max_width              = val_w,
                     alignment              = "right",
@@ -1466,7 +1592,7 @@ function SUIWindow.ListRow(opts)
 
         if opts.checked ~= nil then
             table.insert(right_hg, RightContainer:new{
-                dimen = Geom:new{ w = _CHEVRON_W, h = left_h },
+                dimen = Geom:new{ w = _CHEVRON_W(), h = left_h },
                 TextWidget:new{
                     text      = SUIStyle.icon(opts.checked and "check" or "uncheck"),
                     face      = _faceIcon(),
@@ -1476,7 +1602,7 @@ function SUIWindow.ListRow(opts)
             })
         elseif opts.right_icon and opts.right_icon ~= "" then
             table.insert(right_hg, RightContainer:new{
-                dimen = Geom:new{ w = _CHEVRON_W, h = left_h },
+                dimen = Geom:new{ w = _CHEVRON_W(), h = left_h },
                 TextWidget:new{
                     text      = SUIStyle.icon(opts.right_icon),
                     face      = _faceIcon(),
@@ -1486,9 +1612,9 @@ function SUIWindow.ListRow(opts)
             })
         elseif opts.show_chevron then
             table.insert(right_hg, RightContainer:new{
-                dimen = Geom:new{ w = _CHEVRON_W, h = left_h },
+                dimen = Geom:new{ w = _CHEVRON_W(), h = left_h },
                 HorizontalGroup:new{ align = "center",
-                    HorizontalSpan:new{ width = Screen:scaleBySize(6) },
+                    HorizontalSpan:new{ width = SZ(Screen:scaleBySize(6)) },
                     TextWidget:new{
                         text      = SUIStyle.icon("chevron"),
                         face      = _faceChevron(),
@@ -1505,8 +1631,8 @@ function SUIWindow.ListRow(opts)
     local row_padded = FrameContainer:new{
         bordersize     = 0,
         padding        = 0,
-        padding_top    = _ITEM_VPAD,
-        padding_bottom = _ITEM_VPAD,
+        padding_top    = _ITEM_VPAD(),
+        padding_bottom = _ITEM_VPAD(),
         row_hg,
     }
 
@@ -1546,7 +1672,7 @@ function SUIWindow.ListRow(opts)
                         text      = label,
                         align     = "left",
                         font_face = SUIStyle.FACE_REGULAR,
-                        font_size = SUIStyle.FS_BODY,
+                        font_size = SZ(SUIStyle.FS_BODY),
                         font_bold = true,
                         dim       = item.dim,
                         callback  = function()
@@ -1555,7 +1681,7 @@ function SUIWindow.ListRow(opts)
                         end,
                     }})
                 end
-                local dialog_w = math.floor(Screen:getWidth() * 0.42)
+                local dialog_w = SZ(math.floor(Screen:getWidth() * 0.42))
                 dialog = ButtonDialog:new{
                     title              = opts.title,
                     width              = dialog_w,
@@ -1618,8 +1744,8 @@ function SUIWindow.Button(opts)
     local face      = _facePrimary()
     local prefix    = opts.icon and (SUIStyle.icon(opts.icon) .. "  ") or ""
     local align     = opts.align or "center"
-    local pad_left  = (align == "left")  and 0 or _ITEM_VPAD
-    local pad_right = (align == "right") and 0 or _ITEM_VPAD
+    local pad_left  = (align == "left")  and 0 or _ITEM_VPAD()
+    local pad_right = (align == "right") and 0 or _ITEM_VPAD()
     local text_max_w = btn_w - pad_left - pad_right
     local is_disabled = opts.enabled == false
 
@@ -1649,11 +1775,11 @@ function SUIWindow.Button(opts)
     local frame = FrameContainer:new{
         bordersize     = 0,
         padding        = 0,
-        padding_top    = _ITEM_VPAD,
-        padding_bottom = _ITEM_VPAD,
+        padding_top    = _ITEM_VPAD(),
+        padding_bottom = _ITEM_VPAD(),
         padding_left   = pad_left,
         padding_right  = pad_right,
-        dimen          = Geom:new{ w = btn_w, h = face.size + _ITEM_VPAD * 2 },
+        dimen          = Geom:new{ w = btn_w, h = face.size + _ITEM_VPAD() * 2 },
         aligned_text,
     }
 
@@ -1671,7 +1797,7 @@ function SUIWindow.Button(opts)
     if opts.width then return tappable end
     if opts.margin_top == false then return tappable end
     return VerticalGroup:new{
-        VerticalSpan:new{ width = _ITEM_VPAD },
+        VerticalSpan:new{ width = _ITEM_VPAD() },
         tappable,
     }
 end
@@ -1696,15 +1822,15 @@ function SUIWindow.Section(opts)
     vg.is_section = true
 
     if opts.title and opts.title ~= "" then
-        table.insert(vg, VerticalSpan:new{ width = Screen:scaleBySize(16) })
+        table.insert(vg, VerticalSpan:new{ width = SZ(Screen:scaleBySize(16)) })
         table.insert(vg, TextWidget:new{
             text      = opts.title:upper(),
-            face      = Font:getFace(SUIStyle.FACE_REGULAR, SUIStyle.FS_DETAIL),
+            face      = Font:getFace(SUIStyle.FACE_REGULAR, SZ(SUIStyle.FS_DETAIL)),
             fgcolor   = _clrSecondary(),
             bold      = true,
             max_width = opts.inner_w,
         })
-        table.insert(vg, VerticalSpan:new{ width = Screen:scaleBySize(8) })
+        table.insert(vg, VerticalSpan:new{ width = SZ(Screen:scaleBySize(8)) })
     end
 
     for _, child in ipairs(opts.children or {}) do
@@ -1885,6 +2011,7 @@ function SUIWindow.MenuTable(opts)
     -- they need without depending on the outer closure directly.
     local build_ctx = {
         inner_w        = inner_w,
+        SZ             = SZ,  -- same universal scale multiplier as the outer screen ctx
         push           = push        or function() end,
         push_stack     = push        or function() end,   -- alias
         repaint        = repaint,
@@ -2030,7 +2157,7 @@ function SUIWindow.MenuTable(opts)
         -- default text size.  Any error is silently ignored.
         local title_face
         if type(item.font_func) == "function" then
-            local ok_f, face = pcall(item.font_func, SUIStyle.FS_BODY)
+            local ok_f, face = pcall(item.font_func, SZ(SUIStyle.FS_BODY))
             if ok_f and face then title_face = face end
         end
 
@@ -2090,7 +2217,7 @@ function SUIWindow.ActionMenu(opts)
             enabled   = not (_item.dim or _item.enabled == false),
                 align     = "left",
                 font_face = SUIStyle.FACE_REGULAR,
-                font_size = SUIStyle.FS_BODY,
+                font_size = SZ(SUIStyle.FS_BODY),
                 font_bold = true,
                 callback  = function()
                     if _item.keep_open then
@@ -2155,17 +2282,17 @@ local function _CardBase(opts)
     local has_more   = opts.on_more ~= nil or (type(opts.more_items) == "table" and #opts.more_items > 0)
     local has_move   = opts.on_move_up ~= nil or opts.on_move_down ~= nil or opts.arrange_mode
     local has_move_page = opts.on_move_page ~= nil
-    local margin_v   = opts.margin_v or Screen:scaleBySize(8)
-    local h_pad      = Size.padding.large
-    local v_pad      = Screen:scaleBySize(12)
+    local margin_v   = opts.margin_v or SZ(Screen:scaleBySize(8))
+    local h_pad      = SZ(Size.padding.large)
+    local v_pad      = SZ(Screen:scaleBySize(12))
 
-    local del_w  = has_delete and (_CHEVRON_W * 2) or 0
-    local edit_w = has_edit and (_CHEVRON_W * 2) or 0
-    local upd_w  = has_update and (_CHEVRON_W * 2) or 0
-    local more_w = has_more   and (_CHEVRON_W * 2) or 0
-    local chev_w = show_chev  and _CHEVRON_W or 0
-    local move_w = has_move   and (_CHEVRON_W * 4) or 0
-    local move_page_w = has_move_page and (_CHEVRON_W * 2) or 0
+    local del_w  = has_delete and (_CHEVRON_W() * 2) or 0
+    local edit_w = has_edit and (_CHEVRON_W() * 2) or 0
+    local upd_w  = has_update and (_CHEVRON_W() * 2) or 0
+    local more_w = has_more   and (_CHEVRON_W() * 2) or 0
+    local chev_w = show_chev  and _CHEVRON_W() or 0
+    local move_w = has_move   and (_CHEVRON_W() * 4) or 0
+    local move_page_w = has_move_page and (_CHEVRON_W() * 2) or 0
     local left_w = math.max(1, inner_w - del_w - edit_w - upd_w - more_w - chev_w - move_w - move_page_w - 2 * h_pad)
 
     local left_vg = VerticalGroup:new{ align = "left" }
@@ -2178,7 +2305,7 @@ local function _CardBase(opts)
     })
     local sub = type(opts.subtitle) == "function" and opts.subtitle() or opts.subtitle
     if sub and sub ~= "" then
-        table.insert(left_vg, VerticalSpan:new{ width = Screen:scaleBySize(4) })
+        table.insert(left_vg, VerticalSpan:new{ width = SZ(Screen:scaleBySize(4)) })
         table.insert(left_vg, TextWidget:new{
             text                   = sub,
             face                   = _faceSecondary(),
@@ -2204,7 +2331,7 @@ local function _CardBase(opts)
         if opts.on_move_page then
             table.insert(right_hg, SUIWindow.Input.iconButton{
                 icon   = "move_page",
-                w      = _CHEVRON_W * 2,
+                w      = _CHEVRON_W() * 2,
                 h      = left_h,
                 color  = _clrPrimary(),
                 on_tap = opts.on_move_page,
@@ -2219,18 +2346,18 @@ local function _CardBase(opts)
             
             if arrow_count == 1 then
                 table.insert(right_hg, WidgetContainer:new{
-                    dimen = Geom:new{ w = _CHEVRON_W * 2, h = left_h }
+                    dimen = Geom:new{ w = _CHEVRON_W() * 2, h = left_h }
                 })
             elseif arrow_count == 0 and opts.arrange_mode then
                 table.insert(right_hg, WidgetContainer:new{
-                    dimen = Geom:new{ w = _CHEVRON_W * 4, h = left_h }
+                    dimen = Geom:new{ w = _CHEVRON_W() * 4, h = left_h }
                 })
             end
 
             if opts.on_move_up then
                 table.insert(right_hg, SUIWindow.Input.iconButton{
                     icon   = "arrow_up",
-                    w      = _CHEVRON_W * 2,
+                    w      = _CHEVRON_W() * 2,
                     h      = left_h,
                     color  = _clrPrimary(),
                     on_tap = opts.on_move_up,
@@ -2239,7 +2366,7 @@ local function _CardBase(opts)
             if opts.on_move_down then
                 table.insert(right_hg, SUIWindow.Input.iconButton{
                     icon   = "arrow_down",
-                    w      = _CHEVRON_W * 2,
+                    w      = _CHEVRON_W() * 2,
                     h      = left_h,
                     color  = _clrPrimary(),
                     on_tap = opts.on_move_down,
@@ -2250,7 +2377,7 @@ local function _CardBase(opts)
         if has_update then
             table.insert(right_hg, SUIWindow.Input.iconButton{
                 icon   = "update",
-                w      = _CHEVRON_W * 2,
+                w      = _CHEVRON_W() * 2,
                 h      = left_h,
                 on_tap = opts.on_update,
             })
@@ -2259,7 +2386,7 @@ local function _CardBase(opts)
         if has_edit then
             table.insert(right_hg, SUIWindow.Input.iconButton{
                 icon   = "edit",
-                w      = _CHEVRON_W * 2,
+                w      = _CHEVRON_W() * 2,
                 h      = left_h,
                 on_tap = opts.on_edit,
             })
@@ -2268,7 +2395,7 @@ local function _CardBase(opts)
         if has_delete then
             table.insert(right_hg, SUIWindow.Input.iconButton{
                 icon   = "delete",
-                w      = _CHEVRON_W * 2,
+                w      = _CHEVRON_W() * 2,
                 h      = left_h,
                 on_tap = opts.on_delete,
             })
@@ -2277,12 +2404,12 @@ local function _CardBase(opts)
         if has_more then
             local more_ic
             more_ic = InputContainer:new{
-                dimen = Geom:new{ w = _CHEVRON_W * 2, h = left_h },
+                dimen = Geom:new{ w = _CHEVRON_W() * 2, h = left_h },
                 [1]   = CenterContainer:new{
-                    dimen = Geom:new{ w = _CHEVRON_W * 2, h = left_h },
+                    dimen = Geom:new{ w = _CHEVRON_W() * 2, h = left_h },
                     TextWidget:new{
                         text    = SUIStyle.icon("more"),
-                        face    = Font:getFace(SUIStyle.FACE_ICONS, Screen:scaleBySize(SUIStyle.FS_DETAIL)),
+                        face    = Font:getFace(SUIStyle.FACE_ICONS, SZ(Screen:scaleBySize(SUIStyle.FS_DETAIL))),
                         fgcolor = _clrPrimary(),
                     },
                 },
@@ -2310,9 +2437,9 @@ local function _CardBase(opts)
 
         if show_chev then
             table.insert(right_hg, RightContainer:new{
-                dimen = Geom:new{ w = _CHEVRON_W, h = left_h },
+                dimen = Geom:new{ w = _CHEVRON_W(), h = left_h },
                 HorizontalGroup:new{ align = "center",
-                    HorizontalSpan:new{ width = Screen:scaleBySize(6) },
+                    HorizontalSpan:new{ width = SZ(Screen:scaleBySize(6)) },
                     TextWidget:new{
                         text      = SUIStyle.icon("chevron"),
                         face      = _faceChevron(),
@@ -2335,7 +2462,7 @@ local function _CardBase(opts)
     }
 
     local card_frame = FrameContainer:new{
-        radius     = Screen:scaleBySize(12),
+        radius     = SZ(Screen:scaleBySize(12)),
         bordersize = SUIStyle.BORDER_SZ,
         color      = Blitbuffer.gray(0.72),
         padding    = 0,
@@ -2387,7 +2514,7 @@ local function _CardBase(opts)
                         text      = label,
                         align     = "left",
                         font_face = SUIStyle.FACE_REGULAR,
-                        font_size = SUIStyle.FS_BODY,
+                        font_size = SZ(SUIStyle.FS_BODY),
                         font_bold = true,
                         dim       = item.dim,
                         callback  = function()
@@ -2396,7 +2523,7 @@ local function _CardBase(opts)
                         end,
                     }})
                 end
-                local dialog_w = math.floor(Screen:getWidth() * 0.42)
+                local dialog_w = SZ(math.floor(Screen:getWidth() * 0.42))
                 dialog = ButtonDialog:new{
                     title              = opts.title,
                     width              = dialog_w,
@@ -2463,7 +2590,7 @@ function SUIWindow.ArrangeCard(opts)
         on_move_down = opts.on_move_down,
         on_tap       = opts.on_tap,
         on_hold      = opts.on_hold,
-        margin_v     = opts.margin_v or Screen:scaleBySize(4),
+        margin_v     = opts.margin_v or SZ(Screen:scaleBySize(4)),
     }
 end
 
@@ -2519,7 +2646,9 @@ function SUIWindow.ArrangeList(opts)
             })
         else
             local can_move_up = (_i > 1)
-            if can_move_up and _i == 2 and (items[1].dim or items[1]._is_break or items[1].is_divider) then
+            local prev_item   = items[_i - 1]
+            if can_move_up and _i == 2 and prev_item and
+               (prev_item.dim or prev_item._is_break or prev_item.is_divider) and prev_item.pin_top then
                 can_move_up = false
             end
 
@@ -2626,6 +2755,7 @@ function SUIWindow.RowPage(opts)
                 title        = item.text,
                 subtitle     = item.subtitle,
                 left_icon    = item.left_icon,
+                left_widget  = item.left_widget,
                 right_icon   = item.right_icon,
                 right_value  = item.right_value,
                 right_widget = item.right_widget,
@@ -2666,7 +2796,7 @@ end
 function SUIWindow.TwoButtonFooter(ctx, left_opts, right_opts)
     local iw      = ctx.inner_w
     local btn_w   = math.floor(iw / 2)
-    local top_pad = Screen:scaleBySize(8)
+    local top_pad = SZ(Screen:scaleBySize(8))
 
     left_opts.inner_w  = iw
     left_opts.width    = btn_w
@@ -2709,13 +2839,13 @@ end
 --- @return InputContainer  — with explicit dimen.h
 function SUIWindow.CenteredButtonFooter(ctx, opts)
     local iw          = ctx.inner_w
-    local face        = Font:getFace(SUIStyle.FACE_REGULAR, SUIStyle.FS_BODY)
+    local face        = Font:getFace(SUIStyle.FACE_REGULAR, SZ(SUIStyle.FS_BODY))
     local border_sz   = SUIStyle.BORDER_SZ
-    local btn_radius  = Screen:scaleBySize(8)
-    local h_pad       = Screen:scaleBySize(12)
-    local btn_h       = face.size + Screen:scaleBySize(8) * 2
-    local top_pad     = Screen:scaleBySize(8)
-    local bot_pad     = Screen:scaleBySize(16)
+    local btn_radius  = SZ(Screen:scaleBySize(8))
+    local h_pad       = SZ(Screen:scaleBySize(12))
+    local btn_h       = face.size + SZ(Screen:scaleBySize(8)) * 2
+    local top_pad     = SZ(Screen:scaleBySize(8))
+    local bot_pad     = SZ(Screen:scaleBySize(16))
     local total_h     = top_pad + btn_h + bot_pad
     local is_disabled = opts.enabled == false
 

@@ -172,7 +172,7 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
     -- Currently only "frontlight" is hardware-gated; all other ids are always shown.
     local function actionAvailable(id)
         if id == "frontlight" then return hasFrontlight() end
-        if id == "browse_authors" or id == "browse_series" or id == "browse_tags" then
+        if require("sui_quickactions").getBrowseMode(id) then
             local ok_bm, BM = pcall(require, "sui_browsemeta")
             return ok_bm and BM and BM.isEnabled()
         end
@@ -693,7 +693,7 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
                 local SEP_CENTER = "__sep_center__"
                 local SEP_RIGHT  = "__sep_right__"
                 local sort_items = {}
-                sort_items[#sort_items + 1] = { text = _("Left"):upper(), orig_item = SEP_LEFT, is_divider = true }
+                sort_items[#sort_items + 1] = { text = _("Left"):upper(), orig_item = SEP_LEFT, is_divider = true, pin_top = true }
                 for _i, key in ipairs(cfg.order_left) do
                     if cfg.side[key] ~= "hidden" then
                         sort_items[#sort_items + 1] = { text = TOPBAR_ITEM_LABEL(key), orig_item = key }
@@ -930,7 +930,7 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
                                 }
                             end
                             
-                            sort_items[#sort_items + 1] = { text = _("Left"):upper(), orig_item = SEP_LEFT, is_divider = true }
+                            sort_items[#sort_items + 1] = { text = _("Left"):upper(), orig_item = SEP_LEFT, is_divider = true, pin_top = true }
                             for _, key in ipairs(cfg.order_left) do
                                 if (cfg.side[key] or "hidden") ~= "hidden" then add_item(key) end
                             end
@@ -1434,7 +1434,7 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
         local sort_items = {}
 
         sort_items[#sort_items + 1] = {
-            text = _("Left"):upper(), orig_item = SEP_LEFT, is_divider = true,
+            text = _("Left"):upper(), orig_item = SEP_LEFT, is_divider = true, pin_top = true,
         }
         for _i, id in ipairs(cfg.order_left) do
             if labels[id] then
@@ -1636,7 +1636,7 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
 
                                 local cfg = cfg_getter()
                                 local sort_items = {}
-                                sort_items[#sort_items + 1] = { text = _("Left"):upper(), orig_item = SEP_LEFT, is_divider = true }
+                                sort_items[#sort_items + 1] = { text = _("Left"):upper(), orig_item = SEP_LEFT, is_divider = true, pin_top = true }
                                 for _i, key in ipairs(cfg.order_left) do
                                     if Titlebar.isItemVisible(key) and labels[key] then
                                         sort_items[#sort_items + 1] = { text = labels[key](), orig_item = key }
@@ -2370,6 +2370,18 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
                 end,
             },
             {
+                text           = _("Return to Home Screen on Wakeup"),
+                help_text      = _("When waking the device from sleep/suspend, always return to the Home Screen — even if a book was open when it went to sleep."),
+                checked_func   = function()
+                    return SUISettings:isTrue("simpleui_hs_return_on_wakeup")
+                end,
+                keep_menu_open = true,
+                callback       = function()
+                    local on = SUISettings:isTrue("simpleui_hs_return_on_wakeup")
+                    SUISettings:saveSetting("simpleui_hs_return_on_wakeup", not on)
+                end,
+            },
+            {
                 text_func = function() return _("Scale") end,
                 separator = true,
                 sub_item_table = {
@@ -2522,6 +2534,35 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
                         end,
                         callback = function()
                             SUISettings:saveSetting("simpleui_hs_closing_notice_mode", "never")
+                        end,
+                    },
+                },
+            },
+            {
+                text = _("Book Cover Transition"),
+                help_text = _("Briefly show the book cover full-screen when opening or closing a book, masking the page-layout flash. Requires the book to already be indexed by the cover browser (its cover must have been seen at least once in a grid/list view)."),
+                sub_item_table = {
+                    {
+                        text           = _("Show on Open"),
+                        checked_func   = function()
+                            return SUISettings:isTrue("simpleui_reader_cover_open")
+                        end,
+                        keep_menu_open = true,
+                        callback       = function()
+                            local on = SUISettings:isTrue("simpleui_reader_cover_open")
+                            SUISettings:saveSetting("simpleui_reader_cover_open", not on)
+                        end,
+                    },
+                    {
+                        text           = _("Show on Close"),
+                        help_text      = _("Replaces the \"Closing book…\" notice above with the cover for that close, when a cover is available."),
+                        checked_func   = function()
+                            return SUISettings:isTrue("simpleui_reader_cover_close")
+                        end,
+                        keep_menu_open = true,
+                        callback       = function()
+                            local on = SUISettings:isTrue("simpleui_reader_cover_close")
+                            SUISettings:saveSetting("simpleui_reader_cover_close", not on)
                         end,
                     },
                 },
@@ -3235,6 +3276,29 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
                                                 checked_func   = function() return FC.getLabelPosition() == "bottom" end,
                                                 keep_menu_open = true,
                                                 callback       = function() FC.setLabelPosition("bottom"); _refreshFC() end,
+                                            },
+                                        },
+                                    },
+                                    {
+                                        text_func  = function() return _("Color") end,
+                                        value_func = function()
+                                            return FC.getLabelColor() == "dark" and _("Dark") or _("Light")
+                                        end,
+                                        enabled_func = function() return FC.getLabelMode() ~= "hidden" end,
+                                        sub_item_table = {
+                                            {
+                                                text           = _("Light"),
+                                                radio          = true,
+                                                checked_func   = function() return FC.getLabelColor() ~= "dark" end,
+                                                keep_menu_open = true,
+                                                callback       = function() FC.setLabelColor("light"); _refreshFC() end,
+                                            },
+                                            {
+                                                text           = _("Dark"),
+                                                radio          = true,
+                                                checked_func   = function() return FC.getLabelColor() == "dark" end,
+                                                keep_menu_open = true,
+                                                callback       = function() FC.setLabelColor("dark"); _refreshFC() end,
                                             },
                                         },
                                     },
@@ -4178,6 +4242,49 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
                     local ok_fi, items = pcall(SUIStyle.makeFontMenuItems)
                     if not ok_fi or type(items) ~= "table" then return {} end
                     return items
+                end,
+            },
+            -- ── Global Text Size ──────────────────────────────────────────
+            -- Global scale applied to every KOReader UI text size, via a
+            -- patch on ui/font.lua's Font:getFace() (sui_patches.lua
+            -- patchFontGetFace) — covers native menus/dialogs AND
+            -- SimpleUI's own widgets alike, not just Simple UI. Does not
+            -- affect the book's reading font size (crengine, separate
+            -- system). Like the UI Font picker above, a restart is needed
+            -- to fully apply it everywhere (the scale is captured once, at
+            -- plugin-init patch time).
+            {
+                text_func = function()
+                    return _("Global Text Size")
+                end,
+                value_func = function() return Config.getFontScalePct() .. "%" end,
+                keep_menu_open = true,
+                callback = function()
+                    local SpinWidget = require("ui/widget/spinwidget")
+                    UIManager:show(SpinWidget:new{
+                        title_text    = _("Global Text Size"),
+                        info_text     = _("Global scale applied to all of KOReader's interface text — menus, dialogs, titles, and Simple UI. It does not change the book's reading font size, which has its own setting.\n100% is the default size. Useful when a chosen UI font (see UI Font above) renders smaller or larger than usual."),
+                        value         = Config.getFontScalePct(),
+                        value_min     = Config.FONT_SCALE_MIN,
+                        value_max     = Config.FONT_SCALE_MAX,
+                        value_step    = Config.FONT_SCALE_STEP,
+                        unit          = "%",
+                        ok_text       = _("Apply"),
+                        cancel_text   = _("Cancel"),
+                        default_value = Config.FONT_SCALE_DEF,
+                        callback      = function(spin)
+                            Config.setFontScalePct(spin.value)
+                            UIManager:show(ConfirmBox():new{
+                                text       = _("A restart is required to apply the new text size everywhere.\n\nRestart now?"),
+                                ok_text    = _("Restart"),
+                                cancel_text = _("Later"),
+                                ok_callback = function()
+                                    SUISettings:flush()
+                                    UIManager:restartKOReader()
+                                end,
+                            })
+                        end,
+                    })
                 end,
             },
             {

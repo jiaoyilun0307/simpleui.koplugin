@@ -33,6 +33,8 @@
 --   }
 
 local UIManager = require("ui/uimanager")
+local VerticalGroup = require("ui/widget/verticalgroup")
+local VerticalSpan  = require("ui/widget/verticalspan")
 local Device    = require("device")
 local Screen    = Device.screen
 local lfs       = require("libs/libkoreader-lfs")
@@ -42,6 +44,18 @@ local N_ = require("sui_i18n").ngettext
 
 local Config      = require("sui_config")
 local SUISettings = require("sui_store")
+local UI          = require("sui_core")
+
+-- Landscape-aware scaling for the raw pixel/font sizes below that build
+-- SUIWindow modal content directly in this file (icon picker previews, the
+-- Quick Actions "Group" folder dialog, the Recent grid): every screen
+-- builder here uses the ctx.SZ(n) handed to it by SUIWindow itself (single
+-- source of truth, see sui_window.lua) instead of a locally-redeclared
+-- wrapper. QA.buildQARowIcon is the one exception — it's a plain helper, not
+-- a screen builder, so it takes its scale function as an explicit param
+-- (falling back to UI.SZ if ever called without one). Not used by this
+-- file's homescreen-facing helpers (those are scaled via sui_homescreen.lua's
+-- own Config-patch mechanism instead).
 
 local QA = {}
 
@@ -135,6 +149,18 @@ end
 local function _liveFM()
     local FM = package.loaded["apps/filemanager/filemanager"]
     return FM and FM.instance
+end
+
+-- Helper: resolve the live SimpleUIPlugin instance. Tries the given fm first
+-- (set as fm._simpleui_plugin during plugin init), then the live FM, then
+-- ReaderUI (where the plugin is registered as readerui.simpleui).
+local function _resolveSimpleUIPlugin(fm)
+    if fm and fm._simpleui_plugin then return fm._simpleui_plugin end
+    local live_fm = _liveFM()
+    if live_fm and live_fm._simpleui_plugin then return live_fm._simpleui_plugin end
+    local RUI = package.loaded["apps/reader/readerui"]
+    local rui = RUI and RUI.instance
+    return rui and rui.simpleui
 end
 
 -- _goHome: replicates FileChooser:goHome() used in navigate().
@@ -250,7 +276,74 @@ local function _refreshWifiIcon(plugin)
 end
 
 -- showFrontlightDialog: open the KOReader brightness widget.
-local function _showFrontlightDialog()
+-- ---------------------------------------------------------------------------
+-- Indicator tracking for dialog/window-style in-place actions.
+--
+-- Actions like power/settings/frontlight are `is_in_place = true`: tapping
+-- them opens a dialog without "navigating" anywhere, so they should light up
+-- the bottom bar indicator only for as long as that dialog is on screen, then
+-- restore whatever tab was active before it opened. bookmark_browser and
+-- power already did this by hand (see the historical setTempTabActive call
+-- sites below); these two helpers make it a reusable primitive instead of
+-- something every new dialog action has to re-implement.
+--
+-- Two variants, matching the two shapes dialogs come in:
+--   trackIndicatorWhileOpen  — for widgets with no on_close hook of their own
+--                               (e.g. KOReader's core FrontlightWidget):
+--                               monkey-patches onCloseWidget, chaining any
+--                               existing handler.
+--   trackIndicatorViaCallback — for windows that already accept an on_close
+--                               callback (SettingsWindow, SUIWindow-based
+--                               windows): passes a `restore` function through
+--                               instead of touching the widget at all.
+-- Both no-op safely (dialog still opens) when `plugin` is nil or the
+-- bottombar module/API isn't available.
+-- ---------------------------------------------------------------------------
+
+function QA.trackIndicatorWhileOpen(plugin, action_id, widget)
+    if not (plugin and widget) then return widget end
+    local BB = _Bottombar()
+    if not (BB and BB.setTempTabActive) then return widget end
+
+    local prev_action = plugin.active_action
+    local restored = false
+    local function restore()
+        if restored then return end
+        restored = true
+        BB.setTempTabActive(plugin, action_id, false, prev_action)
+    end
+
+    BB.setTempTabActive(plugin, action_id, true, prev_action)
+
+    local orig_close = widget.onCloseWidget
+    widget.onCloseWidget = function(self_w)
+        restore()
+        self_w.onCloseWidget = orig_close
+        if orig_close then return orig_close(self_w) end
+    end
+
+    return widget
+end
+
+function QA.trackIndicatorViaCallback(plugin, action_id, opener)
+    local BB = _Bottombar()
+    if not (plugin and BB and BB.setTempTabActive) then
+        return opener(function() end)
+    end
+
+    local prev_action = plugin.active_action
+    local restored = false
+    local function restore()
+        if restored then return end
+        restored = true
+        BB.setTempTabActive(plugin, action_id, false, prev_action)
+    end
+
+    BB.setTempTabActive(plugin, action_id, true, prev_action)
+    return opener(restore)
+end
+
+local function _showFrontlightDialog(plugin)
     local ok_f, has_fl = pcall(function() return Device:hasFrontlight() end)
     if not ok_f or not has_fl then
         UIManager:show(require("ui/widget/infomessage"):new{
@@ -258,7 +351,9 @@ local function _showFrontlightDialog()
         })
         return
     end
-    UIManager:show(require("ui/widget/frontlightwidget"):new{})
+    local widget = require("ui/widget/frontlightwidget"):new{}
+    QA.trackIndicatorWhileOpen(plugin, "frontlight", widget)
+    UIManager:show(widget)
 end
 
 -- showBookmarkBrowserSourceDialog: source-picker for the bookmark browser.
@@ -547,6 +642,15 @@ local function _registerBuiltins()
             end,
         },
         {
+            id    = "recent",
+            label = _("Recent"),
+            icon  = Config.ICON.recent,
+            is_in_place = true,
+            execute = function(ctx)
+                QA.showRecentWindow(ctx.fm)
+            end,
+        },
+        {
             id    = "continue",
             label = _("Continue"),
             icon  = Config.ICON.continue_,
@@ -620,8 +724,8 @@ local function _registerBuiltins()
             label = _("Brightness"),
             icon  = Config.ICON.frontlight,
             is_in_place = true,
-            execute = function(_ctx)
-                _showFrontlightDialog()
+            execute = function(ctx)
+                _showFrontlightDialog(ctx.plugin or _simpleui_plugin())
             end,
         },
         {
@@ -640,9 +744,12 @@ local function _registerBuiltins()
             is_in_place = true,
             execute = function(ctx)
                 local su = ctx.show_unavailable or _unavailToast
+                local plugin = ctx.plugin or _simpleui_plugin()
                 local ok, SW = pcall(require, "sui_stats_windows")
                 if ok and SW and SW.showReadingInsightsWindow then
-                    SW.showReadingInsightsWindow()
+                    QA.trackIndicatorViaCallback(plugin, "stats_calendar", function(restore)
+                        SW.showReadingInsightsWindow(restore)
+                    end)
                 else
                     local ok2, err = pcall(function()
                         UIManager:broadcastEvent(require("ui/event"):new("ShowCalendarView"))
@@ -666,8 +773,10 @@ local function _registerBuiltins()
             icon  = Config.ICON.ko_settings,
             is_in_place = true,
             execute = function(ctx)
-                local SettingsWindow = require("sui_settings_window")
-                SettingsWindow:show()
+                local plugin = ctx.plugin or _simpleui_plugin()
+                QA.trackIndicatorViaCallback(plugin, "sui_settings", function(restore)
+                    require("sui_settings_window"):show(restore)
+                end)
             end,
         },
         -- ── Browse meta actions ─────────────────────────────────────────────
@@ -816,6 +925,21 @@ function QA.isInPlace(id)
 end
 
 -- ---------------------------------------------------------------------------
+-- QA.getBrowseMode(id) — single authority for "is this a browsemeta action,
+-- and under which mode (author/series/tags)". Reads the same `browsemeta_mode`
+-- field already carried by the browse_authors/browse_series/browse_tags
+-- descriptors (see the builtins table above), instead of requiring every
+-- caller to hardcode the three ids. Returns nil for anything else, so
+-- `if QA.getBrowseMode(id) then ... end` works as a plain boolean check too.
+-- ---------------------------------------------------------------------------
+
+function QA.getBrowseMode(id)
+    if not id then return nil end
+    local desc = _registry[id]
+    return desc and desc.browsemeta_mode or nil
+end
+
+-- ---------------------------------------------------------------------------
 -- QA.execute(id, ctx) — single authority replacing all if/elseif in bottombar
 -- ctx = { plugin, fm, show_unavailable, already_active }
 -- ---------------------------------------------------------------------------
@@ -876,10 +1000,11 @@ function QA.getCustomQAConfig(qa_id)
         plugin_method     = cfg.plugin_method,
         dispatcher_action = cfg.dispatcher_action,
         icon              = cfg.icon,
+        qa_folder         = cfg.qa_folder,
     }
 end
 
-function QA.saveCustomQAConfig(qa_id, label, path, collection, icon, plugin_key, plugin_method, dispatcher_action)
+function QA.saveCustomQAConfig(qa_id, label, path, collection, icon, plugin_key, plugin_method, dispatcher_action, is_folder)
     SUISettings:set(getQASettingsKey(qa_id), {
         label             = label,
         path              = path,
@@ -888,12 +1013,52 @@ function QA.saveCustomQAConfig(qa_id, label, path, collection, icon, plugin_key,
         plugin_method     = plugin_method,
         dispatcher_action = dispatcher_action,
         icon              = icon,
+        qa_folder         = is_folder or nil,
     })
+end
+
+-- ---------------------------------------------------------------------------
+-- QA Groups — a custom QA that, instead of navigating, opens a small modal
+-- listing a set of member QA ids. Members are stored under a sibling key so
+-- the fixed saveCustomQAConfig signature above stays untouched apart from
+-- the trailing is_folder flag.
+-- ---------------------------------------------------------------------------
+
+local function getQAFolderItemsKey(qa_id)
+    return "simpleui_qa_" .. qa_id .. "_folder_items"
+end
+
+function QA.getQAFolderItems(qa_id)
+    return SUISettings:get(getQAFolderItemsKey(qa_id)) or {}
+end
+
+function QA.saveQAFolderItems(qa_id, items)
+    SUISettings:set(getQAFolderItemsKey(qa_id), items)
 end
 
 function QA.deleteCustomQA(qa_id)
     SUISettings:del(getQASettingsKey(qa_id))
+    SUISettings:del(getQAFolderItemsKey(qa_id))
     _qa_key_cache[qa_id] = nil
+    -- If qa_id was a member of any group, drop it from that group's list too.
+    do
+        local list = QA.getCustomQAList()
+        for _i, other_id in ipairs(list) do
+            if other_id ~= qa_id then
+                local other_cfg = SUISettings:get(getQASettingsKey(other_id))
+                if type(other_cfg) == "table" and other_cfg.qa_folder then
+                    local items = QA.getQAFolderItems(other_id)
+                    local changed = false
+                    local new_items = {}
+                    for _j, member_id in ipairs(items) do
+                        if member_id == qa_id then changed = true
+                        else new_items[#new_items + 1] = member_id end
+                    end
+                    if changed then QA.saveQAFolderItems(other_id, new_items) end
+                end
+            end
+        end
+    end
     local list = QA.getCustomQAList()
     local new_list = {}
     for _i, id in ipairs(list) do
@@ -932,7 +1097,7 @@ function QA.purgeQACollection(coll_name)
         local cfg = QA.getCustomQAConfig(qa_id)
         if cfg.collection == coll_name then
             QA.saveCustomQAConfig(qa_id, cfg.label, cfg.path, nil,
-                cfg.icon, cfg.plugin_key, cfg.plugin_method, cfg.dispatcher_action)
+                cfg.icon, cfg.plugin_key, cfg.plugin_method, cfg.dispatcher_action, cfg.qa_folder)
             changed = true
         end
     end
@@ -946,7 +1111,7 @@ function QA.renameQACollection(old_name, new_name)
         local cfg = QA.getCustomQAConfig(qa_id)
         if cfg.collection == old_name then
             QA.saveCustomQAConfig(qa_id, cfg.label, cfg.path, new_name,
-                cfg.icon, cfg.plugin_key, cfg.plugin_method, cfg.dispatcher_action)
+                cfg.icon, cfg.plugin_key, cfg.plugin_method, cfg.dispatcher_action, cfg.qa_folder)
             changed = true
         end
     end
@@ -979,6 +1144,31 @@ function QA.sanitizeQASlots()
     local valid_custom = {}
     for _i, id in ipairs(list) do valid_custom[id] = true end
     local changed = list_changed
+
+    -- Prune stale/invalid members from each group's own item list, and drop
+    -- membership of ids that are themselves groups (nesting is not supported).
+    for _i, id in ipairs(list) do
+        local cfg = SUISettings:get(getQASettingsKey(id))
+        if type(cfg) == "table" and cfg.qa_folder then
+            local items = QA.getQAFolderItems(id)
+            local clean = {}
+            local group_changed = false
+            for _j, member_id in ipairs(items) do
+                local member_valid = Config.ACTION_BY_ID[member_id]
+                        or (member_id:match("^custom_qa_%d+$") and valid_custom[member_id])
+                local member_cfg = member_valid and member_id:match("^custom_qa_%d+$")
+                        and SUISettings:get(getQASettingsKey(member_id))
+                local is_group_member = type(member_cfg) == "table" and member_cfg.qa_folder
+                if member_valid and not is_group_member then
+                    clean[#clean + 1] = member_id
+                else
+                    group_changed = true
+                    changed = true
+                end
+            end
+            if group_changed then QA.saveQAFolderItems(id, clean) end
+        end
+    end
 
     for _, pfx in ipairs({ "simpleui_hs_qa_" }) do
         for slot = 1, 3 do
@@ -1114,7 +1304,10 @@ function QA.sui_show_qa_list(plugin, ctx_menu, ctx)
             local _id = entry.id
             local c = Config.getCustomQAConfig(_id)
             local desc
-            if c.dispatcher_action and c.dispatcher_action ~= "" then
+            if c.qa_folder then
+                local n = #QA.getQAFolderItems(_id)
+                desc = "▤ " .. string.format(ctx_menu.N_("%d item", "%d items", n), n)
+            elseif c.dispatcher_action and c.dispatcher_action ~= "" then
                 desc = "⊕ " .. c.dispatcher_action
             elseif c.plugin_key and c.plugin_key ~= "" then
                 desc = "⬡ " .. c.plugin_key .. ":" .. (c.plugin_method or "?")
@@ -1207,7 +1400,7 @@ function QA.sui_build_qa_icons(plugin, ctx_menu, ctx)
     local Font = require("ui/font")
     local Geom = require("ui/geometry")
     
-    local btn_size = Screen:scaleBySize(36)
+    local btn_size = ctx.SZ(Screen:scaleBySize(36))
     local icon_size = math.floor(btn_size * 0.7)
     local ok_ss, SUIStyle = pcall(require, "sui_style")
     local border_sz = ok_ss and SUIStyle.BORDER_SZ or 1
@@ -1252,7 +1445,7 @@ function QA.sui_build_qa_icons(plugin, ctx_menu, ctx)
         
         return FrameContainer:new{
             dimen      = Geom:new{ w = btn_size, h = btn_size },
-            radius     = Screen:scaleBySize(8),
+            radius     = ctx.SZ(Screen:scaleBySize(8)),
             bordersize = border_sz,
             background = Blitbuffer.COLOR_WHITE,
             color      = Blitbuffer.gray(0.75),
@@ -1309,6 +1502,7 @@ function QA.sui_build_qa_icons(plugin, ctx_menu, ctx)
                             and c.icon ~= Config.CUSTOM_ICON
                             and c.icon ~= Config.CUSTOM_PLUGIN_ICON
                             and c.icon ~= Config.CUSTOM_DISPATCHER_ICON
+                            and c.icon ~= Config.CUSTOM_GROUP_ICON
                     end)())
                     
             local is_nerd = Config.isNerdIcon(current_icon)
@@ -1323,7 +1517,9 @@ function QA.sui_build_qa_icons(plugin, ctx_menu, ctx)
                     end
                 else
                     local c = Config.getCustomQAConfig(_id)
-                    if c.dispatcher_action and c.dispatcher_action ~= "" then
+                    if c.qa_folder then
+                        effective_icon = Config.CUSTOM_GROUP_ICON
+                    elseif c.dispatcher_action and c.dispatcher_action ~= "" then
                         effective_icon = Config.CUSTOM_DISPATCHER_ICON
                     elseif c.plugin_key and c.plugin_key ~= "" then
                         effective_icon = Config.CUSTOM_PLUGIN_ICON
@@ -1356,7 +1552,7 @@ function QA.sui_build_qa_icons(plugin, ctx_menu, ctx)
                                 QA.setDefaultActionIcon(_id, new_icon)
                             else
                                 local c = Config.getCustomQAConfig(_id)
-                                Config.saveCustomQAConfig(_id, c.label, c.path, c.collection, new_icon, c.plugin_key, c.plugin_method, c.dispatcher_action)
+                                Config.saveCustomQAConfig(_id, c.label, c.path, c.collection, new_icon, c.plugin_key, c.plugin_method, c.dispatcher_action, c.qa_folder)
                             end
                             QA.invalidateCustomQACache()
                             plugin:_rebuildAllNavbars()
@@ -1370,10 +1566,11 @@ function QA.sui_build_qa_icons(plugin, ctx_menu, ctx)
                                 else
                                     local c = Config.getCustomQAConfig(_id)
                                     local type_default
-                                    if c.dispatcher_action and c.dispatcher_action ~= "" then type_default = Config.CUSTOM_DISPATCHER_ICON
+                                    if c.qa_folder then type_default = Config.CUSTOM_GROUP_ICON
+                                    elseif c.dispatcher_action and c.dispatcher_action ~= "" then type_default = Config.CUSTOM_DISPATCHER_ICON
                                     elseif c.plugin_key and c.plugin_key ~= "" then type_default = Config.CUSTOM_PLUGIN_ICON
                                     else type_default = Config.CUSTOM_ICON end
-                                    Config.saveCustomQAConfig(_id, c.label, c.path, c.collection, safe_icon or type_default, c.plugin_key, c.plugin_method, c.dispatcher_action)
+                                    Config.saveCustomQAConfig(_id, c.label, c.path, c.collection, safe_icon or type_default, c.plugin_key, c.plugin_method, c.dispatcher_action, c.qa_folder)
                                 end
                                 QA.invalidateCustomQACache()
                                 plugin:_rebuildAllNavbars()
@@ -1442,7 +1639,9 @@ function QA.getEntry(id)
         local cfg = SUISettings:get("simpleui_qa_" .. id) or {}
         local default_icon
         local ok_ss, SUIStyle = pcall(require, "sui_style")
-        if cfg.dispatcher_action and cfg.dispatcher_action ~= "" then
+        if cfg.qa_folder then
+            default_icon = (ok_ss and SUIStyle and SUIStyle.getIcon("sui_qa_group")) or Config.CUSTOM_GROUP_ICON or Config.CUSTOM_ICON
+        elseif cfg.dispatcher_action and cfg.dispatcher_action ~= "" then
             default_icon = (ok_ss and SUIStyle and SUIStyle.getIcon("sui_qa_system")) or Config.CUSTOM_DISPATCHER_ICON
         elseif cfg.plugin_key and cfg.plugin_key ~= "" then
             default_icon = (ok_ss and SUIStyle and SUIStyle.getIcon("sui_qa_plugin")) or Config.CUSTOM_PLUGIN_ICON
@@ -1451,7 +1650,8 @@ function QA.getEntry(id)
         end
 
         local icon = cfg.icon or default_icon
-        if cfg.icon == Config.CUSTOM_ICON or cfg.icon == Config.CUSTOM_PLUGIN_ICON or cfg.icon == Config.CUSTOM_DISPATCHER_ICON then
+        if cfg.icon == Config.CUSTOM_ICON or cfg.icon == Config.CUSTOM_PLUGIN_ICON
+                or cfg.icon == Config.CUSTOM_DISPATCHER_ICON or cfg.icon == Config.CUSTOM_GROUP_ICON then
             icon = default_icon
         end
 
@@ -1808,8 +2008,12 @@ function QA.showQuickActionDialog(plugin, qa_id, on_done)
     local current_action_val1 = nil
     local current_action_val2 = nil
     local current_action_title = nil
-    
-    if cfg.dispatcher_action and cfg.dispatcher_action ~= "" then
+    local pending_group_items = qa_id and cfg.qa_folder and QA.getQAFolderItems(qa_id) or {}
+
+    if cfg.qa_folder then
+        current_action_type = "group"
+        current_action_title = _("Group")
+    elseif cfg.dispatcher_action and cfg.dispatcher_action ~= "" then
         current_action_type = "dispatcher"
         current_action_val1 = cfg.dispatcher_action
         current_action_title = cfg.dispatcher_action
@@ -1840,7 +2044,7 @@ function QA.showQuickActionDialog(plugin, qa_id, on_done)
         return _("Icon") .. ": " .. stem
     end
 
-    local function commitQA(final_label, path, coll, default_icon, fm_key, fm_method, dispatcher_action)
+    local function commitQA(final_label, path, coll, default_icon, fm_key, fm_method, dispatcher_action, is_folder)
         local final_id = qa_id or Config.nextCustomQAId()
         if not qa_id then
             local list = Config.getCustomQAList()
@@ -1848,7 +2052,10 @@ function QA.showQuickActionDialog(plugin, qa_id, on_done)
             Config.saveCustomQAList(list)
         end
         Config.saveCustomQAConfig(final_id, final_label, path, coll,
-            chosen_icon or default_icon, fm_key, fm_method, dispatcher_action)
+            chosen_icon or default_icon, fm_key, fm_method, dispatcher_action, is_folder)
+        if is_folder then
+            QA.saveQAFolderItems(final_id, pending_group_items)
+        end
         QA.invalidateCustomQACache()
         plugin:_rebuildAllNavbars()
         if on_done then on_done() end
@@ -1902,6 +2109,9 @@ function QA.showQuickActionDialog(plugin, qa_id, on_done)
         elseif current_action_type == "dispatcher" then
             action_label = action_label .. (current_action_title or "")
             icon_default = Config.CUSTOM_DISPATCHER_ICON
+        elseif current_action_type == "group" then
+            action_label = action_label .. string.format(N_("Group (%d item)", "Group (%d items)", #pending_group_items), #pending_group_items)
+            icon_default = Config.CUSTOM_GROUP_ICON
         else
             action_label = action_label .. _("None")
         end
@@ -1944,8 +2154,9 @@ function QA.showQuickActionDialog(plugin, qa_id, on_done)
                         elseif current_action_type == "plugin" then p_pk = current_action_val1; p_pm = current_action_val2
                         elseif current_action_type == "dispatcher" then p_da = current_action_val1
                         end
-                        
-                        commitQA(final_label, p_path, p_coll, chosen_icon or icon_default, p_pk, p_pm, p_da)
+
+                        commitQA(final_label, p_path, p_coll, chosen_icon or icon_default, p_pk, p_pm, p_da,
+                            current_action_type == "group" or nil)
                     end } },
             },
         }
@@ -2052,6 +2263,88 @@ function QA.showQuickActionDialog(plugin, qa_id, on_done)
         UIManager:show(plugin._qa_dispatcher_picker)
     end
 
+    -- Availability filter mirroring sui_menu.lua's actionAvailable(), duplicated
+    -- here (deliberately, not shared) since sui_menu's version is a private
+    -- local inside its own plugin-installer closure.
+    local function _groupMemberAvailable(id)
+        if id == "frontlight" then
+            local ok, v = pcall(function() return Device:hasFrontlight() end)
+            return ok and v == true
+        end
+        if QA.getBrowseMode(id) then
+            local ok_bm, BM = pcall(require, "sui_browsemeta")
+            return ok_bm and BM and BM.isEnabled()
+        end
+        return true
+    end
+
+    -- Group member picker: a checkbox-style ButtonDialog, rebuilt in place on
+    -- every toggle (same rebuild pattern as _buildSaveDialog). Tap order sets
+    -- the group's display order; nesting (a group inside a group) is blocked
+    -- by excluding other qa_folder entries from the pool.
+    local function openGroupMemberPicker()
+        local pool = {}
+        for _i, a in ipairs(Config.ALL_ACTIONS) do
+            if _groupMemberAvailable(a.id) then
+                pool[#pool + 1] = { id = a.id, label = a.id == "home" and Config.homeLabel() or a.label }
+            end
+        end
+        for _i, other_id in ipairs(Config.getCustomQAList()) do
+            if other_id ~= qa_id then
+                local other_cfg = Config.getCustomQAConfig(other_id)
+                if not other_cfg.qa_folder then
+                    pool[#pool + 1] = { id = other_id, label = other_cfg.label }
+                end
+            end
+        end
+        table.sort(pool, function(a, b) return a.label:lower() < b.label:lower() end)
+
+        local selected = {}
+        local order = {}
+        for _i, id in ipairs(pending_group_items) do
+            selected[id] = true
+            order[#order + 1] = id
+        end
+
+        local dialog
+        local function rebuild()
+            local buttons = {}
+            for _i, a in ipairs(pool) do
+                local _id = a.id
+                local mark = selected[_id] and "☑ " or "☐ "
+                buttons[#buttons + 1] = {{ text = mark .. a.label, callback = function()
+                    UIManager:close(dialog)
+                    if selected[_id] then
+                        selected[_id] = nil
+                        for j, id in ipairs(order) do
+                            if id == _id then table.remove(order, j); break end
+                        end
+                    else
+                        selected[_id] = true
+                        order[#order + 1] = _id
+                    end
+                    rebuild()
+                end }}
+            end
+            buttons[#buttons + 1] = {{ text = _("Done"), callback = function()
+                UIManager:close(dialog)
+                pending_group_items = order
+                current_action_type = "group"
+                current_action_val1 = nil
+                current_action_val2 = nil
+                current_action_title = _("Group")
+                _buildSaveDialog(true)
+            end }}
+            buttons[#buttons + 1] = {{ text = _("Cancel"), callback = function()
+                UIManager:close(dialog)
+                cancelActionPicker()
+            end }}
+            dialog = ButtonDialog:new{ title = _("Group: select actions"), title_align = "center", buttons = buttons }
+            UIManager:show(dialog)
+        end
+        rebuild()
+    end
+
     openActionPicker = function()
         if active_dialog then UIManager:close(active_dialog); active_dialog = nil end
         local choice_dialog
@@ -2064,6 +2357,8 @@ function QA.showQuickActionDialog(plugin, qa_id, on_done)
                callback = function() UIManager:close(choice_dialog); openPluginPicker() end }},
             {{ text = _("System Actions"),
                callback = function() UIManager:close(choice_dialog); openDispatcherPicker() end }},
+            {{ text = _("Group of Quick Actions"),
+               callback = function() UIManager:close(choice_dialog); openGroupMemberPicker() end }},
             {{ text = _("Cancel"),
                callback = function() UIManager:close(choice_dialog); cancelActionPicker() end }},
         }}
@@ -2186,6 +2481,7 @@ function QA.makeIconsMenuItems(plugin)
                                 and c.icon ~= Config.CUSTOM_ICON
                                 and c.icon ~= Config.CUSTOM_PLUGIN_ICON
                                 and c.icon ~= Config.CUSTOM_DISPATCHER_ICON
+                                and c.icon ~= Config.CUSTOM_GROUP_ICON
                         end)())
                 return _title .. (has_custom and "  \u{270E}" or "")
             end,
@@ -2205,7 +2501,9 @@ function QA.makeIconsMenuItems(plugin)
                         else
                             local c = Config.getCustomQAConfig(_id)
                             local type_default
-                            if c.dispatcher_action and c.dispatcher_action ~= "" then
+                            if c.qa_folder then
+                                type_default = Config.CUSTOM_GROUP_ICON
+                            elseif c.dispatcher_action and c.dispatcher_action ~= "" then
                                 type_default = Config.CUSTOM_DISPATCHER_ICON
                             elseif c.plugin_key and c.plugin_key ~= "" then
                                 type_default = Config.CUSTOM_PLUGIN_ICON
@@ -2214,7 +2512,7 @@ function QA.makeIconsMenuItems(plugin)
                             end
                             Config.saveCustomQAConfig(_id, c.label, c.path, c.collection,
                                 safe_icon or type_default,
-                                c.plugin_key, c.plugin_method, c.dispatcher_action)
+                                c.plugin_key, c.plugin_method, c.dispatcher_action, c.qa_folder)
                         end
                         QA.invalidateCustomQACache()
                         plugin:_rebuildAllNavbars()
@@ -2282,7 +2580,10 @@ function QA.makeMenuItems(plugin, ctx_menu)
             text_func = function()
                 local c = Config.getCustomQAConfig(_id)
                 local desc
-                if c.dispatcher_action and c.dispatcher_action ~= "" then
+                if c.qa_folder then
+                    local n = #Config.getQAFolderItems(_id)
+                    desc = "▤ " .. string.format(N_("%d item", "%d items", n), n)
+                elseif c.dispatcher_action and c.dispatcher_action ~= "" then
                     desc = "⊕ " .. c.dispatcher_action
                 elseif c.plugin_key and c.plugin_key ~= "" then
                     desc = "⬡ " .. c.plugin_key .. ":" .. (c.plugin_method or "?")
@@ -2300,7 +2601,10 @@ function QA.makeMenuItems(plugin, ctx_menu)
                     text_func = function()
                         local c = Config.getCustomQAConfig(_id)
                         local desc
-                        if c.plugin_key and c.plugin_key ~= "" then
+                        if c.qa_folder then
+                            local n = #Config.getQAFolderItems(_id)
+                            desc = "▤ " .. string.format(N_("%d item", "%d items", n), n)
+                        elseif c.plugin_key and c.plugin_key ~= "" then
                             desc = "⬡ " .. c.plugin_key .. ":" .. (c.plugin_method or "?")
                         elseif c.collection and c.collection ~= "" then
                             desc = "⊞ " .. c.collection
@@ -2365,7 +2669,10 @@ function QA.executeCustomQA(action_id, fm, show_unavailable_fn)
 
     local cfg = SUISettings:get("simpleui_qa_" .. action_id) or {}
 
-    if cfg.dispatcher_action and cfg.dispatcher_action ~= "" then
+    if cfg.qa_folder then
+        QA.showQAFolderDialog(action_id, cfg.label, fm, show_unavailable_fn)
+
+    elseif cfg.dispatcher_action and cfg.dispatcher_action ~= "" then
         local ok_disp, Dispatcher = pcall(require, "dispatcher")
         if ok_disp and Dispatcher then
             local ok, err = pcall(function()
@@ -2420,14 +2727,416 @@ function QA.executeCustomQA(action_id, fm, show_unavailable_fn)
 end
 
 -- ---------------------------------------------------------------------------
+-- buildQARowIcon — small icon preview widget for a Quick Action row.
+-- Mirrors the preview used in Style → Icons → System icons (image / nerd-font
+-- glyph / fallback initial, framed square) but sized for inline row use.
+-- ---------------------------------------------------------------------------
+
+function QA.buildQARowIcon(icon_value, fallback_label, scale_fn)
+    local Blitbuffer     = require("ffi/blitbuffer")
+    local FrameContainer = require("ui/widget/container/framecontainer")
+    local CenterContainer = require("ui/widget/container/centercontainer")
+    local ImageWidget    = require("ui/widget/imagewidget")
+    local TextWidget     = require("ui/widget/textwidget")
+    local Font           = require("ui/font")
+    local Geom           = require("ui/geometry")
+    local ok_ss, SUIStyle = pcall(require, "sui_style")
+
+    -- scale_fn is the caller's ctx.SZ; fall back to UI.SZ (identical value
+    -- during a synchronous SUIWindow build) if ever called without a ctx.
+    local SZ = scale_fn or UI.SZ
+    local btn_size  = SZ(Screen:scaleBySize(28))
+    local icon_size = math.floor(btn_size * 0.7)
+    local border_sz = ok_ss and SUIStyle.BORDER_SZ or 1
+    local is_nerd   = Config.isNerdIcon(icon_value)
+
+    local icon_widget
+    if is_nerd and icon_value then
+        local nerd_char = Config.nerdIconChar(icon_value)
+        if nerd_char and ok_ss and SUIStyle then
+            icon_widget = TextWidget:new{
+                text    = nerd_char,
+                face    = Font:getFace(SUIStyle.FACE_ICONS, math.floor(icon_size * 0.8)),
+                fgcolor = Blitbuffer.COLOR_BLACK,
+                padding = 0,
+            }
+        end
+    elseif icon_value then
+        local safe_path = ok_ss and SUIStyle and SUIStyle.safeIconPath(icon_value, nil)
+        if safe_path then
+            local iw = ImageWidget:new{
+                file    = safe_path,
+                width   = icon_size,
+                height  = icon_size,
+                is_icon = true,
+                alpha   = true,
+            }
+            if pcall(function() iw:_render() end) then
+                icon_widget = iw
+            else
+                iw:free()
+            end
+        end
+    end
+
+    if not icon_widget then
+        icon_widget = TextWidget:new{
+            text    = fallback_label and fallback_label:sub(1, 1):upper() or "?",
+            face    = Font:getFace("cfont", math.floor(icon_size * 0.7)),
+            fgcolor = Blitbuffer.COLOR_BLACK,
+        }
+    end
+
+    return FrameContainer:new{
+        dimen      = Geom:new{ w = btn_size, h = btn_size },
+        radius     = SZ(Screen:scaleBySize(6)),
+        bordersize = border_sz,
+        background = Blitbuffer.COLOR_WHITE,
+        color      = Blitbuffer.gray(0.75),
+        padding    = 0,
+        [1]        = CenterContainer:new{
+            dimen = Geom:new{ w = btn_size - border_sz * 2, h = btn_size - border_sz * 2 },
+            [1]   = icon_widget,
+        }
+    }
+end
+
+-- ---------------------------------------------------------------------------
+-- showQAFolderDialog — runtime modal listing a group's member Quick Actions.
+-- Tapping a member closes the modal and executes it via QA.execute, the same
+-- single authority used everywhere else (dock, quicksettings bar, etc).
+-- ---------------------------------------------------------------------------
+
+function QA.showQAFolderDialog(qa_id, title, fm, show_unavailable_fn)
+    local SUIWindow = require("sui_window")
+    -- Same plugin-resolution helper runMember() below already relies on —
+    -- needed here too so the group's own tab can light up while the window
+    -- is open (see trackIndicatorViaCallback below).
+    local plugin = _resolveSimpleUIPlugin(fm)
+
+    -- Shared by both grid tiles and the list fallback: executes a member,
+    -- routing non-in-place members (folder/collection/library-style QAs)
+    -- through plugin:_navigate() so an open Homescreen is closed first and
+    -- the navigation is actually visible.
+    local function runMember(_mid, ctx)
+        ctx.close()
+        if QA.isInPlace(_mid) then
+            QA.execute(_mid, { fm = fm, show_unavailable = show_unavailable_fn })
+        else
+            local plugin = _resolveSimpleUIPlugin(fm)
+            if plugin and plugin._navigate then
+                plugin:_navigate(_mid, plugin.ui or fm, Config.loadTabConfig(), false)
+            else
+                QA.execute(_mid, { fm = fm, show_unavailable = show_unavailable_fn })
+            end
+        end
+    end
+
+    local function buildRoot(ctx)
+        local items = QA.getQAFolderItems(qa_id)
+
+        if #items == 0 then
+            return SUIWindow.RowPage{
+                items      = {},
+                inner_w    = ctx.inner_w,
+                empty_text = _("This group is empty.\nAdd actions to it from Settings → Quick Actions."),
+                on_repaint = function() ctx.repaint() end,
+            }
+        end
+
+        -- Preferred rendering: a grid of icon tiles, visually identical to
+        -- the Quick Actions Row widget (Style → Icons → System icons uses
+        -- the same tile look). Falls back to the plain icon+label list if
+        -- the Quick Actions Row module hasn't been loaded for some reason.
+        local mqa = package.loaded["desktop_modules/module_quick_actions"]
+        if mqa and mqa.buildQAWidget and mqa.getQADims and mqa.FRAME_SZ then
+            local valid_items = {}
+            local cqa_valid = QA.getCustomQAValid()
+            for _, mid in ipairs(items) do
+                if mid:match("^custom_qa_%d+$") then
+                    if cqa_valid[mid] then valid_items[#valid_items + 1] = mid end
+                elseif QA.isBuiltin(mid) then
+                    valid_items[#valid_items + 1] = mid
+                end
+            end
+
+            if #valid_items > 0 then
+                local inner_w = ctx.inner_w
+                local target_frame_sz = ctx.SZ(Screen:scaleBySize(70))
+                local cols = math.max(3, math.min(6, math.floor(inner_w / (target_frame_sz * 1.18))))
+                local frame_sz = math.floor((inner_w * 0.86) / cols)
+                local scale = math.max(0.45, math.min(1.4, frame_sz / mqa.FRAME_SZ))
+                local d = mqa.getQADims(scale)
+
+                -- Horizontal gap between tiles within a row, and vertical gap
+                -- above every row (including the first, for breathing room
+                -- under the title bar) plus a trailing one below the last row.
+                local gap_w = ctx.SZ(Screen:scaleBySize(20))
+                local gap_h = ctx.SZ(Screen:scaleBySize(20))
+                -- buildQAWidget always reserves its own PAD*2 horizontal
+                -- margin inside the width it's given; add it back here so a
+                -- "tight" row_w below actually yields gap_w between tiles.
+                -- (UI.PAD is a fixed device-pixel constant, not itself
+                -- landscape-scaled, so it's wrapped in SZ() here to match
+                -- gap_w/gap_h/target_frame_sz above.)
+                local ok_core, UI_local = pcall(require, "sui_core")
+                local pad2 = (ok_core and UI_local and UI_local.PAD and ctx.SZ(UI_local.PAD * 2)) or ctx.SZ(Screen:scaleBySize(28))
+
+                local function on_tap_fn(_mid) runMember(_mid, ctx) end
+
+                local rows = {}
+                local i = 1
+                while i <= #valid_items do
+                    local chunk = {}
+                    for j = i, math.min(i + cols - 1, #valid_items) do
+                        chunk[#chunk + 1] = valid_items[j]
+                    end
+                    local n = #chunk
+                    -- Size the row to exactly what this chunk needs (not the
+                    -- full inner_w) so buildQAWidget's own gap/centering math
+                    -- packs the tiles from the left instead of justifying
+                    -- them across the whole row width.
+                    local row_w = math.min(inner_w,
+                        n * d.frame_sz + math.max(0, n - 1) * gap_w + pad2)
+                    local tile_row = mqa.buildQAWidget(
+                        row_w, chunk, true, on_tap_fn, d, "rounded_square", "solid", nil)
+                    rows[#rows + 1] = VerticalGroup:new{ align = "left",
+                        VerticalSpan:new{ width = gap_h },
+                        tile_row,
+                    }
+                    i = i + cols
+                end
+                rows[#rows + 1] = VerticalSpan:new{ width = gap_h }
+                return rows
+            end
+        end
+
+        -- Fallback: icon + label list (previous behaviour).
+        local rows = {}
+        for _i, member_id in ipairs(items) do
+            local _mid  = member_id
+            local entry = QA.getEntry(_mid)
+            rows[#rows + 1] = {
+                text        = entry.label,
+                left_widget = QA.buildQARowIcon(entry.icon, entry.label, ctx.SZ),
+                on_tap      = function() runMember(_mid, ctx) end,
+            }
+        end
+        return SUIWindow.RowPage{
+            items      = rows,
+            inner_w    = ctx.inner_w,
+            empty_text = _("This group is empty.\nAdd actions to it from Settings → Quick Actions."),
+            on_repaint = function() ctx.repaint() end,
+        }
+    end
+
+    -- QA group ids (custom_qa_N with qa_folder=true) are `is_in_place` via
+    -- QA.isInPlaceCustomQA — same character as power/settings/stats: opening
+    -- the group's window doesn't "navigate" anywhere, so the tab should only
+    -- light up while it's on screen. trackIndicatorViaCallback (the same
+    -- primitive used for sui_settings/stats_calendar) hands back a `restore`
+    -- closure that plugs straight into SUIWindow's own on_close hook — no
+    -- per-window bookkeeping needed here, and it degrades gracefully
+    -- (window still opens, just untracked) if plugin can't be resolved.
+    QA.trackIndicatorViaCallback(plugin, qa_id, function(restore)
+        local win = SUIWindow:new{
+            name        = "sui_win_qa_folder",
+            title       = function() return title or _("Quick Actions") end,
+            screens     = { __root__ = buildRoot },
+            position    = "bottom",
+            auto_height = true,
+            on_close    = restore,
+        }
+        win:show()
+    end)
+end
+
+-- ---------------------------------------------------------------------------
+-- showRecentWindow — covers-only grid of the most recently read books,
+-- tap to open. Data comes from module_books_shared.prefetchBooks(),
+-- independent of the homescreen ctx, so it works from anywhere the "recent"
+-- quickaction or the "Simple UI: Recent" gesture can fire (dock,
+-- quicksettings bar, FileManager, ReaderUI). Finished books are always
+-- excluded (no toggle) — mirrors module_recent's own default before its
+-- "Show finished books" setting is turned on. Uses auto_height, same as
+-- showQAFolderDialog above, so the window shrinks to fit its content
+-- instead of reserving a fixed screen fraction.
+-- ---------------------------------------------------------------------------
+
+local RECENT_NUM_COLS  = 4
+local RECENT_MAX_BOOKS = RECENT_NUM_COLS  -- single row, no wrapping
+
+-- Mirrors sui_homescreen.lua's _normalizeKoboPath() so covers sourced the
+-- same way (via module_books_shared/ReadHistory) open identically on Kobo.
+local function _recentNormalizeKoboPath(filepath)
+    if not filepath then return filepath end
+    local ok, PluginLoader = pcall(require, "pluginloader")
+    if not ok or not PluginLoader then return filepath end
+    local kobo = PluginLoader:getPluginInstance("kobo_plugin")
+    if not kobo or not kobo.virtual_library then return filepath end
+    local vl = kobo.virtual_library
+    if not next(vl.virtual_to_real) then
+        local ok2, err = pcall(function() vl:buildPathMappings() end)
+        if not ok2 then
+            logger.warn("sui_quickactions: kobo buildPathMappings failed (recent):", err)
+            return filepath
+        end
+    end
+    if vl:isVirtualPath(filepath) then return filepath end
+    local virtual = vl:getVirtualPath(filepath)
+    return virtual or filepath
+end
+
+local function _recentOpenBook(filepath)
+    local BD = require("ui/bidi")
+    local doOpen = function()
+        local ReaderUI = package.loaded["apps/reader/readerui"]
+            or require("apps/reader/readerui")
+        ReaderUI:showReader(_recentNormalizeKoboPath(filepath))
+    end
+    if G_reader_settings:isTrue("file_ask_to_open") then
+        local ConfirmBox = require("ui/widget/confirmbox")
+        UIManager:show(ConfirmBox:new{
+            text        = _("Open this file?") .. "\n\n" .. BD.filename(filepath:match("([^/]+)$")),
+            ok_text     = _("Open"),
+            cancel_text = _("Cancel"),
+            ok_callback = doOpen,
+        })
+    else
+        doOpen()
+    end
+end
+
+local function _recentMakeCoverCell(SH, fp, bd, cw, ch)
+    local Geom            = require("ui/geometry")
+    local GestureRange    = require("ui/gesturerange")
+    local InputContainer  = require("ui/widget/container/inputcontainer")
+
+    local cover = SH.getBookCover(fp, cw, ch, nil, 0.10)
+        or SH.coverPlaceholder(bd.title, bd.authors, cw, ch)
+
+    local ic = InputContainer:new{
+        dimen = Geom:new{ w = cw, h = ch },
+        cover,
+    }
+    ic.ges_events = {
+        Tap = { GestureRange:new{
+            ges   = "tap",
+            range = function() return ic.dimen end,
+        }},
+    }
+    function ic:onTap()
+        _recentOpenBook(fp)
+        return true
+    end
+    return ic
+end
+
+local function _recentBuildRootScreen(ctx)
+    local SUIWindow       = require("sui_window")
+    local SH              = require("desktop_modules/module_books_shared")
+    local HorizontalGroup = require("ui/widget/horizontalgroup")
+    local HorizontalSpan  = require("ui/widget/horizontalspan")
+
+    local inner_w = ctx.inner_w
+    local state   = SH.prefetchBooks(false, true, RECENT_MAX_BOOKS)
+    local all_fps = state.recent_fps or {}
+
+    if #all_fps == 0 then
+        return { SUIWindow.ListRow{ inner_w = inner_w, title = _("No recent books.") } }
+    end
+
+    -- Finished books are always excluded — no toggle, matches the default
+    -- (off) state of module_recent's own "Show finished books" setting.
+    local fps = {}
+    for _, fp in ipairs(all_fps) do
+        local pd  = state.prefetched_data[fp]
+        local pct = pd and pd.percent or 0
+        local is_done = (pct >= 1.0) or
+                        (type(pd) == "table" and type(pd.summary) == "table"
+                         and pd.summary.status == "complete")
+        if not is_done then
+            fps[#fps + 1] = fp
+        end
+    end
+
+    if #fps == 0 then
+        return { SUIWindow.ListRow{ inner_w = inner_w, title = _("All recent books are finished.") } }
+    end
+
+    local rows = {}
+    local gap  = ctx.SZ(Screen:scaleBySize(10))
+    local cw   = math.floor((inner_w - (RECENT_NUM_COLS - 1) * gap) / RECENT_NUM_COLS)
+    local ch   = math.floor(cw * 3 / 2)
+
+    local i = 1
+    while i <= #fps do
+        local hg = HorizontalGroup:new{ align = "top" }
+        for c = 1, RECENT_NUM_COLS do
+            local fp = fps[i]
+            if fp then
+                local pd = state.prefetched_data[fp]
+                local bd = SH.getBookData(fp, pd)
+                hg[#hg + 1] = _recentMakeCoverCell(SH, fp, bd, cw, ch)
+                i = i + 1
+                if c < RECENT_NUM_COLS and fps[i] then
+                    hg[#hg + 1] = HorizontalSpan:new{ width = gap }
+                end
+            end
+        end
+        rows[#rows + 1] = hg
+        if i <= #fps then
+            rows[#rows + 1] = VerticalSpan:new{ width = gap }
+        end
+    end
+
+    return rows
+end
+
+-- fm is optional — omitted when called from the "Simple UI: Recent" gesture
+-- (main.lua:onSimpleUIRecentWindow), in which case _resolveSimpleUIPlugin
+-- falls back to the live FM, same degrade-gracefully behaviour as
+-- showQAFolderDialog above.
+function QA.showRecentWindow(fm)
+    local SUIWindow = require("sui_window")
+    local plugin = _resolveSimpleUIPlugin(fm)
+
+    QA.trackIndicatorViaCallback(plugin, "recent", function(restore)
+        local win = SUIWindow:new{
+            name        = "sui_win_recent",
+            title       = _("Recent"),
+            screens     = { __root__ = _recentBuildRootScreen },
+            position    = "bottom",
+            auto_height = true,
+            on_close    = restore,
+        }
+        win:show()
+    end)
+end
+
+-- ---------------------------------------------------------------------------
 -- isInPlaceCustomQA — kept for backwards compatibility
 -- ---------------------------------------------------------------------------
 
 function QA.isInPlaceCustomQA(action_id)
     local cfg = SUISettings:get("simpleui_qa_" .. action_id) or {}
+    if cfg.qa_folder then return true end
     if cfg.dispatcher_action and cfg.dispatcher_action ~= "" then return true end
     if cfg.plugin_key and cfg.plugin_method and cfg.plugin_key ~= "" then return true end
     return false
+end
+
+-- ---------------------------------------------------------------------------
+-- isAsyncInPlaceCustomQA — in-place custom QAs whose UI outlives the calling
+-- function (i.e. opens a floating widget instead of executing synchronously).
+-- Mirrors the bookmark_browser/power exclusion in sui_bottombar._executeInPlace:
+-- these must NOT be wrapped by the HS stack-sink/restore dance, because the
+-- sink is undone before the async widget's own show/close cycle completes.
+-- ---------------------------------------------------------------------------
+
+function QA.isAsyncInPlaceCustomQA(action_id)
+    local cfg = SUISettings:get("simpleui_qa_" .. action_id) or {}
+    return cfg.qa_folder == true
 end
 
 -- ---------------------------------------------------------------------------

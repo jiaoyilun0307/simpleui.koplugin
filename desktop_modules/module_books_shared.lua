@@ -409,6 +409,22 @@ local function getDocSettings()
     return _DocSettings
 end
 
+-- BookInfoManager — same lazy-loader pattern as getDocSettings(). Used as a
+-- fallback title/author source for files whose doc_props are still empty
+-- (e.g. books added to the TBR collection that have never been opened in
+-- ReaderUI, so KOReader never extracted their EPUB/PDF metadata into the
+-- sidecar). BookInfoManager indexes metadata independently of doc_props —
+-- this mirrors the pattern already used in sui_browsemeta.lua's title
+-- resolution (bim:getBookInfo(fp, false)).
+local _BookInfoManager = nil
+local function getBookInfoManager()
+    if not _BookInfoManager then
+        local ok, bim = pcall(require, "bookinfomanager")
+        if ok then _BookInfoManager = bim end
+    end
+    return _BookInfoManager
+end
+
 -- ---------------------------------------------------------------------------
 -- Sidecar metadata cache — invalidated by mtime, lives for the process lifetime.
 --
@@ -485,7 +501,7 @@ end
 SH._cacheGet = _cacheGet
 SH._cachePut = _cachePut
 
--- Invalidate one entry (call before prefetchBooks for the just-closed book)
+
 -- or flush everything (fp == nil).
 function SH.invalidateSidecarCache(fp)
     if fp then
@@ -528,7 +544,22 @@ function SH.getBookData(filepath, prefetched)
         end
     end
 
-    if not meta.title then
+    if not meta.title or meta.title == "" then
+        -- doc_props was empty — most likely this file was never opened in
+        -- ReaderUI (e.g. a TBR entry), so KOReader never wrote real title/
+        -- author metadata into the sidecar. Try BookInfoManager before
+        -- falling back to the raw filename.
+        local BIM = getBookInfoManager()
+        if BIM then
+            local ok3, bi = pcall(BIM.getBookInfo, BIM, filepath, false)
+            if ok3 and bi and bi.title and bi.title ~= "" then
+                meta.title   = bi.title
+                meta.authors = meta.authors and meta.authors ~= "" and meta.authors or bi.authors
+            end
+        end
+    end
+
+    if not meta.title or meta.title == "" then
         meta.title = filepath:match("([^/]+)%.[^%.]+$") or "?"
     end
 
@@ -572,6 +603,107 @@ end
 -- ---------------------------------------------------------------------------
 -- NOTE: _cover_extraction_pending was removed from SH.
 -- Use Config.cover_extraction_pending (the single source of truth) instead.
+
+-- ---------------------------------------------------------------------------
+-- Stale-data cache — mirrors module_stats_provider.lua's _cache/getStale()
+-- pattern. Holds the last successful SH.prefetchBooks() result so callers
+-- on the hot reader-return path (onCloseDocument, HomescreenWidget:onShow)
+-- can render currently/coverdeck/recent with last-known-good data via
+-- SH.getStaleBooks() — a plain table reference, zero ReadHistory walk, zero
+-- lfs.attributes, zero sidecar cache lookups, zero new work of any kind.
+-- The authoritative SH.prefetchBooks() call on the deferred ~50ms tick (see
+-- _refresh() in sui_homescreen.lua) always still runs and overwrites this
+-- cache with fresh data; getStaleBooks() is purely a synchronous-path
+-- optimisation, never a substitute for it.
+--
+-- Unlike SP._cache (single shared state for the whole-app stats), this is
+-- naturally per-(show_currently,show_recent,max_recent) call shape — but in
+-- practice the homescreen always calls prefetchBooks with the same
+-- (show_c, show_r, 15) triple, so a single last-result slot is sufficient,
+-- exactly like SP's single _cache slot.
+--
+-- ── Cross-process-restart persistence ──────────────────────────────────────
+-- _last_books_state is a plain Lua local: it lives only as long as this
+-- module stays required, i.e. for the lifetime of the current KOReader
+-- process. On a genuine cold start (KOReader just launched, this module's
+-- first ever require in this run) it starts nil — exactly like SP._cache,
+-- which also starts nil and makes reading_stats show zeros for one frame
+-- on the very first onShow(). To avoid that one-time "zeros/placeholder"
+-- flash on every fresh KOReader launch (not just on reader-return within an
+-- already-running session, which the in-memory cache already covers for
+-- free), the last state is ALSO mirrored to disk via sui_store, with two
+-- deliberate performance constraints:
+--
+--   1. WRITE COST: _persistStaleBooks() below calls the underlying
+--      LuaSettings:saveSetting() directly (bypassing SUISettings:set()/
+--      :saveSetting(), which call :flush() on every write — see
+--      sui_store.lua's comment on SUISettings:set()). saveSetting() alone
+--      only mutates the in-memory settings table; zero disk I/O. This is
+--      called every time prefetchBooks() succeeds, so the in-memory disk
+--      mirror is always fresh, but at zero extra I/O cost over what was
+--      already happening (none).
+--   2. FLUSH COST: the actual fsync-to-disk (:flush()) is intentionally
+--      NEVER triggered from this module. It piggy-backs on
+--      SimpleUIPlugin:onSuspend() in main.lua, which already calls
+--      SUISettings:flush() for the same reason every other plugin setting
+--      gets persisted — device suspend is infrequent (not on the hot
+--      reader-return path) and KOReader has idle time before sleeping.
+--      Worst case if the device loses power before ever suspending: the
+--      on-disk copy is simply absent or one session behind, and
+--      getStaleBooks() falls back to nil exactly as SP.getStale() does —
+--      callers render the same "no data yet" placeholder reading_stats
+--      shows in that case, never a correctness issue, only a missed
+--      optimisation for that one run.
+--
+-- Net effect: reading the persisted copy back costs one disk read,
+-- performed AT MOST ONCE per process lifetime (lazy, on the first
+-- getStaleBooks() call when the in-memory cache is still nil) — small,
+-- bounded, and off the hot path entirely after that single read.
+-- ---------------------------------------------------------------------------
+local _last_books_state       = nil
+local _disk_books_load_tried  = false  -- guards the single lazy disk read
+
+local _STALE_BOOKS_SETTING_KEY = "simpleui_stale_books_v1"
+
+-- Lazily resolve sui_store without a hard require at module load time, to
+-- avoid any chance of a circular dependency between module_books_shared and
+-- sui_store (sui_store has no reverse dependency today, but this keeps the
+-- coupling defensive and consistent with the rest of this file's lazy-require
+-- style, e.g. getDocSettings()).
+local _SUIStore = nil
+local function _getSUIStore()
+    if not _SUIStore then
+        local ok, m = pcall(require, "sui_store")
+        if ok then _SUIStore = m end
+    end
+    return _SUIStore
+end
+
+-- Writes _last_books_state into the in-memory settings table only — see the
+-- WRITE COST note above. Safe to call unconditionally after every
+-- prefetchBooks() success; never performs disk I/O itself.
+local function _persistStaleBooks(state)
+    local SUIStore = _getSUIStore()
+    if not SUIStore or not SUIStore.setNoFlush then return end
+    -- prefetched_data values are plain strings/numbers/booleans only
+    -- (percent, title, authors, doc_pages, partial_md5_checksum, stat_pages,
+    -- stat_total_time, summary — see SH.getBookData()'s shape), so the whole
+    -- table is safely serialisable by LuaSettings without any special-casing.
+    pcall(SUIStore.setNoFlush, SUIStore, _STALE_BOOKS_SETTING_KEY, state)
+end
+
+-- Reads the on-disk mirror back exactly once per process lifetime. Returns
+-- nil silently on any failure (missing key, corrupt entry, sui_store
+-- unavailable) — callers already treat nil as "no stale data available" and
+-- fall back accordingly, so this never needs to raise.
+local function _loadStaleBooksFromDisk()
+    _disk_books_load_tried = true
+    local SUIStore = _getSUIStore()
+    if not SUIStore then return nil end
+    local ok, v = pcall(SUIStore.readSetting, SUIStore, _STALE_BOOKS_SETTING_KEY)
+    if not ok or type(v) ~= "table" then return nil end
+    return v
+end
 
 function SH.prefetchBooks(show_currently, show_recent, max_recent)
     max_recent = max_recent or 5
@@ -702,7 +834,53 @@ function SH.prefetchBooks(show_currently, show_recent, max_recent)
         if not show_recent and state.current_fp then break end
         if state.current_fp and #state.recent_fps >= max_recent then break end
     end
+
+    -- Only cache results that actually resolved something — an early-return
+    -- empty state (e.g. both show_currently/show_recent false) would
+    -- otherwise poison getStaleBooks() with an empty result on the next
+    -- reader-return, even though a perfectly good previous result exists.
+    if state.current_fp or #state.recent_fps > 0 then
+        _last_books_state = state
+        -- Mirror to the in-memory settings table (zero disk I/O — see the
+        -- WRITE COST note above _persistStaleBooks). This keeps the on-disk
+        -- copy fresh so the NEXT KOReader process launch can skip the
+        -- zeros/placeholder flash on its very first onShow(), the same way
+        -- SP._cache already avoids it for every reader-return WITHIN a
+        -- single running process.
+        _persistStaleBooks(state)
+    end
+
     return state
+end
+
+-- ---------------------------------------------------------------------------
+-- SH.getStaleBooks() — instant, zero-cost return of the last successful
+-- SH.prefetchBooks() result. See the _last_books_state comment above the
+-- cache declaration for the full rationale; this mirrors
+-- module_stats_provider.lua's SP.getStale() exactly, with one addition:
+-- a single lazy disk read on cold start (see _loadStaleBooksFromDisk above)
+-- so a freshly launched KOReader process can also benefit from the previous
+-- run's last-known books, not just reader-returns within the same run.
+--
+-- Returns nil only when (a) this is a genuinely fresh on-disk state too —
+-- e.g. first launch ever after install, or the user cleared SimpleUI
+-- settings — or (b) sui_store is unavailable for some reason. Callers must
+-- fall back to an empty stub in that case, same as SP.getStale() callers
+-- fall back to `{}`.
+-- ---------------------------------------------------------------------------
+function SH.getStaleBooks()
+    if not _last_books_state and not _disk_books_load_tried then
+        -- Lazy, at-most-once-per-process disk read. Deliberately NOT done
+        -- eagerly at module load time: most processes' first relevant call
+        -- to getStaleBooks() happens from HomescreenWidget:onShow() on the
+        -- very first homescreen paint, which is exactly the latency-
+        -- sensitive moment this whole mechanism exists to protect — so the
+        -- read only happens if and when it's actually needed, not on every
+        -- KOReader startup regardless of whether the homescreen is ever
+        -- shown the books modules are even enabled.
+        _last_books_state = _loadStaleBooksFromDisk()
+    end
+    return _last_books_state
 end
 
 

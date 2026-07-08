@@ -610,13 +610,23 @@ function M.updateCovers(widget, _ctx)
 end
 
 function M.getHeight(ctx)
-    local d = getDims(Config.getModuleScale("collections", _ctx and _ctx.pfx),
-                      Config.getThumbScale("collections", _ctx and _ctx.pfx))
+    local pfx         = ctx and ctx.pfx
+    local scale       = Config.getModuleScale("collections", pfx)
+    local thumb_scale = Config.getThumbScale("collections", pfx)
+    local lbl_scale   = Config.getItemLabelScale("collections", pfx)
+    local d = getDims(scale, thumb_scale)
+    -- Mirror the lbl_scale adjustment that build() applies so the heights stay in sync
+    -- when the user has set a per-module text scale different from 1.0.
+    if lbl_scale ~= 1.0 then
+        d.coll_lbl_fs = math.max(6, math.floor(d.coll_lbl_fs * lbl_scale))
+        d.tbw_line_h  = math.floor(1.3 * d.coll_lbl_fs + 0.5)
+        d.coll_cell_h = d.coll_h + d.accent_h + d.label_gap + 2 * d.tbw_line_h
+    end
     if #getSelectedCollections() == 0 then
         return Config.getScaledLabelH() + d.empty_h
     end
     local h = d.coll_cell_h
-    if SUISettings:isTrue(_ctx and _ctx.pfx .. "collections_show_frame") or SUISettings:isTrue(_ctx and _ctx.pfx .. "collections_solid_bg") then
+    if SUISettings:isTrue(pfx .. "collections_show_frame") or SUISettings:isTrue(pfx .. "collections_solid_bg") then
         h = h + PAD * 2 + PAD2
     end
     return Config.getScaledLabelH() + h

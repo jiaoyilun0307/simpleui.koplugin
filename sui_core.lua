@@ -62,6 +62,65 @@ M.LABEL_H       = M.LABEL_PAD_TOP + M.LABEL_PAD_BOT + M.LABEL_TEXT_H
 M.CLR_TEXT_SUB  = Blitbuffer.COLOR_BLACK
 
 -- ---------------------------------------------------------------------------
+-- Landscape reduction factor — single source of truth.
+--
+-- The home screen renders as a two-column spread in landscape (like an open
+-- book), so portrait-sized content must shrink to fit one spread column.
+-- Any other SimpleUI surface that wants the same "shrink to fit" behaviour
+-- in landscape (e.g. SUIWindow) reuses this exact factor rather than
+-- deriving its own, so the reduction always matches the home screen's.
+--
+--   landscape_inner_w = Screen:getWidth()  - 2*SIDE_PAD  (full usable width)
+--   col_w             = floor((landscape_inner_w - PAD) / 2)  (one spread column)
+--   portrait_inner_w  = Screen:getHeight() - 2*SIDE_PAD  (== usable width in portrait)
+--   factor            = col_w / portrait_inner_w
+-- ---------------------------------------------------------------------------
+
+--- Returns true when the screen is wider than it is tall.
+function M.isLandscape()
+    return Screen:getWidth() > Screen:getHeight()
+end
+
+--- Returns the screen's width/height as they would be in portrait mode,
+--- regardless of the device's current rotation. In portrait this is simply
+--- Screen:getWidth()/getHeight(); in landscape the two are swapped back to
+--- their notional portrait values.
+---
+--- Anything that wants to derive a size from "the portrait screen" and then
+--- apply getLandscapeFactor() on top (SUIWindow's default/explicit width and
+--- height being the main case) must start from these values instead of the
+--- raw, currently-rotated Screen:getWidth()/getHeight() — otherwise the
+--- short/long axes get swapped and the landscape shrink is applied on top of
+--- an already-rotated dimension, compounding the reduction on one axis.
+function M.getPortraitDims()
+    local w, h = Screen:getWidth(), Screen:getHeight()
+    if w > h then
+        return h, w
+    end
+    return w, h
+end
+
+--- Returns the landscape reduction factor (1 in portrait — no reduction).
+function M.getLandscapeFactor()
+    if not M.isLandscape() then return 1 end
+    local landscape_inner_w = Screen:getWidth()  - M.SIDE_PAD * 2
+    local portrait_inner_w  = Screen:getHeight() - M.SIDE_PAD * 2
+    local col_w             = math.floor((landscape_inner_w - M.PAD) / 2)
+    return col_w / portrait_inner_w
+end
+
+--- Shared landscape-aware size multiplier for SUIWindow content built outside
+--- sui_window.lua itself (e.g. sui_stats_windows.lua). Mirrors the SZ() helper
+--- in sui_window.lua, but reads the factor live from getLandscapeFactor()
+--- instead of a value frozen at window-construction time — simpler for
+--- consumers that don't track a per-window scale, and equivalent in practice
+--- since orientation doesn't change mid-build. sui_window.lua keeps its own
+--- frozen _sui_scale/SZ; this is for every other SUIWindow-content file.
+function M.SZ(n)
+    return math.floor(n * M.getLandscapeFactor())
+end
+
+-- ---------------------------------------------------------------------------
 -- Shared menu-item resolver
 -- Converts KOReader-style menu item tables (with checked_func / enabled_func /
 -- sub_item_table_func) into flat, statically-resolved tables suitable for use
