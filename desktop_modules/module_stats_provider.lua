@@ -100,6 +100,18 @@ local function _getSUIStore()
     return _SUIStore
 end
 
+-- Lazily resolve sui_streak (freeze half) the same defensive way — this is
+-- the Phase 1 earning-hook tap point for the Streak Manager freeze mechanic.
+-- Lazy require avoids any load-order assumption between the two modules.
+local _StreakFreeze = nil
+local function _getStreakFreeze()
+    if not _StreakFreeze then
+        local ok, m = pcall(require, "sui_streak")
+        if ok then _StreakFreeze = m end
+    end
+    return _StreakFreeze
+end
+
 -- Writes a stale-safe snapshot of `state` into the in-memory settings table
 -- only — see the WRITE COST note above. Safe to call unconditionally after
 -- every successful SP.get() recompute; never performs disk I/O itself.
@@ -275,45 +287,61 @@ local function fetchTimeSeries(conn, start_today, week_start, month_start, year_
 end
 
 -- ---------------------------------------------------------------------------
--- Query 2: reading streak (recursive CTE — structurally incompatible with Q1).
--- Queries page_stat_data directly (not the page_stat VIEW) for the same
--- index-utilisation reasons as fetchTimeSeries above.
+-- Query 2: reading streak.
 --
--- Fixes applied:
---   • dated CTE filters duration > 0, consistent with fetchTimeSeries, so that
---     zero-duration entries (e.g. from a crash/force-close) do not inflate the
---     streak while showing 0 min in today's stats.
---   • PRAGMA recursive_triggers / max_page_count are not streak-related; for
---     the CTE recursion depth the relevant limit is the compile-time
---     SQLITE_MAX_EXPR_DEPTH. KOReader's bundled SQLite raises it to 10000, so
---     streaks up to 10 000 days are safe. We set the run-time
---     temp_store = MEMORY pragma before the query so the intermediate CTE rows
---     don't hit the page limit on constrained devices, and we explicitly cap the
---     recursive walk at 9999 steps with an extra WHERE guard to be safe on any
---     build that left the default at 1000.
+-- The consecutive-day walk itself lives in sui_streak.lua, shared with
+-- sui_stats_windows.lua's _riGetStreaks() (Reading Insights window) — see
+-- that module's header comment for why. This function's own job is reduced
+-- to fetching the plain list of distinct active dates and merging in any
+-- frozen dates (Streak Manager freeze mechanic, Phase 2) before handing off
+-- to the shared walk — never writing frozen days into page_stat_data itself.
+--
+-- Previously this ran a recursive SQL CTE entirely inside SQLite. That
+-- approach could not merge in frozen days (SQLite has no visibility into
+-- SUISettings) without either a second query per candidate day or writing
+-- fake rows into page_stat_data — the latter explicitly forbidden. Fetching
+-- distinct dates directly is also a strictly simpler query with no
+-- recursion-depth ceiling to reason about.
+--
+-- Queries page_stat_data directly (not the page_stat VIEW) for the same
+-- index-utilisation reasons as fetchTimeSeries above; duration > 0 filters
+-- zero-duration entries (e.g. from a crash/force-close), consistent with
+-- fetchTimeSeries, so they don't inflate the streak while showing 0 min in
+-- today's stats.
+--
+-- today_str/yesterday_str are passed in (derived from SP.get()'s single
+-- os.date("*t") call and start_today) so this function makes zero os.date
+-- calls of its own.
 -- ---------------------------------------------------------------------------
-local function fetchStreak(conn, start_today)
+local function fetchStreak(conn, today_str, yesterday_str)
     local streak = 0
     local ok, err = pcall(function()
-        local val = conn:rowexec(string.format([[
-            WITH RECURSIVE
-            dated(d) AS (
-                SELECT DISTINCT date(start_time,'unixepoch','localtime')
-                FROM page_stat_data
-                WHERE duration > 0),
-            streak(d,n) AS (
-                SELECT d, 1 FROM dated
-                WHERE d = (SELECT max(d) FROM dated)
-                UNION ALL
-                SELECT date(streak.d,'-1 day'), streak.n+1
-                FROM streak
-                WHERE n < 9999
-                  AND EXISTS (SELECT 1 FROM dated WHERE d = date(streak.d,'-1 day')))
-            SELECT CASE
-                WHEN (SELECT max(d) FROM dated) >= date(%d,'unixepoch','localtime','-1 day')
-                THEN COALESCE((SELECT max(n) FROM streak), 0)
-                ELSE 0 END;]], start_today))
-        streak = tonumber(val) or 0
+        local dated = {}
+        local rw = conn:exec([[
+            SELECT DISTINCT date(start_time,'unixepoch','localtime')
+            FROM page_stat_data
+            WHERE duration > 0
+        ]])
+        if rw and rw[1] then
+            for _, d in ipairs(rw[1]) do dated[#dated + 1] = d end
+        end
+
+        local frozen = {}
+        local SF = _getStreakFreeze()
+        if SF and SF.getFrozenDatesInRange then
+            frozen = SF.getFrozenDatesInRange(nil, nil)
+        end
+
+        -- sui_streak.lua now covers both the freeze state (SF above) and
+        -- this calc walk — same module, so reuse SF rather than requiring
+        -- it a second time.
+        if SF and SF.computeCurrentDayStreak then
+            streak = SF.computeCurrentDayStreak(dated, {
+                frozen_dates = frozen,
+                today        = today_str,
+                yesterday    = yesterday_str,
+            })
+        end
     end)
     if not ok then
         logger.warn("simpleui: stats_provider: fetchStreak failed: " .. tostring(err))
@@ -323,32 +351,54 @@ end
 
 -- ---------------------------------------------------------------------------
 -- Sidecar scan: one pass → books_year + books_total simultaneously.
--- books_year counts books *completed* this year, based on summary.modified
--- (the sidecar's completion timestamp) only. We deliberately do NOT use the
--- statistics DB's last_open here — it updates on every session close, not
--- just on completion, so using it as a "read this year" signal inflates the
--- count whenever an already-finished book from a previous year is reopened.
+-- books_year counts books *completed* this year, based on summary.date_finished
+-- or, as a fallback, summary.modified — but ONLY when modified is a string.
+--
+-- Why the string-only restriction on modified:
+--   • When the user taps a status button in KOReader's library,
+--     filemanagerutil.saveSummary writes modified as a formatted date string
+--     (e.g. "2024-01-15 10:30:00"). That string is a reliable completion date.
+--   • On every normal reader session close, KOReader writes modified as a
+--     NUMBER (os.time() unix timestamp). This timestamp is refreshed on every
+--     close — even for books whose status has not changed. Using a numeric
+--     modified as a "completed this year" signal would inflate books_year
+--     whenever an old finished book from a previous year is merely reopened,
+--     because the timestamp would now reflect the current year.
+--   • SimpleUI writes date_finished as a YYYY-MM-DD string (preferred).
+--
+-- We deliberately do NOT use the statistics DB's last_open — same reason: it
+-- updates on every session close, not just on completion.
 -- Replaces two separate countMarkedRead() calls (previously O(2N) sidecar I/O).
 -- Uses the same _sidecar_cache from module_books_shared for cache hits.
 -- ---------------------------------------------------------------------------
 local _MAX_HIST = 200   -- hard cap: avoids unbounded scan on huge histories
 
--- modifiedInYear: KOReader always writes `modified` as an ISO-8601 string
--- ("YYYY-MM-DD ..."), a unix timestamp (number), or an os.date("*t") table.
+-- _modifiedInYear: returns true when the book's completion date falls in year_str.
+--
+-- Priority order:
+--   1. summary.date_finished  — SimpleUI-written "YYYY-MM-DD" string (most reliable).
+--   2. summary.modified       — only when it is a STRING (filemanagerutil date string).
+--      Numeric modified (KOReader unix timestamp, rewritten on every session close)
+--      is intentionally ignored: it cannot reliably indicate completion year.
 local function _modifiedInYear(summary, year_str)
-    local mod = summary and summary.modified
+    local mod
+    if summary then
+        if summary.date_finished ~= nil then
+            mod = summary.date_finished
+        elseif type(summary.modified) == "string" then
+            -- Only trust modified when it is a string (filemanagerutil date or
+            -- SimpleUI-written).  A numeric modified is a volatile KOReader
+            -- session timestamp — not a valid completion date.
+            mod = summary.modified
+        end
+        -- type(summary.modified) == "number"  →  mod stays nil → return false below.
+        -- type(summary.modified) == "table"   →  also ignored (os.date("*t") struct
+        --   produced by older KOReader builds; same volatility concern as numbers).
+    end
     if mod == nil then return false end
-    if type(mod) == "number" then
-        -- Unix timestamp: compare year component directly without os.date.
-        local mod_t = os.date("*t", mod)
-        return mod_t and tostring(mod_t.year) == year_str
-    end
     if type(mod) == "string" then
-        -- ISO-8601 "YYYY-MM-DD..." — prefix check is sufficient and free.
+        -- ISO-8601 "YYYY-MM-DD..." or "YYYY-MM-DD HH:MM:SS" — prefix check.
         return #mod >= 4 and mod:sub(1, 4) == year_str
-    end
-    if type(mod) == "table" and mod.year then
-        return tostring(mod.year) == year_str
     end
     return false
 end
@@ -419,21 +469,16 @@ local function countMarkedReadBoth(year_str)
                 end
             end
 
-            if type(summary) == "table" and summary.status == "complete" then
+            if type(summary) == "table" and summary.status == "complete" and not summary.exclude_from_goals then
                 books_total = books_total + 1
-                -- books_year counts books *completed* this year, based solely
-                -- on summary.modified (the sidecar's completion timestamp).
-                --
-                -- We used to also accept DB last_open >= year_start as an
-                -- alternative signal, on the theory that pre-SimpleUI-2.0
-                -- books could have a stale summary.modified that predates
-                -- their real completion date. In practice this made the
-                -- yearly count go up whenever an already-finished book from
-                -- a previous year was merely reopened (e.g. to re-read a
-                -- page) — last_open updates on every session close, not just
-                -- on completion, so it isn't a valid "completed this year"
-                -- signal. See GitHub issue: yearly count inflated by
-                -- reopening old finished books.
+                -- books_year counts books whose sidecar completion date falls in
+                -- year_str. The check uses _modifiedInYear which accepts only
+                -- summary.date_finished (SimpleUI-written) or a string-typed
+                -- summary.modified (set by filemanagerutil.saveSummary when the
+                -- user taps a status button in KOReader's library). Numeric
+                -- modified values (KOReader session-close timestamps) are ignored
+                -- because they are refreshed on every close and do not represent
+                -- the completion date.
                 if _modifiedInYear(summary, year_str) then
                     books_year = books_year + 1
                 end
@@ -626,6 +671,18 @@ function SP.get(db_conn, year_str, needs_books)
         end
 
         if not result.db_conn_fatal then
+            -- Streak Manager freeze mechanic — time-based earning hook
+            -- (Phase 1). result.total_secs was just freshly recomputed by
+            -- fetchTimeSeries above (this whole block only runs on a
+            -- cold-cache miss), so this is exactly the "existing pipeline
+            -- learns about new reading time" point. The helper derives its
+            -- own delta from a persisted baseline and is a no-op when the
+            -- freeze mechanic is disabled — no mode check needed here.
+            local SF = _getStreakFreeze()
+            if SF and SF.advanceFreezeTimeFromTotalSecs then
+                pcall(SF.advanceFreezeTimeFromTotalSecs, result.total_secs)
+            end
+
             -- Skip fetchStreak when invalidateTimeSeries() preserved the value:
             -- _streak_cache_valid is set only when the previous cache was built
             -- on today_str, meaning the streak was already correct for today.
@@ -634,7 +691,23 @@ function SP.get(db_conn, year_str, needs_books)
                 result.streak   = (_cache and _cache.streak) or 0
                 _streak_cache_valid = false
             else
-                result.streak = fetchStreak(db_conn, start_today)
+                -- yesterday_str reuses start_today (already computed as
+                -- midnight-of-today) instead of a fresh os.time()/os.date()
+                -- round trip — start_today - 86400 is midnight yesterday.
+                local yesterday_str = os.date("%Y-%m-%d", start_today - 86400)
+                result.streak = fetchStreak(db_conn, today_str, yesterday_str)
+
+                -- Streak Manager freeze mechanic — day-based earning hook
+                -- (Phase 1). Only reached when the streak was actually just
+                -- freshly recomputed (not the same-day fast path above), so
+                -- reopening the app repeatedly on the same day cannot
+                -- double-grant: the watermark update inside
+                -- maybeGrantDayFreeze is idempotent for a repeated value,
+                -- and this branch itself only runs once per new streak
+                -- computation. No-op when the freeze mechanic is disabled.
+                if SF and SF.maybeGrantDayFreeze then
+                    pcall(SF.maybeGrantDayFreeze, result.streak)
+                end
             end
         end
     end

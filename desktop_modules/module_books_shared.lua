@@ -499,6 +499,10 @@ end
 -- without creating a circular dependency or reaching into internals.
 -- These are considered semi-internal (prefix _) but are stable across versions.
 SH._cacheGet = _cacheGet
+SH._cacheGetRaw = function(fp)
+    local e = _sidecar_cache[fp]
+    return e and e.data
+end
 SH._cachePut = _cachePut
 
 

@@ -1633,6 +1633,38 @@ function SimpleUIPlugin:onResume()
     end
 end
 
+function SimpleUIPlugin:onReaderReady()
+    -- Warm the sidecar cache for the opened book as soon as it is opened,
+    -- so that onCloseDocument has access to its pre-session summary state
+    -- even if the file browser didn't scan it recently (e.g. direct boot to book).
+    local RUI = package.loaded["apps/reader/readerui"]
+    local fp = RUI and RUI.instance and RUI.instance.document and RUI.instance.document.file
+    if fp then
+        local SH = package.loaded["desktop_modules/module_books_shared"]
+        if SH and SH._cachePut then
+            local ok_ds, DocSettings = pcall(require, "docsettings")
+            if ok_ds and DocSettings then
+                local ok_open, ds = pcall(function() return DocSettings:open(fp) end)
+                if ok_open and ds then
+                    local summary = ds:readSetting("summary")
+                    local doc_props = ds:readSetting("doc_props")
+                    local title = doc_props and doc_props.title
+                    local authors = doc_props and doc_props.authors
+                    SH._cachePut(fp, ds.source_candidate, {
+                        percent              = ds:readSetting("percent_finished") or 0,
+                        title                = title,
+                        authors              = authors,
+                        doc_pages            = ds:readSetting("doc_pages"),
+                        partial_md5_checksum = ds:readSetting("partial_md5_checksum"),
+                        summary              = summary,
+                    })
+                    pcall(function() ds:close() end)
+                end
+            end
+        end
+    end
+end
+
 function SimpleUIPlugin:onCloseDocument()
     -- Consume _closing_via_gesture unconditionally before any early return,
     -- so the flag never leaks to a subsequent close if this handler bails out
@@ -1815,11 +1847,21 @@ function SimpleUIPlugin:onCloseDocument()
                 -- Pre-session status: read from sidecar cache (no I/O).
                 -- The cache entry is still valid here — SH.invalidateSidecarCache
                 -- for closed_fp runs later in this function, after this block.
+                --
+                -- cache_hit: true only when _cacheGetRaw found a real entry.
+                -- A miss (book outside the prefetch window) means we cannot
+                -- determine the pre-session status from the cache, so we must
+                -- not assume the book just became complete — it may have been
+                -- complete for years.
                 local pre_status
-                if SH and SH._cacheGet then
-                    local cached = SH._cacheGet(closed_fp)
-                    local s = cached and cached.summary
-                    pre_status = type(s) == "table" and s.status or nil
+                local cache_hit = false
+                if SH and (SH._cacheGetRaw or SH._cacheGet) then
+                    local cached = (SH._cacheGetRaw or SH._cacheGet)(closed_fp)
+                    if cached then
+                        cache_hit = true
+                        local s = cached.summary
+                        pre_status = type(s) == "table" and s.status or nil
+                    end
                 end
                 -- Post-session status: read from the in-memory doc_settings.
                 -- ReaderUI:onClose() calls saveSettings() (flush) before firing
@@ -1833,11 +1875,77 @@ function SimpleUIPlugin:onCloseDocument()
                     local s = RUI.instance.doc_settings:readSetting("summary")
                     post_status = type(s) == "table" and s.status or nil
                 end
-                -- Status changed only when a "complete" boundary was crossed.
-                -- Both nil/non-complete pre and post → counts are unaffected.
                 local pre_complete  = pre_status  == "complete"
                 local post_complete = post_status == "complete"
-                status_changed = pre_complete ~= post_complete
+                -- status_changed: a genuine complete/not-complete transition.
+                -- Only trust the transition when we had a real cache hit; on a
+                -- cache miss we cannot distinguish "was already complete" from
+                -- "first seen as complete", so fall back to safe full invalidation
+                -- (status_changed = true) without writing date_finished.
+                if cache_hit then
+                    status_changed = pre_complete ~= post_complete
+                else
+                    -- Cache miss: assume counts may have changed (safe default).
+                    -- pre_complete is unknown, so treat it as equal to post_complete
+                    -- to avoid spurious date_finished writes below.
+                    status_changed = true
+                    pre_complete   = post_complete  -- suppress the date_finished today-fallback
+                end
+
+                -- Auto-populate date_finished if missing for a completed book.
+                -- Sources tried in priority order:
+                --   1. pre_s.date_finished (already a SimpleUI string).
+                --   2. pre_s.modified      (the sidecar's pre-session modified,
+                --        which for books marked complete via KOReader's library
+                --        is the string date set by filemanagerutil.saveSummary).
+                --   3. Today's date        — ONLY when the cache confirmed the
+                --        book was NOT complete before this session (cache_hit AND
+                --        not pre_complete). Never written on a cache miss, because
+                --        we cannot distinguish a genuine new completion from an
+                --        already-complete book outside the prefetch window.
+                if post_complete and closed_fp then
+                    if RUI and RUI.instance and type(RUI.instance.doc_settings) == "table" then
+                        local s = RUI.instance.doc_settings:readSetting("summary") or {}
+                        if not s.date_finished then
+                            local finished_date
+                            if cache_hit then
+                                local cached = SH and (SH._cacheGetRaw or SH._cacheGet) and
+                                               (SH._cacheGetRaw or SH._cacheGet)(closed_fp)
+                                local pre_s  = cached and cached.summary
+                                if type(pre_s) == "table" then
+                                    if type(pre_s.date_finished) == "string" then
+                                        finished_date = pre_s.date_finished
+                                    elseif type(pre_s.modified) == "string" then
+                                        -- filemanagerutil.saveSummary writes modified as
+                                        -- "YYYY-MM-DD" when the user taps a status button.
+                                        -- This is the correct completion date for books
+                                        -- that were marked complete before SimpleUI.
+                                        finished_date = pre_s.modified
+                                    elseif type(pre_s.modified) == "number" then
+                                        finished_date = os.date("%Y-%m-%d", pre_s.modified)
+                                    elseif type(pre_s.modified) == "table" and pre_s.modified.year then
+                                        finished_date = string.format("%04d-%02d-%02d",
+                                            pre_s.modified.year, pre_s.modified.month, pre_s.modified.day)
+                                    end
+                                end
+                                -- Only fall back to today if we confirmed (via cache) that
+                                -- this is a genuine new completion, not a re-open.
+                                if not finished_date and not pre_complete then
+                                    finished_date = os.date("%Y-%m-%d")
+                                end
+                            end
+                            -- cache_hit = false → finished_date stays nil → nothing written.
+                            -- The book keeps no date_finished until the next homescreen
+                            -- open warm the sidecar cache, after which the next close will
+                            -- succeed via the cache-hit path above.
+                            if finished_date then
+                                s.date_finished = finished_date
+                                RUI.instance.doc_settings:saveSetting("summary", s)
+                                RUI.instance.doc_settings:flush()
+                            end
+                        end
+                    end
+                end
             end
 
             if status_changed then
