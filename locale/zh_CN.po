@@ -4159,3 +4159,111 @@ msgstr "This group is empty.\nAdd actions to it from Settings → Quick Actions.
 
 msgid "When waking the device from sleep/suspend, always return to the Home Screen — even if a book was open when it went to sleep."
 msgstr "When waking the device from sleep/suspend, always return to the Home Screen — even if a book was open when it went to sleep."
+
+msgid "%d freeze available"
+msgstr "%d freeze available"
+
+msgid "%d/%d days · %d/%d min to next freeze"
+msgstr "%d/%d days · %d/%d min to next freeze"
+
+msgid "A freeze can only bridge a single missed day right after an active one — yesterday doesn't qualify."
+msgstr "A freeze can only bridge a single missed day right after an active one — yesterday doesn't qualify."
+
+msgid "Briefly show the book cover full-screen when opening or closing a book, masking the page-layout flash. Normally requires the book to already be indexed by the cover browser (its cover must have been seen at least once in a grid/list view) — see \\"High-Quality Cover\\" below to also cover un-indexed books."
+msgstr "Briefly show the book cover full-screen 打开 or closing a book, masking the page-layout flash. Normally requires the book to already be indexed by the cover browser (its cover must have been seen at least once in a grid/list view) — see \\"High-Quality Cover\\" below to also cover un-indexed books."
+
+msgid "By default the cover is stretched to fill the whole screen, which can distort it if its proportions don't match your screen's. When on, the cover keeps its original proportions instead, centered over a black background."
+msgstr "By default the cover is stretched to fill the whole screen, which can distort it if its proportions don't match your screen's. When on, the cover keeps its original proportions instead, centered over a black background."
+
+msgid "CALENDAR"
+msgstr "CALENDAR"
+
+msgid "Custom File + My Highlights"
+msgstr "Custom File + My Highlights"
+
+msgid "Exclude from goals"
+msgstr "[待翻译] Exclude from goals"
+
+msgid "Excluded"
+msgstr "[待翻译] Excluded"
+
+msgid "FREEZES"
+msgstr "FREEZES"
+
+msgid "File Manager not available."
+msgstr "File Manager not available."
+
+msgid "Freezes"
+msgstr "[待翻译] Freezes"
+
+msgid "Freezes can only cover a single missed day, and only right after an active one. Tap yesterday's cell to use one, when eligible."
+msgstr "Freezes can only cover a single missed day, and only right after an active one. Tap yesterday's cell to use one, when eligible."
+
+msgid "Fri"
+msgstr "[待翻译] Fri"
+
+msgid "High-Quality Cover"
+msgstr "High-Quality Cover"
+
+msgid "Mon"
+msgstr "[待翻译] Mon"
+
+msgid "No"
+msgstr "否"
+
+msgid "No collections found"
+msgstr "[待翻译] No collections found"
+
+msgid "Preserve Cover Proportions"
+msgstr "Preserve Cover Proportions"
+
+msgid "Random"
+msgstr "[待翻译] Random"
+
+msgid "Real streak only"
+msgstr "[待翻译] Real streak only"
+
+msgid "Replaces the \\"Closing book…\\" notice above with the cover for that close, when a cover is available."
+msgstr "Replaces the \\"Closing book…\\" notice above with the cover for that close, when a cover is available."
+
+msgid "Sat"
+msgstr "[待翻译] Sat"
+
+msgid "Show a brief \\"Loading statistics\xe2\x80\xa6\\" notice when opening a statistics window, preventing accidental double-taps while e-ink refreshes."
+msgstr "Show a brief \\"正在加载统计数据\xe2\x80\xa6\\" notice 打开 a statistics window, 防止发生意外双击 在电子墨水屏刷新期间."
+
+msgid "Streak Mode"
+msgstr "Streak Mode"
+
+msgid "Sun"
+msgstr "[待翻译] Sun"
+
+msgid "The cover shown right as a book opens normally comes from the library's cached thumbnail, which can look soft on higher-resolution screens. When on, SimpleUI instead reads the cover straight from the book file for that moment (also covers books never opened before, which otherwise show no cover at all) — at the cost of a brief extra pause while opening, since the file has to be read twice. Cover on close is unaffected either way: it already reads the full-quality cover from the open book."
+msgstr "The cover shown right as a book opens normally comes from the library's cached thumbnail, which can look soft on higher-resolution screens. When on, SimpleUI instead reads the cover straight from the book file for that moment (also covers books never opened before, which otherwise show no cover at all) — at the cost of a brief extra pause while opening, since the file has to be read twice. Cover on close is unaffected either way: it already reads the full-quality cover from the open book."
+
+msgid "Thu"
+msgstr "[待翻译] Thu"
+
+msgid "Tue"
+msgstr "[待翻译] Tue"
+
+msgid "Use freeze"
+msgstr "[待翻译] Use freeze"
+
+msgid "Wed"
+msgstr "[待翻译] Wed"
+
+msgid "Yes"
+msgstr "是"
+
+msgid "Yesterday is already covered by a freeze."
+msgstr "Yesterday is already covered by a freeze."
+
+msgid "You already read yesterday — there's nothing to freeze."
+msgstr "You already read yesterday — there's nothing to freeze."
+
+msgid "You don't have any freezes available yet."
+msgstr "You don't have any freezes available yet."
+
+msgid "You have %d freeze(s) available.\nUse one to cover %s?"
+msgstr "You have %d freeze(s) available.\nUse one to cover %s?"
