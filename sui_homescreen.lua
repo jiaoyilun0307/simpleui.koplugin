@@ -3119,9 +3119,15 @@ function HomescreenWidget:onResume()
 end
 
 function HomescreenWidget:onSetRotationMode(mode)
+    logger.dbg("simpleui[rotation]: HS onSetRotationMode",
+        "mode=", mode, "current_mode=", Screen:getRotationMode())
+
     -- Ignore rotation events originating inside an open ReaderUI.
     local RUI = package.loaded["apps/reader/readerui"]
-    if RUI and RUI.instance then return end
+    if RUI and RUI.instance then
+        logger.dbg("simpleui[rotation]: HS ignoring, ReaderUI open")
+        return
+    end
 
     -- HomescreenWidget is on top of the UIManager stack, so broadcastEvent
     -- delivers SetRotationMode here *before* FileManager:onSetRotationMode runs.
@@ -3136,10 +3142,89 @@ function HomescreenWidget:onSetRotationMode(mode)
     -- Same-family flips (e.g. 0 <-> 180 portrait inversion) leave dimensions
     -- unchanged, so they don't need a rebuild.
     local current_mode = Screen:getRotationMode()
-    if mode == current_mode then return end
+    if mode == current_mode then
+        logger.dbg("simpleui[rotation]: HS mode unchanged")
+        return
+    end
+
+    -- HIPÓTESE NÃO CONFIRMADA (bug #2): regista que uma rotação genuína
+    -- aconteceu, para o guard de setupLayout em sui_patches.lua (ver
+    -- UI.bumpRotationGeneration / UI.getRotationGeneration em sui_core.lua).
+    -- Reversível: remover esta chamada não afeta o resto desta função.
+    UI.bumpRotationGeneration()
+
     local current_is_landscape = (current_mode % 2) == 1
     local new_is_landscape     = (mode      % 2) == 1
-    if current_is_landscape == new_is_landscape then return end
+    if current_is_landscape == new_is_landscape then
+        -- CORREÇÃO 2 (confirmado por crash log real, ver crash__3_.log,
+        -- janela 18:56:44-18:56:57): depois da correção do segfault, o
+        -- sintoma passou a ser "pisca mas não reorienta". Confirmado no log:
+        -- durante os 3 eventos same-family desta janela a instância de
+        -- FileManager (table: 0xb5505ef0) esteve viva o tempo todo, mas
+        -- nunca correu "setupLayout call" (só volta a correr depois de um
+        -- evento de mudança de família, às 18:58:14); e as linhas
+        -- [FBDepth]/[FBInk] de troca de rotação física só aparecem uma vez,
+        -- no arranque do dispositivo, nunca durante os testes de rotação.
+        -- Ou seja: FileManager:onSetRotationMode -- o único sítio que chama
+        -- Screen:setRotationMode() (ver nota no core, citada no início desta
+        -- função) -- nunca corre para flips same-family enquanto a
+        -- Homescreen está em primeiro plano, por isso Screen:setRotationMode()
+        -- nunca era chamado e o estado de rotação interno do Screen nunca
+        -- mudava: repintamos tudo (daí o "flash") mas sempre com a
+        -- orientação antiga. Chamamos aqui explicitamente, tal como
+        -- FileManager:onSetRotationMode já faz para os seus próprios casos.
+        Screen:setRotationMode(mode)
+        logger.dbg("simpleui[rotation]: HS calling Screen:setRotationMode",
+            "mode=", mode)
+
+        -- BUG 1 FIX: same-family flip (e.g. upright <-> upside-down). Screen
+        -- dimensions are unchanged so no rebuild is needed, but cached visual
+        -- content (wallpaper, dim cache) was drawn assuming the old
+        -- orientation and is now shown over a framebuffer that has already
+        -- physically rotated 180° — invalidate those caches and force a full
+        -- repaint of this widget before returning.
+        --
+        -- CORREÇÃO (confirmado por crash log real, ver crash__2_.log
+        -- 15:58:59 e 15:59:10 — "HS same-family, skipping rebuild" seguido
+        -- imediatamente de blitFrom e Segmentation fault, 100% reprodutível):
+        -- _styleFreeBgCache() liberta (free()) o ImageWidget e o BlitBuffer
+        -- de fundo *que ainda estão referenciados dentro da árvore de
+        -- widgets existente* (self._navbar_container[1] etc., construída
+        -- antes por _initLayout()). Chamar UIManager:setDirty(self, "full")
+        -- a seguir repinta essa MESMA árvore, ou seja, tenta desenhar um
+        -- widget/BlitBuffer já libertado -- use-after-free -> segfault.
+        -- Todos os outros call-sites de _styleFreeBgCache() neste ficheiro
+        -- seguem-no sempre de _rebuildHomescreenLayout() (ver comentário na
+        -- linha ~98), que reconstrói a árvore com um widget de fundo novo
+        -- ANTES de qualquer repaint. Reproduzimos aqui o mesmo essencial de
+        -- _rebuildHomescreenLayout() via self:_initLayout() em vez de chamar
+        -- a local function diretamente: _rebuildHomescreenLayout() só é
+        -- declarada mais abaixo neste ficheiro (linha ~3351), depois desta
+        -- função — chamá-la aqui resolvia para um global inexistente (nil)
+        -- em vez do upvalue local, o que teria causado um novo erro
+        -- ("attempt to call a nil value") em vez do segfault. self:_initLayout()
+        -- é um método de classe, resolvido em tempo de chamada, por isso não
+        -- tem este problema de ordem de declaração.
+        _styleFreeBgCache()
+        UI.invalidateDimCache()
+        if self._navbar_container then
+            self._cached_books_state = nil
+            self._enabled_mods_cache = nil
+            self._ctx_cache          = nil
+            self._cfg_cache          = nil
+            Homescreen._cfg_cache    = nil
+            local overlap = self:_initLayout()
+            local old = self._navbar_container[1]
+            if old and old.overlap_offset then
+                overlap.overlap_offset = old.overlap_offset
+            end
+            self._navbar_container[1] = overlap
+            self:_updatePage(true)
+        end
+        UIManager:setDirty(self, "full")
+        logger.dbg("simpleui[rotation]: HS same-family, skipping rebuild")
+        return
+    end
 
     -- Free the wallpaper cache now, before closing. The new HomescreenWidget
     -- created by the rotation-reopen path will call _styleGetBgWidget() with
