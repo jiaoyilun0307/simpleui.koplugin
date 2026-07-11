@@ -453,16 +453,47 @@ function M.patchFileManagerClass(plugin)
         local cur_w = Screen:getWidth()
         local cur_h = Screen:getHeight()
         local cur_gen = UI.getRotationGeneration()
+        local _dims_changed = (fm_self._navbar_layout_w ~= cur_w or fm_self._navbar_layout_h ~= cur_h)
+
+        -- CORREÇÃO (bottom bar "estranha" -- confirmado por leitura de código,
+        -- ver crash__5_.log e sui_bottombar.lua linhas ~170-183, ~219): existe
+        -- uma SEGUNDA cache de dimensões, separada de _navbar_inner --
+        -- BAR_H()/ICON_SZ()/etc. em sui_bottombar.lua (e o equivalente em
+        -- sui_topbar.lua) são calculados uma única vez via
+        -- Screen:scaleBySize(...) e guardados em _dim, só limpos por
+        -- UI.invalidateDimCache(). Essa chamada só existia em
+        -- sui_homescreen.lua (HomescreenWidget:onSetRotationMode) -- nunca
+        -- aqui no setupLayout patchado, que é o caminho que corre quando o
+        -- FileManager (core) trata uma rotação diretamente, com a Library em
+        -- primeiro plano. Resultado: depois de uma rotação retrato<->paisagem
+        -- real enquanto se navega na Library, a bottom bar continuava a usar
+        -- a altura/tamanho de ícone calculados para a MRIMEIRA orientação
+        -- desta sessão, nunca recalculados -- daí o layout "estranho".
+        -- Invalidamos aqui sempre que as dimensões mudaram desde a última
+        -- chamada (mesmo critério já usado no log/diagnóstico abaixo).
+        -- Reversível: remover este bloco if.
+        if _dims_changed then
+            UI.invalidateDimCache()
+            logger.dbg("simpleui[rotation]: setupLayout invalidating dim cache",
+                "old_w=", fm_self._navbar_layout_w, "old_h=", fm_self._navbar_layout_h,
+                "new_w=", cur_w, "new_h=", cur_h)
+        end
+
+        -- NOTA: os campos would_have_reused_* abaixo são só diagnóstico
+        -- histórico (o que a cache _navbar_inner teria decidido) -- desde a
+        -- ativação da "alternativa mais simples" mais abaixo nesta função,
+        -- fm_self[1] fresco é SEMPRE usado, por isso estes campos já não
+        -- refletem a decisão real tomada.
         logger.dbg("simpleui[rotation]: setupLayout call",
             "cur_w=", cur_w, "cur_h=", cur_h,
             "cached_w=", fm_self._navbar_layout_w,
             "cached_h=", fm_self._navbar_layout_h,
             "cur_gen=", cur_gen,
             "cached_gen=", fm_self._navbar_layout_gen,
-            "will_reuse_navbar_inner_wh_only=", (fm_self._navbar_inner ~= nil
+            "would_have_reused_wh_only=", (fm_self._navbar_inner ~= nil
                 and fm_self._navbar_layout_w == cur_w
                 and fm_self._navbar_layout_h == cur_h),
-            "will_reuse_navbar_inner_actual=", (fm_self._navbar_inner ~= nil
+            "would_have_reused_with_gen=", (fm_self._navbar_inner ~= nil
                 and fm_self._navbar_layout_gen == cur_gen
                 and fm_self._navbar_layout_w == cur_w
                 and fm_self._navbar_layout_h == cur_h))
@@ -491,22 +522,47 @@ function M.patchFileManagerClass(plugin)
         -- geração de rotação (UI.getRotationGeneration(), incrementada por
         -- HomescreenWidget:onSetRotationMode em sui_homescreen.lua a cada
         -- SetRotationMode genuíno) e não só W x H. A comparação de W x H é
-        -- mantida como verificação adicional, não removida. Ainda não
-        -- confirmado por log de runtime — reverter é remover a comparação de
-        -- _navbar_layout_gen e a linha que a atualiza, deixando W x H como
-        -- única condição (como era antes).
-        if fm_self._navbar_inner
-                and (fm_self._navbar_layout_gen ~= cur_gen
-                     or fm_self._navbar_layout_w ~= cur_w
-                     or fm_self._navbar_layout_h ~= cur_h) then
-            fm_self._navbar_inner = nil
-        end
-        -- ALTERNATIVA MAIS SIMPLES (não ativa por defeito): em vez do
-        -- contador de gerações, remover por completo o cache _navbar_inner
-        -- neste bloco e usar sempre fm_self[1] fresco em toda e qualquer
-        -- chamada de setupLayout:
-        --   local inner_widget = fm_self[1]
-        local inner_widget = fm_self._navbar_inner or fm_self[1]
+        -- mantida como verificação adicional, não removida.
+        --
+        -- CONFIRMADO POR LOG REAL + código core (crash__4_.log,
+        -- 07:10:44-07:10:55, e koreader/frontend/apps/filemanager/
+        -- filemanager.lua:140-360 fornecido por Xavier): a Hipótese 2 acima
+        -- estava incompleta, não errada. orig_setupLayout() (linha ~446,
+        -- ACIMA nesta função) reatribui SEMPRE self.file_chooser,
+        -- self.title_bar e self.layout a instâncias NOVAS em CADA chamada,
+        -- incondicionalmente -- isto é código core, não nosso. Quando
+        -- reaproveitamos _navbar_inner (conteúdo de uma chamada anterior),
+        -- o ecrã continua a mostrar esse widget antigo enquanto
+        -- fm_self.file_chooser/title_bar passam a apontar para os NOVOS
+        -- objetos que ninguém está a mostrar -- ecrã e estado interno
+        -- dessincronizados (updateItems, seleção, navegação de path passam
+        -- a operar sobre um file_chooser invisível). No log isto acontece
+        -- às 07:10:52 e 07:10:55 (will_reuse_navbar_inner_actual= true)
+        -- mesmo com o contador de gerações, porque a rajada de rotações
+        -- reais 07:10:44-47 foi tratada diretamente por
+        -- FileManager:onSetRotationMode (core, ver ficheiro acima) enquanto
+        -- a Library estava em primeiro plano -- só
+        -- HomescreenWidget:onSetRotationMode incrementa
+        -- UI.bumpRotationGeneration(), e essa função não corre nesse
+        -- cenário. Ativamos por isso a ALTERNATIVA MAIS SIMPLES já deixada
+        -- comentada abaixo: usar sempre fm_self[1] fresco, nunca
+        -- reaproveitar. Não há custo de "wrap duplo" ao fazer isto --
+        -- fm_self[1] é sempre conteúdo em bruto (nunca já embrulhado em
+        -- navbar) neste ponto, porque orig_setupLayout já o reatribuiu a
+        -- fm_ui logo acima, antes de fm_self[1] ser alguma vez substituído
+        -- por wrapped (linha ~530, abaixo). O custo real é perder a
+        -- preservação de posição de scroll/seleção em chamadas de
+        -- setupLayout sem rotação nenhuma (ex.: "depois de fechar um
+        -- livro", motivo original da cache) -- vale a pena vigiar isso.
+        -- Reversível: comentar a linha "local inner_widget = fm_self[1]"
+        -- logo abaixo e descomentar o bloco if/gen+w+h acima.
+        -- if fm_self._navbar_inner
+        --         and (fm_self._navbar_layout_gen ~= cur_gen
+        --              or fm_self._navbar_layout_w ~= cur_w
+        --              or fm_self._navbar_layout_h ~= cur_h) then
+        --     fm_self._navbar_inner = nil
+        -- end
+        local inner_widget = fm_self[1]
         fm_self._navbar_inner      = inner_widget
         fm_self._navbar_layout_w   = cur_w
         fm_self._navbar_layout_h   = cur_h
@@ -537,6 +593,30 @@ function M.patchFileManagerClass(plugin)
         -- onShow only fires on the first push to the UIManager stack, so without
         -- this the buttons keep their default KOReader size after a rotation.
         Bottombar.resizePaginationButtons(fm_self.file_chooser or fm_self, Bottombar.getPaginationIconSize())
+
+        -- CORREÇÃO (bottom bar "estranha", 2ª causa -- confirmado por log real,
+        -- crash__6_.log 23:58:55: "triggering refresh {region=1680x1030+0+0}"
+        -- em paisagem (screen_h=1264) e "region=1264x1446+0+0" em retrato
+        -- (screen_h=1680) -- em ambos falta exatamente ~234px no fundo do
+        -- ecrã, a área da bottom bar). fc_self.height é propositadamente
+        -- encolhido a UI.getContentHeight() (linha ~312, acima) para deixar
+        -- espaço à navbar -- o Menu (FileChooser) sabe disso e o seu próprio
+        -- "setDirty via a func" (mergeTitleBarIntoLayout/FocusManager) só
+        -- cobre o seu próprio self.dimen (a área de conteúdo), corretamente,
+        -- já que a bottom bar não faz parte da árvore do Menu. Mas ninguém
+        -- mais pede explicitamente o repaint da faixa da bottom bar depois de
+        -- um reinit por rotação: onShow (que trataria disto na primeira
+        -- abertura) não corre outra vez num reinit, como o comentário acima
+        -- sobre resizePaginationButtons já reconhece para os botões -- o
+        -- mesmo problema aplica-se ao repaint. Os pixels novos da bottom bar
+        -- são compostos corretamente em memória (buildBarWidget corre sempre
+        -- de novo) mas nunca chegam a ser fisicamente atualizados no ecrã.
+        -- Forçamos aqui um repaint de ecrã inteiro sempre que uma rotação real
+        -- aconteceu (mesmo _dims_changed do bloco de invalidação da cache,
+        -- acima). Reversível: remover este bloco if.
+        if _dims_changed then
+            UIManager:setDirty(fm_self, "ui")
+        end
 
         plugin:_updateFMHomeIcon()
 
