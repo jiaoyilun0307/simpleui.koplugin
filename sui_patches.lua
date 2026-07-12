@@ -637,8 +637,31 @@ function M.patchFileManagerClass(plugin)
         -- HomescreenWidget já usa "full" para o mesmo cenário (ver
         -- sui_homescreen.lua, mesma correção do Bug 1) -- fazemos o mesmo
         -- aqui, só quando uma rotação real aconteceu (_dims_changed).
+        --
+        -- CORREÇÃO 3 (confirmado por log real, crash__9_.log): a MESMA
+        -- chamada síncrona UIManager:setDirty(fm_self, "full") escala
+        -- corretamente para "full" quando W x H mudam de facto (paisagem<->
+        -- retrato -- "update_mode: Update refresh mode ui to full" aparece no
+        -- log, 19:49:04/05/15/21), mas fica presa em "ui" quando só a geração
+        -- muda (flip 180° same-family, sem alteração de W x H -- nenhuma
+        -- linha "ui to full" aparece em toda a janela de teste 11:44:37-
+        -- 11:47:00). Mesma linha de código, mesmo argumento "full" literal,
+        -- resultado diferente -- indica algum comportamento de coalescing da
+        -- fila de refresh dentro da MESMA pilha de chamadas síncrona que não
+        -- conseguimos confirmar sem o código-fonte de uimanager.lua/
+        -- screen.lua (não incluídos nos ficheiros core que o Xavier enviou).
+        -- Em vez de tentar adivinhar esse mecanismo, desacoplamos o nosso
+        -- pedido de full-repaint: agendamo-lo com scheduleIn(0, ...) para
+        -- correr isolado, no próximo tick da UI, depois de tudo o resto desta
+        -- chamada (icon renders, resizePaginationButtons, etc.) se ter
+        -- resolvido -- evitando qualquer interação com essas outras chamadas
+        -- de setDirty dentro do mesmo call stack. Reversível: repor a chamada
+        -- direta (comentada abaixo).
+        -- UIManager:setDirty(fm_self, "full")
         if _dims_changed then
-            UIManager:setDirty(fm_self, "full")
+            UIManager:scheduleIn(0, function()
+                UIManager:setDirty(fm_self, "full")
+            end)
         end
 
         plugin:_updateFMHomeIcon()
