@@ -453,7 +453,18 @@ function M.patchFileManagerClass(plugin)
         local cur_w = Screen:getWidth()
         local cur_h = Screen:getHeight()
         local cur_gen = UI.getRotationGeneration()
-        local _dims_changed = (fm_self._navbar_layout_w ~= cur_w or fm_self._navbar_layout_h ~= cur_h)
+        -- CORREÇÃO (confirmado por log real, crash__7_.log 07:21:03): um flip
+        -- same-family de 180° (upright <-> upside-down) NUNCA muda W x H --
+        -- por isso uma condição baseada só em W x H nunca deteta que uma
+        -- rotação real aconteceu enquanto a Library estava em segundo plano
+        -- (Home em primeiro plano, gen incrementado de 0 para 2 por dois
+        -- flips 180°, mas cached_w/h continuam iguais quando se volta à
+        -- Library). Resultado: nem a cache de dimensões da bottom bar nem o
+        -- repaint completo abaixo disparavam, e a bottom bar ficava com
+        -- conteúdo desenhado antes dos flips. Comparamos também cur_gen.
+        local _dims_changed = (fm_self._navbar_layout_w ~= cur_w
+            or fm_self._navbar_layout_h ~= cur_h
+            or fm_self._navbar_layout_gen ~= cur_gen)
 
         -- CORREÇÃO (bottom bar "estranha" -- confirmado por leitura de código,
         -- ver crash__5_.log e sui_bottombar.lua linhas ~170-183, ~219): existe
@@ -476,7 +487,8 @@ function M.patchFileManagerClass(plugin)
             UI.invalidateDimCache()
             logger.dbg("simpleui[rotation]: setupLayout invalidating dim cache",
                 "old_w=", fm_self._navbar_layout_w, "old_h=", fm_self._navbar_layout_h,
-                "new_w=", cur_w, "new_h=", cur_h)
+                "new_w=", cur_w, "new_h=", cur_h,
+                "old_gen=", fm_self._navbar_layout_gen, "new_gen=", cur_gen)
         end
 
         -- NOTA: os campos would_have_reused_* abaixo são só diagnóstico
@@ -594,7 +606,7 @@ function M.patchFileManagerClass(plugin)
         -- this the buttons keep their default KOReader size after a rotation.
         Bottombar.resizePaginationButtons(fm_self.file_chooser or fm_self, Bottombar.getPaginationIconSize())
 
-        -- CORREÇÃO (bottom bar "estranha", 2ª causa -- confirmado por log real,
+        -- CORREÇÃO 1 (bottom bar "estranha", 2ª causa geral -- confirmado por log real,
         -- crash__6_.log 23:58:55: "triggering refresh {region=1680x1030+0+0}"
         -- em paisagem (screen_h=1264) e "region=1264x1446+0+0" em retrato
         -- (screen_h=1680) -- em ambos falta exatamente ~234px no fundo do
@@ -614,8 +626,42 @@ function M.patchFileManagerClass(plugin)
         -- Forçamos aqui um repaint de ecrã inteiro sempre que uma rotação real
         -- aconteceu (mesmo _dims_changed do bloco de invalidação da cache,
         -- acima). Reversível: remover este bloco if.
+        -- CORREÇÃO 2 (ghosting/"deixa o menu de pernas para o ar para trás" --
+        -- confirmado por log real, crash__8_.log 11:46:29/35: o repaint
+        -- passou a cobrir o ecrã inteiro corretamente (region=1264x1680+0+0,
+        -- sem falha), mas em modo "ui". O modo "ui" no KOReader é um refresh
+        -- parcial/rápido, otimizado para pequenas atualizações, e não limpa
+        -- bem o ecrã quando o conteúdo INTEIRO muda de orientação (flip
+        -- 180°) -- fica ghosting do conteúdo antigo, exatamente o sintoma
+        -- reportado ("deixa o menu antigo, de cabeça para baixo, para trás").
+        -- HomescreenWidget já usa "full" para o mesmo cenário (ver
+        -- sui_homescreen.lua, mesma correção do Bug 1) -- fazemos o mesmo
+        -- aqui, só quando uma rotação real aconteceu (_dims_changed).
+        --
+        -- CORREÇÃO 3 (confirmado por log real, crash__9_.log): a MESMA
+        -- chamada síncrona UIManager:setDirty(fm_self, "full") escala
+        -- corretamente para "full" quando W x H mudam de facto (paisagem<->
+        -- retrato -- "update_mode: Update refresh mode ui to full" aparece no
+        -- log, 19:49:04/05/15/21), mas fica presa em "ui" quando só a geração
+        -- muda (flip 180° same-family, sem alteração de W x H -- nenhuma
+        -- linha "ui to full" aparece em toda a janela de teste 11:44:37-
+        -- 11:47:00). Mesma linha de código, mesmo argumento "full" literal,
+        -- resultado diferente -- indica algum comportamento de coalescing da
+        -- fila de refresh dentro da MESMA pilha de chamadas síncrona que não
+        -- conseguimos confirmar sem o código-fonte de uimanager.lua/
+        -- screen.lua (não incluídos nos ficheiros core que o Xavier enviou).
+        -- Em vez de tentar adivinhar esse mecanismo, desacoplamos o nosso
+        -- pedido de full-repaint: agendamo-lo com scheduleIn(0, ...) para
+        -- correr isolado, no próximo tick da UI, depois de tudo o resto desta
+        -- chamada (icon renders, resizePaginationButtons, etc.) se ter
+        -- resolvido -- evitando qualquer interação com essas outras chamadas
+        -- de setDirty dentro do mesmo call stack. Reversível: repor a chamada
+        -- direta (comentada abaixo).
+        -- UIManager:setDirty(fm_self, "full")
         if _dims_changed then
-            UIManager:setDirty(fm_self, "ui")
+            UIManager:scheduleIn(0, function()
+                UIManager:setDirty(fm_self, "full")
+            end)
         end
 
         plugin:_updateFMHomeIcon()
