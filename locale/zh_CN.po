@@ -4303,3 +4303,12 @@ msgstr "Replaces the \\"Closing book…\\" notice above with the cover for that 
 
 msgid "Show a brief \\"Loading statistics\xe2\x80\xa6\\" notice when opening a statistics window, preventing accidental double-taps while e-ink refreshes."
 msgstr "Show a brief \\"正在加载统计数据\xe2\x80\xa6\\" notice 打开 a statistics window, 防止发生意外双击 在电子墨水屏刷新期间."
+
+msgid "Briefly show the book cover full-screen when opening or closing a book, masking the page-layout flash. Normally requires the book to already be indexed by the cover browser (its cover must have been seen at least once in a grid/list view) — see \\"High-Quality Cover\\" below to also cover un-indexed books."
+msgstr "Briefly show the book cover full-screen 打开 or closing a book, masking the page-layout flash. Normally requires the book to already be indexed by the cover browser (its cover must have been seen at least once in a grid/list view) — see \\"High-Quality Cover\\" below to also cover un-indexed books."
+
+msgid "Replaces the \\"Closing book…\\" notice above with the cover for that close, when a cover is available."
+msgstr "Replaces the \\"Closing book…\\" notice above with the cover for that close, when a cover is available."
+
+msgid "Show a brief \\"Loading statistics\xe2\x80\xa6\\" notice when opening a statistics window, preventing accidental double-taps while e-ink refreshes."
+msgstr "Show a brief \\"正在加载统计数据\xe2\x80\xa6\\" notice 打开 a statistics window, 防止发生意外双击 在电子墨水屏刷新期间."
