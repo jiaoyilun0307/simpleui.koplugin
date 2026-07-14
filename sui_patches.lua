@@ -453,6 +453,7 @@ function M.patchFileManagerClass(plugin)
         local cur_w = Screen:getWidth()
         local cur_h = Screen:getHeight()
         local cur_gen = UI.getRotationGeneration()
+        local cur_mode = Screen:getRotationMode()
         -- CORREÇÃO (confirmado por log real, crash__7_.log 07:21:03): um flip
         -- same-family de 180° (upright <-> upside-down) NUNCA muda W x H --
         -- por isso uma condição baseada só em W x H nunca deteta que uma
@@ -476,11 +477,27 @@ function M.patchFileManagerClass(plugin)
         -- _has_prior_layout distingue "primeira vez que esta instância é
         -- montada" (nada a invalidar, nada de anormal para corrigir) de
         -- "já tínhamos W x H/gen guardados e mudaram" (aí sim, forçar).
+        --
+        -- CORREÇÃO (raiz do problema "bottom bar não fica renderizada depois
+        -- do segundo flip" -- confirmado por log apertado, crash__11_.log
+        -- 12:33:28/12:33:30, os dois flips feitos SEM sair da Library em
+        -- momento nenhum): cur_gen ficou 0 do princípio ao fim da sessão --
+        -- só HomescreenWidget:onSetRotationMode incrementa a geração, e a
+        -- Home nunca chegou a correr, porque o utilizador nunca saiu da
+        -- Library. Depender da geração da Home era o erro de base: é um
+        -- sinal indireto que só existe quando a Home participa. Existe um
+        -- sinal direto e sempre correto -- Screen:getRotationMode() --, que
+        -- muda sempre que há uma rotação real, seja tratada pela Home, pelo
+        -- FileManager, com giroscópio ou não. Comparamos agora também
+        -- cur_mode; a geração e W x H mantêm-se como verificações
+        -- adicionais (não removidas), já que continuam válidas nos
+        -- cenários onde disparam corretamente.
         local _has_prior_layout = (fm_self._navbar_layout_w ~= nil)
         local _dims_changed = _has_prior_layout and (
             fm_self._navbar_layout_w ~= cur_w
             or fm_self._navbar_layout_h ~= cur_h
-            or fm_self._navbar_layout_gen ~= cur_gen)
+            or fm_self._navbar_layout_gen ~= cur_gen
+            or fm_self._navbar_layout_mode ~= cur_mode)
 
         -- CORREÇÃO (bottom bar "estranha" -- confirmado por leitura de código,
         -- ver crash__5_.log e sui_bottombar.lua linhas ~170-183, ~219): existe
@@ -504,7 +521,8 @@ function M.patchFileManagerClass(plugin)
             logger.dbg("simpleui[rotation]: setupLayout invalidating dim cache",
                 "old_w=", fm_self._navbar_layout_w, "old_h=", fm_self._navbar_layout_h,
                 "new_w=", cur_w, "new_h=", cur_h,
-                "old_gen=", fm_self._navbar_layout_gen, "new_gen=", cur_gen)
+                "old_gen=", fm_self._navbar_layout_gen, "new_gen=", cur_gen,
+                "old_mode=", fm_self._navbar_layout_mode, "new_mode=", cur_mode)
         end
 
         -- NOTA: os campos would_have_reused_* abaixo são só diagnóstico
@@ -518,6 +536,8 @@ function M.patchFileManagerClass(plugin)
             "cached_h=", fm_self._navbar_layout_h,
             "cur_gen=", cur_gen,
             "cached_gen=", fm_self._navbar_layout_gen,
+            "cur_mode=", cur_mode,
+            "cached_mode=", fm_self._navbar_layout_mode,
             "would_have_reused_wh_only=", (fm_self._navbar_inner ~= nil
                 and fm_self._navbar_layout_w == cur_w
                 and fm_self._navbar_layout_h == cur_h),
@@ -592,9 +612,10 @@ function M.patchFileManagerClass(plugin)
         -- end
         local inner_widget = fm_self[1]
         fm_self._navbar_inner      = inner_widget
-        fm_self._navbar_layout_w   = cur_w
-        fm_self._navbar_layout_h   = cur_h
-        fm_self._navbar_layout_gen = cur_gen
+        fm_self._navbar_layout_w    = cur_w
+        fm_self._navbar_layout_h    = cur_h
+        fm_self._navbar_layout_gen  = cur_gen
+        fm_self._navbar_layout_mode = cur_mode
 
         local tabs = Config.loadTabConfig()
         -- Recalculate the correct indicator from the FC path before wrapping.
