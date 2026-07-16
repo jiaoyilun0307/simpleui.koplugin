@@ -2357,7 +2357,7 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
 
     local function makeBehaviourMenuItems(ctx)
         ctx = ctx or HOMESCREEN_CTX
-        return {
+        local items = {
             {
                 text           = _("Start with Home Screen"),
                 checked_func   = function()
@@ -2644,6 +2644,28 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
                 end,
             },
         }
+
+        -- PocketBook only: the hardware Home key natively closes the reader
+        -- straight into the file manager. This lets it open the Home Screen
+        -- instead, matching the "Go to Homescreen" gesture/dispatcher action.
+        -- Hidden on other platforms, where the Home key already behaves as
+        -- expected and this setting would have nothing to act on.
+        if Device:isPocketBook() then
+            table.insert(items, 3, {
+                text           = _("PocketBook Home Button Opens Home Screen"),
+                help_text      = _("Makes the device's physical Home button always open the SimpleUI Home Screen — while reading and while browsing files — instead of KOReader's native Home behaviour."),
+                checked_func   = function()
+                    return SUISettings:isTrue("simpleui_pb_home_opens_hs")
+                end,
+                keep_menu_open = true,
+                callback       = function()
+                    local on = SUISettings:isTrue("simpleui_pb_home_opens_hs")
+                    SUISettings:saveSetting("simpleui_pb_home_opens_hs", not on)
+                end,
+            })
+        end
+
+        return items
     end
     plugin.makeBehaviourMenuItems = makeBehaviourMenuItems
 

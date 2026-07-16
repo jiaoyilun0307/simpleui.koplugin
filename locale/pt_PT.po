@@ -1767,6 +1767,16 @@ msgstr "Módulo LuaSettings indisponível"
 msgid "Make it yours"
 msgstr "Torna-o teu"
 
+#: sui_menu.lua:2656
+msgid ""
+"Makes the device's physical Home button always open the SimpleUI Home "
+"Screen — while reading and while browsing files — instead of KOReader's "
+"native Home behaviour."
+msgstr ""
+"Faz com que o botão físico Home do dispositivo abra sempre o Ecrã Inicial "
+"do SimpleUI — durante a leitura e ao navegar nos ficheiros — em vez do "
+"comportamento nativo do botão Home do KOReader."
+
 #: sui_menu.lua:3999 sui_menu.lua:4073 sui_menu.lua:4078 sui_presets.lua:875
 #: sui_presets.lua:951 sui_presets.lua:956
 msgid "Manage presets"
@@ -2523,6 +2533,10 @@ msgstr "Erro no plugin: %s"
 #: sui_quickactions.lua:2791
 msgid "Plugin not available: %s"
 msgstr "Plugin não disponível: %s"
+
+#: sui_menu.lua:2655
+msgid "PocketBook Home Button Opens Home Screen"
+msgstr "Botão Home do PocketBook Abre o Ecrã Inicial"
 
 #: sui_menu.lua:2870 sui_menu.lua:3274
 msgid "Position"

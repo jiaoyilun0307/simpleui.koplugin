@@ -1922,6 +1922,10 @@ msgstr ""
 msgid "Make it yours"
 msgstr ""
 
+#: sui_menu.lua:2656
+msgid "Makes the device's physical Home button always open the SimpleUI Home Screen — while reading and while browsing files — instead of KOReader's native Home behaviour."
+msgstr ""
+
 #: sui_menu.lua:3999
 #: sui_menu.lua:4073
 #: sui_menu.lua:4078
@@ -2681,6 +2685,10 @@ msgstr ""
 
 #: sui_quickactions.lua:2791
 msgid "Plugin not available: %s"
+msgstr ""
+
+#: sui_menu.lua:2655
+msgid "PocketBook Home Button Opens Home Screen"
 msgstr ""
 
 #: sui_menu.lua:2870
