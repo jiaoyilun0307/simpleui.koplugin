@@ -4704,3 +4704,15 @@ msgstr "Replaces the \\"Closing book…\\" notice above with the cover for that 
 
 msgid "Show a brief \\"Loading statistics\xe2\x80\xa6\\" notice when opening a statistics window, preventing accidental double-taps while e-ink refreshes."
 msgstr "Show a brief \\"正在加载统计数据\xe2\x80\xa6\\" notice 打开 a statistics window, 防止发生意外双击 在电子墨水屏刷新期间."
+
+msgid "Fetching bookmarks\xe2\x80\xa6"
+msgstr "正在获取书签\xe2\x80\xa6"
+
+msgid "Makes the device's physical Home button always open the SimpleUI Home Screen — while reading and while browsing files — instead of KOReader's native Home behaviour."
+msgstr "Makes the device's physical Home button always open the SimpleUI Home Screen — while reading and while browsing files — instead of KOReader's native Home behaviour."
+
+msgid "PocketBook Home Button Opens Home Screen"
+msgstr "PocketBook Home Button Opens Home Screen"
+
+msgid "Show a brief \\"Loading statistics\xe2\x80\xa6\\" notice when opening a statistics window, preventing accidental double-taps while e-ink refreshes."
+msgstr "Show a brief \\"正在加载统计数据\xe2\x80\xa6\\" notice 打开 a statistics window, 防止发生意外双击 在电子墨水屏刷新期间."
