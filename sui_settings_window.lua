@@ -453,6 +453,19 @@ local function buildScreens(st)
                     if not mod_subtitle or mod_subtitle == "" then mod_subtitle = _("No actions configured") end
                 end
             end
+
+            -- Collection Row instances: mostra a coleção atribuída como
+            -- subtítulo (ex: "teste"), para distinguir instâncias na lista
+            -- de módulos da página sem ter de entrar em cada uma.
+            if type(mod_id) == "string" and mod_id:match("^coll_row_") then
+                local coll_name = SUISettings:readSetting("simpleui_hs_" .. mod_id .. "_coll_name")
+                if coll_name and coll_name ~= "" then
+                    mod_subtitle = coll_name
+                else
+                    mod_subtitle = _("No collection selected")
+                end
+            end
+
             table.insert(items, {
                 text         = mod_name,
                 subtitle     = mod_subtitle,
@@ -586,7 +599,7 @@ local function buildScreens(st)
 
         -- Instanciable modules: always show an "Add" entry regardless of
         -- how many instances already exist in the layout.
-        local instanciable_bases = { "quick_actions_row", "spacer_row" }
+        local instanciable_bases = { "quick_actions_row", "spacer_row", "coll_row" }
         for _i, base_id in ipairs(instanciable_bases) do
             if Registry.isInstanciable(base_id) then
                 local base_mod = Registry.getBase(base_id)
@@ -941,7 +954,7 @@ function SettingsWindow:show(on_close)
                     end
                 end
                 if not available then
-                    local instanciable_bases = { "quick_actions_row", "spacer_row" }
+                    local instanciable_bases = { "quick_actions_row", "spacer_row", "coll_row" }
                     for _i, base_id in ipairs(instanciable_bases) do
                         if Registry.isInstanciable(base_id) then
                             available = true

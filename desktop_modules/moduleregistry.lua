@@ -58,11 +58,10 @@ local MODULES = {
     { require_mod = "desktop_modules/module_clock"         },
     { require_mod = "desktop_modules/module_quote"         },
     { require_mod = "desktop_modules/module_currently"     },
-    { require_mod = "desktop_modules/module_recent"        },
+    { require_mod = "desktop_modules/module_book_rows"     },   -- Recent Books + New Books + TBR
     { require_mod = "desktop_modules/module_coverdeck"     },
-    { require_mod = "desktop_modules/module_new_books"     },
-    { require_mod = "desktop_modules/module_tbr"           },
     { require_mod = "desktop_modules/module_collections"   },
+    { require_mod = "desktop_modules/module_coll_row"      },
     { require_mod = "desktop_modules/module_reading_goals" },
     { require_mod = "desktop_modules/module_reading_stats" },
     { require_mod = "desktop_modules/module_quick_actions" },
@@ -376,8 +375,16 @@ end
 function Registry.purgeInstanceSettings(inst_id, pfx)
     pfx = pfx or "simpleui_hs_"
     local qa_pfx = "simpleui_hs_qa_"
+    -- NOTA: "_scale" e "_item_label_scale" são os sufixos reais gravados por
+    -- sui_config.lua (_modKey / _itemLabelKey) — as antigas entradas
+    -- "_scale_pct" / "_item_label_scale_pct" nesta lista nunca correspondiam
+    -- a nenhuma chave gravada (bug pré-existente, corrigido aqui).
     local suffixes = { "_enabled", "_shape", "_bg", "_items", "_labels",
-                       "_scale_pct", "_gap_pct", "_item_label_scale_pct" }
+                       "_scale", "_gap_pct", "_item_label_scale",
+                       -- usadas pelo Collection Row / sui_book_row.lua:
+                       "_coll_name", "_thumb_scale",
+                       "_show_progress", "_show_text", "_show_overlay",
+                       "_show_frame", "_solid_bg" }
     for _, s in ipairs(suffixes) do
         SUISettings:set(pfx    .. inst_id .. s, nil)
         SUISettings:set(qa_pfx .. inst_id .. s, nil)
@@ -385,6 +392,8 @@ function Registry.purgeInstanceSettings(inst_id, pfx)
     -- Also the bare keys used by build/getHeight.
     SUISettings:set(qa_pfx .. inst_id .. "_items",  nil)
     SUISettings:set(qa_pfx .. inst_id .. "_labels", nil)
+    -- "Show section label" toggle — chave própria, sem pfx (sui_config.lua).
+    SUISettings:set("simpleui_hide_label_" .. inst_id, nil)
 end
 
 -- ---------------------------------------------------------------------------
