@@ -4722,3 +4722,90 @@ msgstr "Show a brief \\"正在加载统计数据\xe2\x80\xa6\\" notice 打开 a 
 
 msgid "Show a brief \\"Loading statistics\xe2\x80\xa6\\" notice when opening a statistics window, preventing accidental double-taps while e-ink refreshes."
 msgstr "Show a brief \\"正在加载统计数据\xe2\x80\xa6\\" notice 打开 a statistics window, 防止发生意外双击 在电子墨水屏刷新期间."
+
+msgid "% Read (ascending)"
+msgstr "% Read (ascending)"
+
+msgid "% Read (descending)"
+msgstr "% Read (descending)"
+
+msgid "(collection not found)"
+msgstr "(collection not found)"
+
+msgid "Arrange Collection"
+msgstr "Arrange Collection"
+
+msgid "Author (A–Z)"
+msgstr "Author (A–Z)"
+
+msgid "Books"
+msgstr "书籍"
+
+msgid "Collection Row"
+msgstr "Collection Row"
+
+msgid "Collection Row — tap to configure"
+msgstr "Collection Row — tap to configure"
+
+msgid "Collection: "
+msgstr "Collection: "
+
+msgid "Collection: (none)"
+msgstr "Collection: (none)"
+
+msgid "No books in this collection."
+msgstr "No books in this collection."
+
+msgid "No collection selected"
+msgstr "[待翻译] No collection selected"
+
+msgid "No collection selected  —  long press to configure"
+msgstr "No collection selected  —  long press to configure"
+
+msgid "Show a brief \\"Loading statistics\xe2\x80\xa6\\" notice when opening a statistics window, preventing accidental double-taps while e-ink refreshes."
+msgstr "Show a brief \\"正在加载统计数据\xe2\x80\xa6\\" notice 打开 a statistics window, 防止发生意外双击 在电子墨水屏刷新期间."
+
+msgid "Shuffle"
+msgstr "[待翻译] Shuffle"
+
+msgid "Sort"
+msgstr "[待翻译] Sort"
+
+msgid "Title (A–Z)"
+msgstr "Title (A–Z)"
+
+msgid "Title (Z–A)"
+msgstr "Title (Z–A)"
+
+msgid "april"
+msgstr "april"
+
+msgid "august"
+msgstr "august"
+
+msgid "december"
+msgstr "december"
+
+msgid "february"
+msgstr "february"
+
+msgid "january"
+msgstr "january"
+
+msgid "july"
+msgstr "july"
+
+msgid "june"
+msgstr "june"
+
+msgid "march"
+msgstr "march"
+
+msgid "november"
+msgstr "november"
+
+msgid "october"
+msgstr "october"
+
+msgid "september"
+msgstr "september"
