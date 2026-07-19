@@ -934,10 +934,17 @@ function M.getHeight(_ctx)
     local pct_gap   = math.max(1, math.floor(_BASE_PCT_GAP        * scale))
 
     -- Ask the font engine for the real line height (includes ascender+descender).
+    -- BUGFIX: face.size is just the font's point size (a plain number, not
+    -- a table) -- face.size.height was indexing a number, which raises an
+    -- uncaught Lua runtime error ("attempt to index a number value"), not a
+    -- graceful fallthrough to the fallback below. face.ftsize is the actual
+    -- freetype face object; :getHeightAndAscender() is the real API (see
+    -- how ui/widget/textwidget.lua's own updateSize() measures line height).
     local function faceH(fs)
         local ok, face = pcall(Font.getFace, Font, "smallinfofont", fs)
-        if ok and face and face.size and face.size.height then
-            return face.size.height
+        if ok and face and face.ftsize then
+            local ok2, h = pcall(function() return face.ftsize:getHeightAndAscender() end)
+            if ok2 and h then return math.ceil(h) end
         end
         -- fallback: font size * 1.8 approximates typical line height
         return math.ceil(fs * 1.8)

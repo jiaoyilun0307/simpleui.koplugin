@@ -62,6 +62,7 @@ local HS_EXACT = {
     ["simpleui_reading_goals_layout"]       = true,
     ["simpleui_qa_row_instances"]           = true,
     ["simpleui_spacer_row_instances"]       = true,
+    ["simpleui_coll_row_instances"]         = true,
 }
 
 local function _hsMatchesKey(key)

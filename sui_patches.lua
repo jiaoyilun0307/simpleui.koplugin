@@ -1284,15 +1284,6 @@ function M.patchCollections(plugin)
         plugin._orig_rc_additem = orig_add
         RC.addItem = function(rc_self, file, coll_name, attr, ...)
             local TBR = _getTBR()
-            if TBR and coll_name == TBR.TBR_COLL_NAME then
-                local coll  = rc_self.coll and rc_self.coll[coll_name]
-                local count = 0
-                if coll then for _ in pairs(coll) do count = count + 1 end end
-                if count >= (TBR.TBR_MAX or 5) then
-                    _showInfoMsg(_("To Be Read list is full (max. 5 books)."))
-                    return  -- abort — do NOT call orig_add
-                end
-            end
             orig_add(rc_self, file, coll_name, attr, ...)
             if TBR and coll_name == TBR.TBR_COLL_NAME then
                 local ok2, err = pcall(function()
@@ -2500,6 +2491,15 @@ function M.patchUIManagerClose(plugin)
                 and not widget._navbar_closing_intentionally
                 and not widget._navbar_hs_scheduled
                 and not (widget._manager and widget._manager.folder_shortcuts)
+                -- Exclude the "add file to collection(s)" checklist. This is a
+                -- coll_list Menu opened in select mode (title_bar_left_icon ==
+                -- "check") from a file long-press's "Collections…" button while
+                -- browsing the FM — it is not a Homescreen-tab overlay, so
+                -- closing it (e.g. via "Apply selection") must return to the
+                -- FM, not reopen the Home Screen. Only the plain browse-mode
+                -- coll_list (opened from the Collections tab, left icon
+                -- "appbar.menu") should fall through to the HS-reopen path.
+                and not (widget.name == "coll_list" and widget.title_bar_left_icon == "check")
                 and UIManager._exit_code == nil then
             widget._navbar_hs_scheduled = true
             local fm = liveFM()

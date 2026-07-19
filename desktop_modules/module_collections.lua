@@ -62,17 +62,50 @@ local _CLR_COVER_BG     = Blitbuffer.gray(0.88)
 
 local LABEL_H = UI.LABEL_H  -- kept for any external callers; getHeight() uses getScaledLabelH()
 
--- getDims(scale, thumb_scale)
+-- Aspect ratio of the collection cover, from the 100%-scale base dims —
+-- used to derive coll_h from an auto-fit coll_w while keeping proportions.
+local _BASE_COLL_ASPECT = _BASE_COLL_H / _BASE_COLL_W
+
+-- Collections always reserves this many layout slots so spacing stays
+-- consistent regardless of how many collections are selected (1-5) — see
+-- the comment above the gap calc in build().
+local NUM_SLOTS = 5
+
+-- ---------------------------------------------------------------------------
+-- computeSlotWidth(inner_w, cs) — auto-fit cover sizing, mirroring the
+-- algorithm RowRenderer uses for Recent Books / New Books / TBR
+-- (sui_book_row.lua): the base size is always auto-fit — NUM_SLOTS stack
+-- cells + gaps exactly filling inner_w — and Cover Size/Scale (cs = scale *
+-- thumb_scale) is applied as a multiplier ON TOP of that base, never as a
+-- switch to an unrelated fixed constant. This keeps 100% == "fills the
+-- row", and growing/shrinking the slider moves continuously from whatever
+-- was already on screen instead of jumping to/from a fixed size the moment
+-- cs stops being exactly 1.0.
+-- Returns: slot_w (stack_cell_w — includes the spine), gap.
+-- ---------------------------------------------------------------------------
+local function computeSlotWidth(inner_w, cs)
+    local autofit_w = math.max(1, math.floor((inner_w - (NUM_SLOTS - 1) * PAD) / NUM_SLOTS))
+    if cs == 1.0 then
+        return autofit_w, PAD
+    end
+    local slot_w = math.max(1, math.floor(autofit_w * cs))
+    local gap    = math.floor((inner_w - NUM_SLOTS * slot_w) / (NUM_SLOTS - 1))
+    return slot_w, gap
+end
+
+-- getDims(scale, thumb_scale, w)
 -- scale:       overall module scale — affects all dimensions.
 -- thumb_scale: independent thumbnail scale — affects cover/badge/edge dims only.
 --              Label text and gaps follow `scale` only.
-local function getDims(scale, thumb_scale)
+-- w:           full column width, as passed to build()/getHeight(). Used to
+--              auto-fit coll_w/coll_h to the row (see computeSlotWidth
+--              above). Callers should always pass it; the fallback branch
+--              below (fixed-size, non-auto-fit) only guards against a nil w.
+local function getDims(scale, thumb_scale, w)
     scale       = scale       or 1.0
     thumb_scale = thumb_scale or 1.0
     -- Combined scale for cover-related dimensions only.
     local cs = scale * thumb_scale
-    local coll_w       = math.floor(_BASE_COLL_W       * cs)
-    local coll_h       = math.floor(_BASE_COLL_H       * cs)
     local accent_h     = math.max(1, math.floor(_BASE_ACCENT_H     * cs))
     local badge_sz       = math.max(6, math.floor(_BASE_BADGE_SZ       * cs))
     local badge_margin   = math.max(1, math.floor(_BASE_BADGE_MARGIN   * cs))
@@ -89,9 +122,29 @@ local function getDims(scale, thumb_scale)
     -- TextBoxWidget internal line_height_px = math.floor(1.3 * font_size + 0.5).
     -- We must use this exact formula for both the widget height and coll_cell_h.
     local tbw_line_h   = math.floor(1.3 * coll_lbl_fs + 0.5)
+
+    -- coll_w/coll_h: auto-fit to the row (see computeSlotWidth) rather than
+    -- a fixed constant — stack_extra (spine width) must come out of the
+    -- slot before we get to the cover's own width.
+    local coll_w, coll_h, gap
+    if w then
+        local inner_w = w - PAD * 2
+        local slot_w
+        slot_w, gap = computeSlotWidth(inner_w, cs)
+        coll_w = math.max(1, slot_w - stack_extra)
+        coll_h = math.max(1, math.floor(coll_w * _BASE_COLL_ASPECT))
+    else
+        -- Defensive fallback for the (unexpected) case of no width — keeps
+        -- this function total instead of erroring or returning nil dims.
+        coll_w = math.max(1, math.floor(_BASE_COLL_W * cs))
+        coll_h = math.max(1, math.floor(coll_w * _BASE_COLL_ASPECT))
+        gap    = PAD
+    end
+
     return {
         coll_w       = coll_w,
         coll_h       = coll_h,
+        gap          = gap,
         accent_h     = accent_h,
         tbw_line_h   = tbw_line_h,
         label_gap    = label_gap,
@@ -360,7 +413,7 @@ function M.build(w, ctx)
     local scale       = Config.getModuleScale("collections", ctx.pfx)
     local thumb_scale = Config.getThumbScale("collections", ctx.pfx)
     local lbl_scale   = Config.getItemLabelScale("collections", ctx.pfx)
-    local d           = getDims(scale, thumb_scale)
+    local d           = getDims(scale, thumb_scale, w)
     -- Apply independent label text scale on top of module scale, then
     -- recalculate tbw_line_h and coll_cell_h so they stay in sync with the
     -- actual font size used by the TextBoxWidget.
@@ -386,11 +439,10 @@ function M.build(w, ctx)
     local _ok_rc_sync, _rc_or_err_sync = pcall(require, "readcollection")
     if _ok_rc_sync and _rc_or_err_sync then
         _rc_sync = _rc_or_err_sync
-        if _rc_sync._read then
-            pcall(function()
-                _rc_sync:_read()
-            end)
-        end
+        -- Do NOT call _rc_sync:_read() here — it destructively reloads
+        -- rc.coll/rc.coll_settings from disk and can wipe out an
+        -- in-memory-only collection the native Collections UI hasn't
+        -- flushed to disk yet. The singleton is already live in-process.
     end
     local synced_raw = {}
     if _rc_sync and (_rc_sync.coll or _rc_sync.coll_folders) then
@@ -448,16 +500,14 @@ function M.build(w, ctx)
     local ok_rc, rc_or_err = pcall(require, "readcollection")
     if ok_rc and rc_or_err then
         rc = rc_or_err
-        if rc._read then
-            pcall(function()
-                rc:_read()
-            end)
-        end
+        -- Not calling rc:_read() — see note above; it can wipe uncommitted
+        -- collection changes made via the native Collections UI.
     end
 
     -- Always distribute across 5 slots so spacing is consistent regardless
-    -- of how many collections are selected.
-    local gap = math.floor((inner_w - 5 * d.stack_cell_w) / 4)
+    -- of how many collections are selected. d.gap comes from the same
+    -- auto-fit calc as d.coll_w/d.stack_cell_w (see computeSlotWidth).
+    local gap = d.gap
     local row = HorizontalGroup:new{ align = "top" }
     local cover_slots = {}
 
@@ -614,7 +664,13 @@ function M.getHeight(ctx)
     local scale       = Config.getModuleScale("collections", pfx)
     local thumb_scale = Config.getThumbScale("collections", pfx)
     local lbl_scale   = Config.getItemLabelScale("collections", pfx)
-    local d = getDims(scale, thumb_scale)
+    -- coll_h now derives from the auto-fit coll_w (see computeSlotWidth),
+    -- so getHeight needs a width the same way RowRenderer.getHeight does:
+    -- prefer what the caller knows about the actual column, and fall back
+    -- to a full-width screen estimate only when that's unavailable (e.g. a
+    -- layout-preview context that hasn't set col_w/inner_w yet).
+    local w = (ctx and (ctx.col_w or ctx.inner_w)) or (Screen:getWidth() - UI.SIDE_PAD * 2)
+    local d = getDims(scale, thumb_scale, w)
     -- Mirror the lbl_scale adjustment that build() applies so the heights stay in sync
     -- when the user has set a per-module text scale different from 1.0.
     if lbl_scale ~= 1.0 then
@@ -687,11 +743,8 @@ function M.getMenuItems(ctx_menu)
     local ok_rc, rc  = pcall(require, "readcollection")
     local all_colls  = {}
     if ok_rc and rc then
-        if rc._read then
-            pcall(function()
-                rc:_read()
-            end)
-        end
+        -- Not calling rc:_read() — see note above; it can wipe uncommitted
+        -- collection changes made via the native Collections UI.
         local fav = rc.default_collection_name or "favorites"
         local coll_set = {}
         if rc.coll then for n in pairs(rc.coll) do coll_set[n] = true end end
@@ -725,11 +778,8 @@ function M.getMenuItems(ctx_menu)
 
     local function openCoverPicker(coll_name)
         if not ok_rc then return end
-        if rc._read then
-            pcall(function()
-                rc:_read()
-            end)
-        end
+        -- Not calling rc:_read() — see note above; it can wipe uncommitted
+        -- collection changes made via the native Collections UI.
         local coll = rc.coll and rc.coll[coll_name]
         if not coll then
             _UIManager:show(InfoMessage:new{ text = _lc("Collection is empty."), timeout = 2 }); return
