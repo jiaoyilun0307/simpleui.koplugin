@@ -80,19 +80,19 @@ msgstr "(%d/%d — đã đạt giới hạn)"
 
 #: sui_menu.lua:2698
 msgid "4-Cover Grid (Mosaic View Only)"
-msgstr "Lười 4 bìa (Chế độ khảm)"
+msgstr "Lưới 4 bìa (Dạng lưới so le)"
 
 #: sui_menu.lua:3863
 #: sui_menu.lua:3948
 #: sui_presets.lua:906
 #: sui_presets.lua:992
 msgid "A preset named \"%s\" already exists."
-msgstr "Mẫu có tên "%s" đã tồn tại."
+msgstr "Thiết lập có tên \"%s\" đã tồn tại."
 
 #: sui_menu.lua:3809
 #: sui_presets.lua:847
 msgid "A preset named \"%s\" already exists.\nOverwrite it?"
-msgstr "Mẫu có tên "%s" đã tồn tại.\nGhi đè nó?"
+msgstr "Thiết lập có tên \"%s\" đã tồn tại.\nBạn có muốn ghi đè không?"
 
 #: sui_menu.lua:1039
 #: sui_menu.lua:1316
@@ -120,32 +120,32 @@ msgstr "Màu nhấn / Màu hoạt động"
 #: sui_quickactions.lua:1617
 #: sui_quickactions.lua:1660
 msgid "Action"
-msgstr "Hành động"
+msgstr "Thao tác"
 
 #: desktop_modules/module_action_list.lua:329
 msgid "Action List"
-msgstr "Danh sách hành động"
+msgstr "Danh sách thao tác"
 
 #: sui_quickactions.lua:1781
 msgid "Action Type"
-msgstr "Loại hành động"
+msgstr "Loại thao tác"
 
 #: sui_quickactions.lua:566
 msgid "Action error: %s"
-msgstr "Lỗi hành động: %s"
+msgstr "Lỗi thao tác: %s"
 
 #: sui_quickactions.lua:1636
 msgid "Action name…"
-msgstr "Tên hành động…"
+msgstr "Tên thao tác…"
 
 #: sui_quickactions.lua:559
 msgid "Action not available: %s"
-msgstr "Hành động không khả dụng: %s"
+msgstr "Thao tác không khả dụng: %s"
 
 #: sui_quicksettings_bar.lua:1179
 #: sui_quicksettings_bar.lua:1206
 msgid "Add Action"
-msgstr "Thêm hành động"
+msgstr "Thêm thao tác"
 
 #: sui_menu.lua:1548
 #: sui_menu.lua:1586
@@ -196,7 +196,7 @@ msgstr "Thêm trang"
 #: desktop_modules/module_action_list.lua:424
 #: desktop_modules/module_quick_actions.lua:345
 msgid "Add at least 2 actions to arrange."
-msgstr "Thêm ít nhất 2 hành động để sắp xếp."
+msgstr "Thêm ít nhất 2 thao tác để sắp xếp."
 
 #: desktop_modules/module_tbr.lua:582
 msgid "Add at least 2 books to arrange."
@@ -368,7 +368,7 @@ msgstr "Tác giả"
 
 #: sui_menu.lua:2709
 msgid "Auto (Single ↔ 4-Cover Grid)"
-msgstr "Tự động (Đơn ↔ Lười 4 bìa)"
+msgstr "Tự động (Đơn ↔ Lưới 4 bìa)"
 
 #: sui_foldercovers.lua:769
 #: sui_foldercovers.lua:826
@@ -533,19 +533,19 @@ msgstr "Duyệt"
 
 #: sui_style.lua:102
 msgid "Browse Button (author)"
-msgstr "Nũt duyệt (tác giả)"
+msgstr "Nút duyệt (tác giả)"
 
 #: sui_style.lua:96
 msgid "Browse Button (default)"
-msgstr "Nũt duyệt (mặc định)"
+msgstr "Nút duyệt (mặc định)"
 
 #: sui_style.lua:108
 msgid "Browse Button (series)"
-msgstr "Nũt duyệt (loạt)"
+msgstr "Nút duyệt (bộ sách)"
 
 #: sui_style.lua:114
 msgid "Browse Button (tags)"
-msgstr "Nũt duyệt (thẻ)"
+msgstr "Nút duyệt (thẻ)"
 
 #: sui_style.lua:1081
 msgid "Browse Icons"
@@ -559,7 +559,7 @@ msgstr "Duyệt theo"
 #: sui_quickactions.lua:424
 #: sui_quickactions.lua:442
 msgid "Browse by Authors/Series/Tags not available."
-msgstr "Duyệt theo Tác giả/Loạt/Thẻ không khả dụng."
+msgstr "Duyệt theo Tác giả/Bộ sách/Thẻ không khả dụng."
 
 #: sui_titlebar.lua:993
 msgid "Browse library"
@@ -585,7 +585,7 @@ msgstr "Theo tác giả"
 
 #: sui_titlebar.lua:998
 msgid "By series"
-msgstr "Theo loạt"
+msgstr "Theo bộ sách"
 
 #: sui_titlebar.lua:999
 msgid "By tags"
@@ -713,7 +713,7 @@ msgstr "Đang đóng sách…"
 
 #: sui_quickactions.lua:1315
 msgid "Codepoint out of valid Unicode range (0–10FFFF)."
-msgstr "Điểm mã nẽngoài phạm vi Unicode hợp lệ (0–10FFFF)."
+msgstr "Mã ký tự ngoài phạm vi của Unicode (0–10FFFF)."
 
 #: sui_quickactions.lua:1723
 #: sui_quickactions.lua:1784
@@ -723,7 +723,7 @@ msgstr "Bộ sưu tập"
 #: sui_foldercovers.lua:740
 #: sui_browsemeta.lua:937
 msgid "Collection \"%1\" created with %2 books."
-msgstr "Bộ sưu tập "%1" đã tạo với %2 cuốn sách."
+msgstr "Bộ sưu tập \"%1\" đã tạo với %2 cuốn sách."
 
 #: sui_foldercovers.lua:725
 #: sui_browsemeta.lua:912
@@ -764,7 +764,7 @@ msgstr "Bộ sưu tập không khả dụng."
 
 #: sui_style.lua:164
 msgid "Collections: Back Button"
-msgstr "Bộ sưu tập: Nũt quay lại"
+msgstr "Bộ sưu tập: Nút quay lại"
 
 #: sui_menu.lua:2807
 #: sui_menu.lua:2861
@@ -832,7 +832,7 @@ msgstr "Khoảng cách bìa"
 
 #: desktop_modules/module_collections.lua:762
 msgid "Cover for \"%s\""
-msgstr "Bìa cho "%s""
+msgstr "Bìa cho \"%s\""
 
 #: desktop_modules/module_recent.lua:322
 #: desktop_modules/module_recent.lua:324
@@ -853,7 +853,7 @@ msgstr "Tạo"
 #: sui_quickactions.lua:899
 #: sui_quickactions.lua:1969
 msgid "Create Quick Action"
-msgstr "Tạo hành động nhanh"
+msgstr "Tạo thao tác nhanh"
 
 #: sui_foldercovers.lua:931
 #: sui_foldercovers.lua:1215
@@ -882,7 +882,7 @@ msgstr "Tùy chỉnh"
 #: sui_quickactions.lua:1125
 #: sui_quickactions.lua:1128
 msgid "Custom Actions"
-msgstr "Hành động tùy chỉnh"
+msgstr "Thao tác tùy chỉnh"
 
 #: desktop_modules/module_quote.lua:1327
 msgid "Custom File"
@@ -896,7 +896,7 @@ msgstr "Văn bản tùy chỉnh"
 
 #: sui_onboarding.lua:168
 msgid "Custom wallpapers and icons"
-msgstr "Tường nền và biểu tượng tùy chỉnh"
+msgstr "Tùy chỉnh hình nền và biểu tượng"
 
 #: sui_onboarding.lua:160
 msgid "Customize even more"
@@ -904,7 +904,7 @@ msgstr "Tùy chỉnh thêm"
 
 #: sui_stats_windows.lua:2064
 msgid "DAY STREAK"
-msgstr "CHUỞI NGÀY"
+msgstr "CHUỖI DUY TRÌ"
 
 #: desktop_modules/module_reading_goals.lua:861
 #: desktop_modules/module_reading_goals.lua:889
@@ -1026,12 +1026,12 @@ msgstr "Xóa cài đặt"
 #: sui_presets.lua:922
 #: sui_presets.lua:962
 msgid "Delete preset \"%s\"?"
-msgstr "Xóa mẫu "%s"?"
+msgstr "Xóa thiết lập \"%s\"?"
 
 #: sui_quickactions.lua:865
 #: sui_quickactions.lua:2054
 msgid "Delete quick action \"%s\"?"
-msgstr "Xóa hành động nhanh "%s"?"
+msgstr "Xóa thao tác nhanh \"%s\"?"
 
 #: sui_quickactions.lua:1408
 msgid "Dictionary Lookup"
@@ -1044,11 +1044,11 @@ msgstr "Kỹ thuật số"
 
 #: sui_menu.lua:2416
 msgid "Disable \"Lock Scale\" first to set a custom label scale."
-msgstr "Tắt "Khóa tỷ lệ" trước để đặt tỷ lệ nhãn tùy chỉnh."
+msgstr "Tắt \"Khóa tỷ lệ\" trước để đặt tỷ lệ nhãn tùy chỉnh."
 
 #: sui_config.lua:803
 msgid "Disable \"Lock Scale\" first to set a per-module scale."
-msgstr "Tắt "Khóa tỷ lệ" trước để đặt tỷ lệ cho từng mô-đun."
+msgstr "Tắt \"Khóa tỷ lệ\" trước để đặt tỷ lệ cho từng mô-đun."
 
 #: sui_config.lua:162
 msgid "Disk Usage"
@@ -1103,7 +1103,7 @@ msgstr "Chỉnh sửa bố cục"
 
 #: sui_quickactions.lua:1527
 msgid "Edit Quick Action"
-msgstr "Chỉnh sửa hành động nhanh"
+msgstr "Chỉnh sửa thao tác nhanh"
 
 #: desktop_modules/module_clock.lua:199
 #: desktop_modules/module_clock.lua:248
@@ -1128,15 +1128,15 @@ msgstr "Trống"
 #: sui_quickactions.lua:425
 #: sui_quickactions.lua:443
 msgid "Enable 'Browse by Author / Series / Tags' in the library menu first."
-msgstr "Bật 'Duyệt theo Tác giả / Loạt / Thẻ' trong menu thư viện trước."
+msgstr "Bật 'Duyệt theo Tác giả / Bộ sách / Thẻ' trong menu thư viện trước."
 
 #: sui_menu.lua:2630
 msgid "Enable Browse by Author / Series / Tags"
-msgstr "Bật duyệt theo Tác giả / Loạt / Thẻ"
+msgstr "Bật duyệt theo Tác giả / Bộ sách / Thẻ"
 
 #: sui_menu.lua:2614
 msgid "Enable Library Custom Covers"
-msgstr "Bật bìa tùy chỉnh thư viện"
+msgstr "Cho phép tùy chỉnh ảnh bìa thư viện."
 
 #: sui_menu.lua:1093
 msgid "Enable Navigation Bar"
@@ -1156,19 +1156,19 @@ msgstr "Bật thanh tiêu đề"
 
 #: sui_menu.lua:2187
 msgid "Enable Wallpaper"
-msgstr "Bật tường nền"
+msgstr "Bật hình nền"
 
 #: sui_style.lua:1458
 msgid "Enable custom UI font"
-msgstr "Bật phông chữ giao diện tùy chỉnh"
+msgstr "Cho phép tùy chỉnh phông chữ giao diện"
 
 #: sui_style.lua:1791
 msgid "Enter a hex color (#RRGGBB). On greyscale e-ink the perceived brightness is used."
-msgstr "Nhập màu hex (#RRGGBB). Trên màn hình e-ink xám, độ sáng cảm nhận được sử dụng."
+msgstr "Nhập mã màu hex (#RRGGBB). Trên màn hình e-ink, độ sáng tương ứng sẽ được áp dụng."
 
 #: sui_quickactions.lua:1286
 msgid "Enter the Unicode codepoint (hex) of a Nerd Fonts symbol.\nYou can look up codes with wakamaifondue.com using the file:\n  /koreader/fonts/nerdfonts/symbols.ttf\nLeave blank and press OK to remove a Nerd Font icon."
-msgstr "Nhập điểm mã Unicode (hex) của biểu tượng Nerd Fonts."
+msgstr "Nhập mã Unicode (hex) của biểu tượng Nerd Fonts.\nBạn có thể tra cứu mã trên trang wakamaifondue.com bằng tệp:\n  /koreader/fonts/nerdfonts/symbols.ttf\nĐể trống và nhấn Đồng ý để xóa biểu tượng."
 
 #: sui_menu.lua:3640
 msgid "Error applying pack:"
@@ -1185,7 +1185,7 @@ msgstr "Lỗi kiểm tra cập nhật: "
 #: sui_menu.lua:4061
 #: sui_presets.lua:1101
 msgid "Error exporting preset: "
-msgstr "Lỗi xuất mẫu: "
+msgstr "Lỗi xuất thiết lập: "
 
 #: sui_style.lua:2084
 msgid "Error extracting zip: "
@@ -1194,7 +1194,7 @@ msgstr "Lỗi giải nén zip: "
 #: sui_menu.lua:4028
 #: sui_presets.lua:1069
 msgid "Error importing preset: "
-msgstr "Lỗi nhập mẫu: "
+msgstr "Lỗi nhập thiết lập: "
 
 #: desktop_modules/module_reading_goals.lua:755
 msgid "Error in Reading Goals: check crash.log"
@@ -1207,7 +1207,7 @@ msgstr "Lỗi cài đặt gói:"
 #: sui_menu.lua:4044
 #: sui_presets.lua:1085
 msgid "Export preset"
-msgstr "Xuất mẫu"
+msgstr "Xuất thiết lập"
 
 #: sui_menu.lua:549
 msgid "Extra Small"
@@ -1360,15 +1360,15 @@ msgstr "Đèn trước không khả dụng trên thiết bị này."
 
 #: sui_menu.lua:2492
 msgid "Gesture Only"
-msgstr "Chỉ cử chỉ"
+msgstr "Chỉ dùng cử chỉ"
 
 #: sui_settings_window.lua:275
 msgid "Global custom quick actions"
-msgstr "Hành động nhanh tùy chỉnh toàn cục"
+msgstr "Thao tác nhanh tùy chỉnh toàn cục"
 
 #: sui_settings_window.lua:276
 msgid "Global custom quick actions  (%d/%d)"
-msgstr "Hành động nhanh tùy chỉnh toàn cục (%d/%d)"
+msgstr "Thao tác nhanh tùy chỉnh toàn cục (%d/%d)"
 
 #: sui_menu.lua:2390
 msgid "Global scale for all modules.\nIndividual overrides in Module Settings take precedence.\n100% is the default size."
@@ -1386,7 +1386,7 @@ msgstr "Mục tiêu"
 
 #: sui_menu.lua:2666
 msgid "Group by Book Series"
-msgstr "Nhóm theo loạt sách"
+msgstr "Nhóm theo bộ sách"
 
 #: sui_menu.lua:1300
 msgid "Height of the bottom navigation bar.\n100% is the default size."
@@ -1442,7 +1442,7 @@ msgstr "Ẩn thanh phân trang trên màn hình chính.\nKhông khả dụng khi
 
 #: sui_stats_windows.lua:746
 msgid "Highlights"
-msgstr "Điểm nổi bật"
+msgstr "Đoạn đánh dấu"
 
 #: sui_quickactions.lua:258
 #: sui_quickactions.lua:1402
@@ -1470,7 +1470,7 @@ msgstr "Màn hình chính"
 
 #: sui_settings_window.lua:856
 msgid "Home Screen Presets"
-msgstr "Mẫu màn hình chính"
+msgstr "Thiết lập màn hình chính"
 
 #: sui_menu.lua:478
 msgid "Home Screen Style"
@@ -1519,7 +1519,7 @@ msgstr "Gói biểu tượng"
 
 #: sui_menu.lua:3657
 msgid "Icon Presets"
-msgstr "Mẫu biểu tượng"
+msgstr "Thiết lập biểu tượng"
 
 #: sui_menu.lua:1329
 #: sui_menu.lua:1330
@@ -1545,12 +1545,12 @@ msgstr "Biểu tượng, phông chữ và giao diện"
 
 #: sui_onboarding.lua:165
 msgid "If you selected the Momentum Preset, long press the Reading Goal module to choose and set your reading goals."
-msgstr "Nếu bạn đã chọn Mẫu Động lực, nhấn giữ mô-đun Mục tiêu đọc để chọn và đặt mục tiêu đọc."
+msgstr "Nếu bạn đã chọn Thiết lập động lượng, nhấn giữ mô-đun Mục tiêu đọc để chọn và đặt mục tiêu đọc."
 
 #: sui_menu.lua:4000
 #: sui_presets.lua:1042
 msgid "Import preset"
-msgstr "Nhập mẫu"
+msgstr "Nhập thiết lập"
 
 #: sui_menu.lua:3564
 msgid "Install pack from ZIP"
@@ -1576,7 +1576,7 @@ msgstr "Đầu vào không hợp lệ. Vui lòng nhập 1–6 chữ số thập 
 #: sui_presets.lua:406
 #: sui_presets.lua:586
 msgid "Invalid preset file"
-msgstr "Tệp mẫu không hợp lệ"
+msgstr "Tệp thiết lập không hợp lệ"
 
 #: sui_menu.lua:2305
 msgid "Invert in Night Mode"
@@ -1755,15 +1755,15 @@ msgstr "Cá nhân hóa"
 #: sui_presets.lua:943
 #: sui_presets.lua:948
 msgid "Manage presets"
-msgstr "Quản lý mẫu"
+msgstr "Quản lý thiết lập"
 
 #: desktop_modules/module_reading_goals.lua:1028
 msgid "Manually Tracked Books"
-msgstr "Sách theo dõi thủ công"
+msgstr "Sách được theo dõi thủ công"
 
 #: desktop_modules/module_reading_goals.lua:1016
 msgid "Manually Tracked Books  (%s)"
-msgstr "Sách theo dõi thủ công (%s)"
+msgstr "Sách được theo dõi thủ công (%s)"
 
 #: desktop_modules/module_clock.lua:60
 msgid "March"
@@ -1777,7 +1777,7 @@ msgstr "Tối đa"
 #: desktop_modules/module_collections.lua:856
 #: desktop_modules/module_collections.lua:996
 msgid "Maximum 5 collections. Remove one first."
-msgstr "Tối đa 5 bộ sưu tập. Xóa một cái trước."
+msgstr "Tối đa 5 bộ sưu tập. Vui lòng xóa bớt."
 
 #: sui_quicksettings_bar.lua:1193
 msgid "Maximum slots reached."
@@ -1811,7 +1811,7 @@ msgstr "Cần ít nhất 1 tab trong chế độ navpager."
 
 #: sui_menu.lua:354
 msgid "Minimum 2 tabs required. Select another tab first."
-msgstr "Cần ít nhất 2 tab. Chọn tab khác trước."
+msgstr "Cần ít nhất 2 tab. Vui lòng chọn thêm tab khác."
 
 #: desktop_modules/module_reading_goals.lua:440
 msgid "Minutes per day:"
@@ -1840,7 +1840,7 @@ msgstr "Mô-đun"
 
 #: sui_menu.lua:2134
 msgid "Modules  (%d)"
-msgstr "Mô-đún (%d)"
+msgstr "Mô-đun (%d)"
 
 #: sui_homescreen.lua:2415
 msgid "Modules exceed the visible area.\nMove some to another page or adjust the scale."
@@ -1885,16 +1885,16 @@ msgstr "Di chuyển lên"
 
 #: sui_quickactions.lua:22
 msgid "My Action"
-msgstr "Hành động của tôi"
+msgstr "Thao tác của tôi"
 
 #: desktop_modules/module_quote.lua:1283
 msgid "My Highlights"
-msgstr "Điểm nổi bật của tôi"
+msgstr "Đoạn đánh dấu của tôi"
 
 #: sui_presets.lua:757
 #: sui_presets.lua:762
 msgid "My Presets"
-msgstr "Mẫu của tôi"
+msgstr "Thiết lập của tôi"
 
 #: sui_quickactions.lua:1636
 msgid "Name"
@@ -1991,7 +1991,7 @@ msgstr "Sách mới"
 
 #: sui_quickactions.lua:1527
 msgid "New Quick Action"
-msgstr "Hành động nhanh mới"
+msgstr "Thao tác nhanh mới"
 
 #: sui_foldercovers.lua:709
 #: sui_browsemeta.lua:893
@@ -2028,7 +2028,7 @@ msgstr "Không tìm thấy tệp .zip nào.\nĐặt tệp .zip vào:\n%1"
 #: sui_quicksettings_bar.lua:1149
 #: sui_quicksettings_bar.lua:1169
 msgid "No actions active yet."
-msgstr "Chưa có hành động nào hoạt động."
+msgstr "Chưa có thao tác nào hoạt động."
 
 #: sui_quickactions.lua:898
 #: sui_settings_window.lua:445
@@ -2036,17 +2036,17 @@ msgstr "Chưa có hành động nào hoạt động."
 #: desktop_modules/module_action_list.lua:135
 #: desktop_modules/module_quick_actions.lua:90
 msgid "No actions configured"
-msgstr "Chưa cấu hình hành động nào"
+msgstr "Chưa cấu hình thao tác nào"
 
 #: desktop_modules/module_action_list.lua:107
 #: desktop_modules/module_action_list.lua:134
 #: desktop_modules/module_quick_actions.lua:89
 msgid "No actions configured  —  long press to configure"
-msgstr "Chưa cấu hình hành động nào — nhấn giữ để cấu hình"
+msgstr "Chưa cấu hình thao tác nào — nhấn giữ để cấu hình"
 
 #: sui_quicksettings_bar.lua:351
 msgid "No actions configured.\nGo to Bars → Quick Settings Bar."
-msgstr "Chưa cấu hình hành động nào.\nĐi tới Thanh → Thanh cài đặt nhanh."
+msgstr "Chưa cấu hình thao tác nào.\nĐi tới Thanh → Thanh cài đặt nhanh."
 
 #: sui_quickactions.lua:282
 msgid "No book in history."
@@ -2063,7 +2063,7 @@ msgstr "Không tìm thấy sách nào trong thư mục này."
 #: sui_foldercovers.lua:702
 #: sui_foldercovers.lua:759
 msgid "No books found in this series."
-msgstr "Không tìm thấy sách nào trong loạt này."
+msgstr "Không tìm thấy sách nào trong bộ sách này."
 
 #: sui_browsemeta.lua:962
 msgid "No books found."
@@ -2110,7 +2110,7 @@ msgstr "Không có đường dẫn."
 
 #: sui_quickactions.lua:2141
 msgid "No folder, collection or plugin configured.\nGo to Simple UI → Settings → Quick Actions to set one."
-msgstr "Chưa cấu hình thư mục, bộ sưu tập hoặc plugin nào.\nĐi tới Simple UI → Cài đặt → Hành động nhanh để thiết lập."
+msgstr "Chưa cấu hình thư mục, bộ sưu tập hoặc plugin nào.\nĐi tới Simple UI → Cài đặt → Thao tác nhanh để thiết lập."
 
 #: sui_style.lua:1473
 msgid "No fonts found."
@@ -2118,7 +2118,7 @@ msgstr "Không tìm thấy phông chữ nào."
 
 #: desktop_modules/module_quote.lua:926
 msgid "No highlights found. Open a book and highlight some passages."
-msgstr "Không tìm thấy điểm nổi bật nào. Mở sách và đánh dấu một số đoạn."
+msgstr "Không tìm thấy đoạn đánh dấu. Mở sách và đánh dấu một số đoạn."
 
 #: sui_quickactions.lua:1367
 msgid "No icons found in:"
@@ -2160,7 +2160,7 @@ msgstr "Chưa chọn mục nào."
 #: sui_settings_window.lua:364
 #: sui_settings_window.lua:526
 msgid "No modules"
-msgstr "Không có mô-đún"
+msgstr "Không có mô-đun"
 
 #: sui_settings_window.lua:512
 msgid "No other pages available."
@@ -2177,12 +2177,12 @@ msgstr "Không tìm thấy plugin nào."
 #: sui_menu.lua:4008
 #: sui_presets.lua:1049
 msgid "No preset files found.\nPlace .lua files in:\n%1"
-msgstr "Không tìm thấy tệp mẫu nào.\nĐặt tệp .lua vào:\n%1"
+msgstr "Không tìm thấy tệp thiết lập nào.\nĐặt tệp .lua vào:\n%1"
 
 #: sui_menu.lua:3984
 #: sui_presets.lua:1026
 msgid "No presets found."
-msgstr "Không tìm thấy mẫu nào."
+msgstr "Không tìm thấy thiết lập nào."
 
 #: desktop_modules/module_quote.lua:888
 msgid "No quotes found."
@@ -2203,7 +2203,7 @@ msgstr "Chưa chọn thống kê nào — nhấn giữ để cấu hình"
 
 #: sui_quickactions.lua:1756
 msgid "No system actions found."
-msgstr "Không tìm thấy hành động hệ thống nào."
+msgstr "Không tìm thấy thao tác hệ thống nào."
 
 #: sui_menu.lua:2218
 msgid "No wallpapers found."
@@ -2327,20 +2327,20 @@ msgstr "Ghi đè"
 #: sui_presets.lua:877
 #: sui_presets.lua:1009
 msgid "Overwrite preset \"%s\" with the current homescreen settings?"
-msgstr "Ghi đè mẫu "%s" bằng cài đặt màn hình chính hiện tại?"
+msgstr "Ghi đè thiết lập \"%s\" bằng cài đặt màn hình chính hiện tại?"
 
 #: sui_menu.lua:3838
 #: sui_menu.lua:3967
 msgid "Overwrite preset \"%s\" with the current icon settings?"
-msgstr "Ghi đè mẫu "%s" bằng cài đặt biểu tượng hiện tại?"
+msgstr "Ghi đè thiết lập \"%s\" bằng cài đặt biểu tượng hiện tại?"
 
 #: sui_menu.lua:3634
 msgid "Pack \"%s\" applied.\n%d icons replaced."
-msgstr "Gói "%s" đã áp dụng.\n%d biểu tượng đã thay thế."
+msgstr "Gói \"%s\" đã áp dụng.\n%d biểu tượng đã thay thế."
 
 #: sui_menu.lua:3595
 msgid "Pack \"%s\" installed.\nYou can now apply it from the list."
-msgstr "Gói "%s" đã cài đặt.\nBạn có thể áp dụng nó từ danh sách."
+msgstr "Gói \"%s\" đã cài đặt.\nBạn có thể áp dụng nó từ danh sách."
 
 #: sui_style.lua:2089
 msgid "Pack folder not accessible: "
@@ -2474,11 +2474,11 @@ msgstr "Bìa giữ chỗ cho thư mục không có sách"
 #: sui_menu.lua:3789
 #: sui_presets.lua:822
 msgid "Please enter a name for the preset."
-msgstr "Vui lòng nhập tên cho mẫu."
+msgstr "Vui lòng nhập tên cho thiết lập."
 
 #: sui_quickactions.lua:1656
 msgid "Please select an action."
-msgstr "Vui lòng chọn hành động."
+msgstr "Vui lòng chọn thao tác."
 
 #: sui_quickactions.lua:1749
 #: sui_quickactions.lua:1786
@@ -2506,49 +2506,49 @@ msgstr "Nguồn"
 #: sui_menu.lua:4020
 #: sui_presets.lua:1063
 msgid "Preset \"%s\" imported."
-msgstr "Mẫu "%s" đã nhập."
+msgstr "Thiết lập \"%s\" đã nhập."
 
 #: sui_menu.lua:3749
 #: sui_presets.lua:704
 #: sui_presets.lua:782
 msgid "Preset \"%s\" not found."
-msgstr "Không tìm thấy mẫu "%s"."
+msgstr "Không tìm thấy thiết lập \"%s\"."
 
 #: sui_menu.lua:3799
 #: sui_presets.lua:839
 msgid "Preset \"%s\" saved."
-msgstr "Mẫu "%s" đã lưu."
+msgstr "Thiết lập \"%s\" đã lưu."
 
 #: sui_menu.lua:3845
 #: sui_menu.lua:3974
 #: sui_presets.lua:884
 #: sui_presets.lua:1016
 msgid "Preset \"%s\" updated."
-msgstr "Mẫu "%s" đã cập nhật."
+msgstr "Thiết lập "%s" đã cập nhật."
 
 #: sui_menu.lua:4056
 #: sui_presets.lua:1096
 msgid "Preset exported to:\n%s"
-msgstr "Mẫu đã xuất tới:\n%s"
+msgstr "Thiết lập đã xuất tới:\n%s"
 
 #: sui_menu.lua:3774
 #: sui_presets.lua:807
 msgid "Preset name"
-msgstr "Tên mẫu"
+msgstr "Tên thiết lập"
 
 #: sui_presets.lua:383
 #: sui_presets.lua:563
 msgid "Preset not found"
-msgstr "Không tìm thấy mẫu"
+msgstr "Không tìm thấy thiết lập"
 
 #: sui_menu.lua:2557
 #: sui_settings_window.lua:316
 msgid "Presets"
-msgstr "Mẫu"
+msgstr "Thiết lập"
 
 #: sui_settings_window.lua:676
 msgid "Presets module unavailable."
-msgstr "Mô-đun mẫu không khả dụng."
+msgstr "Mô-đun thiết lập không khả dụng."
 
 #: sui_onboarding.lua:157
 msgid "Press and hold any element on the screen (like modules or bars) to quickly customize its settings."
@@ -2594,27 +2594,27 @@ msgstr "Kiểu thanh tiến trình"
 #: desktop_modules/module_quick_actions.lua:428
 #: desktop_modules/module_quick_actions.lua:539
 msgid "Quick Actions"
-msgstr "Hành động nhanh"
+msgstr "Thao tác nhanh"
 
 #: sui_menu.lua:4333
 msgid "Quick Actions  (%d/%d — %d left)"
-msgstr "Hành động nhanh (%d/%d — còn lại %d)"
+msgstr "Thao tác nhanh (%d/%d — còn lại %d)"
 
 #: sui_menu.lua:4331
 msgid "Quick Actions  (%d/%d — at limit)"
-msgstr "Hành động nhanh (%d/%d — đã đạt giới hạn)"
+msgstr "Thao tác nhanh (%d/%d — đã đạt giới hạn)"
 
 #: sui_quickactions.lua:1137
 #: sui_menu.lua:3468
 msgid "Quick Actions Icons"
-msgstr "Biểu tượng hành động nhanh"
+msgstr "Biểu tượng thao tác nhanh"
 
 #: sui_menu.lua:1875
 #: desktop_modules/module_quick_actions.lua:251
 #: desktop_modules/module_quick_actions.lua:301
 #: desktop_modules/module_quick_actions.lua:654
 msgid "Quick Actions Row"
-msgstr "Hàng hành động nhanh"
+msgstr "Hàng thao tác nhanh"
 
 #: sui_menu.lua:2587
 #: sui_quicksettings_bar.lua:994
@@ -2641,11 +2641,11 @@ msgstr "Trích dẫn trong ngày"
 
 #: desktop_modules/module_quote.lua:1305
 msgid "Quotes + My Highlights"
-msgstr "Trích dẫn + Điểm nổi bật của tôi"
+msgstr "Trích dẫn + Đoạn đánh dấu của tôi"
 
 #: sui_config.lua:163
 msgid "RAM Usage"
-msgstr "Sử dụng RAM"
+msgstr "Mức sử dụng RAM"
 
 #: sui_presets.lua:201
 #: desktop_modules/module_reading_goals.lua:540
@@ -2699,7 +2699,7 @@ msgstr "Đổi tên"
 #: sui_presets.lua:893
 #: sui_presets.lua:979
 msgid "Rename \"%s\""
-msgstr "Đổi tên "%s""
+msgstr "Đổi tên \"%s\""
 
 #: sui_menu.lua:457
 msgid "Replaces the pagination bar with Prev/Next arrows at the edges of the bottom bar.\nThe arrows dim when there is no previous or next page.\nWith navpager active, as few as 1 tab and at most 4 tabs can be configured."
@@ -2718,7 +2718,7 @@ msgstr "Đặt lại tất cả"
 
 #: sui_quickactions.lua:1811
 msgid "Reset All Quick Action Icons"
-msgstr "Đặt lại tất cả biểu tượng hành động nhanh"
+msgstr "Đặt lại tất cả biểu tượng thao tác nhanh"
 
 #: sui_style.lua:864
 msgid "Reset All System Icons"
@@ -2730,11 +2730,11 @@ msgstr "Đặt lại tất cả màu chủ đề"
 
 #: sui_quickactions.lua:1144
 msgid "Reset all Quick Actions icons to default?"
-msgstr "Đặt lại tất cả biểu tượng hành động nhanh về mặc định?"
+msgstr "Đặt lại tất cả biểu tượng thao tác nhanh về mặc định?"
 
 #: sui_menu.lua:2449
 msgid "Reset all scales to default (100%)? This cannot be undone."
-msgstr "Đặt lại tất cả tỷ lệ về mặc định (100%)? Hành động này không thể hoàn tác."
+msgstr "Đặt lại tất cả tỷ lệ về mặc định (100%)? Thao tác này không thể hoàn tác."
 
 #: sui_style.lua:1096
 msgid "Reset all system icons to default?"
@@ -2818,15 +2818,15 @@ msgstr "Lưu"
 #: sui_menu.lua:3767
 #: sui_presets.lua:800
 msgid "Save as new preset"
-msgstr "Lưu làm mẫu mới"
+msgstr "Lưu làm thiết lập mới"
 
 #: sui_menu.lua:3772
 msgid "Save icon preset"
-msgstr "Lưu mẫu biểu tượng"
+msgstr "Lưu thiết lập biểu tượng"
 
 #: sui_presets.lua:805
 msgid "Save preset"
-msgstr "Lưu mẫu"
+msgstr "Lưu thiết lập"
 
 #: sui_menu.lua:2365
 #: desktop_modules/module_quote.lua:1225
@@ -2961,11 +2961,11 @@ msgstr "Chọn"
 #: sui_presets.lua:721
 #: sui_presets.lua:726
 msgid "Select Preset"
-msgstr "Chọn mẫu"
+msgstr "Chọn thiết lập"
 
 #: sui_menu.lua:2198
 msgid "Select Wallpaper"
-msgstr "Chọn tường nền"
+msgstr "Chọn hình nền"
 
 #: desktop_modules/module_collections.lua:775
 msgid "Select at least 2 collections to arrange."
@@ -2987,11 +2987,11 @@ msgstr "Tháng Chín"
 #: sui_config.lua:127
 #: sui_browsemeta.lua:71
 msgid "Series"
-msgstr "Loạt"
+msgstr "Bộ sách"
 
 #: sui_menu.lua:2887
 msgid "Series Index"
-msgstr "Chỉ mục loạt"
+msgstr "Chỉ mục bộ sách"
 
 #: sui_menu.lua:640
 #: sui_menu.lua:901
@@ -3043,19 +3043,19 @@ msgstr "Mười bảy"
 
 #: desktop_modules/module_clock.lua:821
 msgid "Show Battery"
-msgstr "Hiển thị pin"
+msgstr "Hiện pin"
 
 #: desktop_modules/module_clock.lua:809
 msgid "Show Clock"
-msgstr "Hiển thị đồng hồ"
+msgstr "Hiện đồng hồ"
 
 #: desktop_modules/module_clock.lua:815
 msgid "Show Date"
-msgstr "Hiển thị ngày"
+msgstr "Hiện ngày"
 
 #: desktop_modules/module_action_list.lua:578
 msgid "Show Icon"
-msgstr "Hiển thị biểu tượng"
+msgstr "Hiện biểu tượng"
 
 #: sui_menu.lua:588
 msgid "Show Page Count in Title Bar"
@@ -3063,7 +3063,7 @@ msgstr "Hiển thị số trang trong thanh tiêu đề"
 
 #: sui_menu.lua:2476
 msgid "Show a brief \"Closing book…\" notice when closing a book, preventing accidental double-taps while e-ink refreshes."
-msgstr "Hiển thị thông báo ngắn "Đang đóng sách…" khi đóng sách, ngăn chặn nhấn nhầm trong khi e-ink làm mới."
+msgstr "Hiển thị thông báo \"Đang đóng sách…\" khi đóng sách, ngăn chặn nhấn đúp trong khi làm mới e-ink."
 
 #: desktop_modules/module_recent.lua:397
 #: desktop_modules/module_coverdeck.lua:1038
@@ -3076,11 +3076,11 @@ msgstr "Hiển thị nhãn phần"
 
 #: sui_menu.lua:2265
 msgid "Show wallpaper on all screens"
-msgstr "Hiển thị tường nền trên tất cả màn hình"
+msgstr "Hiển thị hình nền trên tất cả màn hình"
 
 #: sui_menu.lua:593
 msgid "Shows \"Page X of Y\" in the title bar subtitle when browsing the library, history or collections.\nNavpager enables this automatically.\nNot available when Navpager is active."
-msgstr "Hiển thị "Trang X trên Y" trong phụ đề thanh tiêu đề khi duyệt thư viện, lịch sử hoặc bộ sưu tập.\nNavpager tự động bật tính năng này.\nKhông khả dụng khi Navpager đang hoạt động."
+msgstr "Hiển thị \"Trang X trên Y\" trong phụ đề của thanh tiêu đề khi mở thư viện, lịch sử hoặc bộ sưu tập.\nNavpager tự động bật tính năng này.\nKhông khả dụng khi Navpager đang hoạt động."
 
 #: sui_menu.lua:489
 msgid "Shows a row of dots at the bottom of the homescreen.\nThe active page dot is filled; the others are dimmed.\nAlways active when Navpager is selected."
@@ -3318,7 +3318,7 @@ msgstr "Chỉ báo vuốt"
 #: sui_quickactions.lua:1774
 #: sui_quickactions.lua:1788
 msgid "System Actions"
-msgstr "Hành động hệ thống"
+msgstr "Thao tác hệ thống"
 
 #: sui_menu.lua:3400
 #: sui_menu.lua:3408
@@ -3328,7 +3328,7 @@ msgstr "Biểu tượng hệ thống"
 
 #: sui_quickactions.lua:2099
 msgid "System action error: %s"
-msgstr "Lỗi hành động hệ thống: %s"
+msgstr "Lỗi thao tác hệ thống: %s"
 
 #: sui_stats_windows.lua:2084
 msgid "THIS MONTH"
@@ -3443,7 +3443,7 @@ msgstr "Tháng này — Thời gian"
 #: sui_presets.lua:902
 #: sui_presets.lua:988
 msgid "This name is reserved by a built-in preset."
-msgstr "Tên này được dành riêng cho mẫu tích hợp sẵn."
+msgstr "Tên này được dành riêng cho thiết lập tích hợp sẵn."
 
 #: desktop_modules/module_reading_stats.lua:86
 msgid "This week — Pages"
@@ -3732,11 +3732,11 @@ msgstr "WORD_CLOCK_TENS_SEP"
 #: sui_settings_window.lua:310
 #: sui_settings_window.lua:854
 msgid "Wallpaper"
-msgstr "Tường nền"
+msgstr "Hình nền"
 
 #: sui_style.lua:1695
 msgid "Warm Paper"
-msgstr "Giấy ấm"
+msgstr "Giấy tông ấm"
 
 #: sui_quicksettings_bar.lua:496
 #: sui_quicksettings_bar.lua:517
@@ -3817,7 +3817,7 @@ msgstr "Từ"
 
 #: desktop_modules/module_quote.lua:928
 msgid "Your highlights"
-msgstr "Điểm nổi bật của bạn"
+msgstr "Đoạn đánh dấu của bạn"
 
 #: sui_stats_windows.lua:340
 msgid "apr"
@@ -3830,7 +3830,7 @@ msgstr "th8"
 #: sui_stats_windows.lua:1678
 #: desktop_modules/module_reading_stats.lua:92
 msgid "books finished"
-msgstr "sách đã hoàn thành"
+msgstr "sách đã đọc"
 
 #: desktop_modules/module_reading_stats.lua:87
 msgid "daily avg (7 days)"
@@ -4072,15 +4072,15 @@ msgstr[1] "Sách theo dõi thủ công (%d trong %s)"
 #: sui_quicksettings_bar.lua:1103
 msgid "Maximum of %d slot reached. Remove one first."
 msgid_plural "Maximum of %d slots reached. Remove one first."
-msgstr[0] "Đã đạt tối đa %d ô. Xóa một cái trước."
-msgstr[1] "Đã đạt tối đa %d ô. Xóa một cái trước."
+msgstr[0] "Đã đạt tối đa %d ô. Vui lòng xóa bớt."
+msgstr[1] "Đã đạt tối đa %d ô. Vui lòng xóa bớt."
 
 #: sui_menu.lua:629
 #: sui_menu.lua:895
 msgid "Text shown in the top bar.\nMaximum %d character."
 msgid_plural "Text shown in the top bar.\nMaximum %d characters."
-msgstr[0] "Chử hiển thị trên thanh trên.\nTối đa %d ký tự."
-msgstr[1] "Chử hiển thị trên thanh trên.\nTối đa %d ký tự."
+msgstr[0] "Chữ hiển thị trên thanh trên cùng.\nTối đa %d ký tự."
+msgstr[1] "Chữ hiển thị trên thanh trên cùng.\nTối đa %d ký tự."
 
 #: sui_menu.lua:1886
 #: sui_menu.lua:2005
@@ -4090,29 +4090,29 @@ msgstr[1] "Chử hiển thị trên thanh trên.\nTối đa %d ký tự."
 #: desktop_modules/module_quick_actions.lua:460
 msgid "The maximum of %d action per module has been reached. Remove one first."
 msgid_plural "The maximum of %d actions per module has been reached. Remove one first."
-msgstr[0] "Đã đạt tối đa %d hành động mỗi mô-đún. Xóa một cái trước."
-msgstr[1] "Đã đạt tối đa %d hành động mỗi mô-đún. Xóa một cái trước."
+msgstr[0] "Đã đạt tối đa %d thao tác mỗi mô-đun. Vui lòng xóa bớt."
+msgstr[1] "Đã đạt tối đa %d thao tác mỗi mô-đun. Vui lòng xóa bớt."
 
 #: sui_quickactions.lua:905
 #: sui_quickactions.lua:1974
 msgid "The maximum of %d quick action has been reached. Delete one first."
 msgid_plural "The maximum of %d quick actions has been reached. Delete one first."
-msgstr[0] "Đã đạt tối đa %d hành động nhanh. Xóa một cái trước."
-msgstr[1] "Đã đạt tối đa %d hành động nhanh. Xóa một cái trước."
+msgstr[0] "Đã đạt tối đa %d thao tác nhanh. Vui lòng xóa bớt."
+msgstr[1] "Đã đạt tối đa %d thao tác nhanh. Vui lòng xóa bớt."
 
 #: desktop_modules/module_reading_stats.lua:542
 #: desktop_modules/module_reading_stats.lua:624
 msgid "The maximum of %d stat per row has been reached. Remove one first."
 msgid_plural "The maximum of %d stats per row has been reached. Remove one first."
-msgstr[0] "Đã đạt tối đa %d thống kê mỗi hàng. Xóa một cái trước."
-msgstr[1] "Đã đạt tối đa %d thống kê mỗi hàng. Xóa một cái trước."
+msgstr[0] "Đã đạt tối đa %d mục thống kê mỗi hàng. Vui lòng xóa bớt."
+msgstr[1] "Đã đạt tối đa %d mục thống kê mỗi hàng. Vui lòng xóa bớt."
 
 #: sui_menu.lua:363
 #: sui_menu.lua:1216
 msgid "The maximum of %d tab has been reached. Remove one first."
 msgid_plural "The maximum of %d tabs has been reached. Remove one first."
-msgstr[0] "Đã đạt tối đa %d tab. Xóa một cái trước."
-msgstr[1] "Đã đạt tối đa %d tab. Xóa một cái trước."
+msgstr[0] "Đã đạt tối đa %d tab. Vui lòng xóa bớt."
+msgstr[1] "Đã đạt tối đa %d tab. Vui lòng xóa bớt."
 
 #: sui_stats_windows.lua:1460
 msgid "day read"
