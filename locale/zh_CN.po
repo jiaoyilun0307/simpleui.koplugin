@@ -4947,3 +4947,6 @@ msgstr "Show a brief \\"正在加载统计数据\xe2\x80\xa6\\" notice 打开 a 
 
 msgid "Show a brief \\"Loading statistics\xe2\x80\xa6\\" notice when opening a statistics window, preventing accidental double-taps while e-ink refreshes."
 msgstr "Show a brief \\"正在加载统计数据\xe2\x80\xa6\\" notice 打开 a statistics window, 防止发生意外双击 在电子墨水屏刷新期间."
+
+msgid "Show a brief \\"Loading statistics\xe2\x80\xa6\\" notice when opening a statistics window, preventing accidental double-taps while e-ink refreshes."
+msgstr "Show a brief \\"正在加载统计数据\xe2\x80\xa6\\" notice 打开 a statistics window, 防止发生意外双击 在电子墨水屏刷新期间."
