@@ -5022,3 +5022,249 @@ msgstr "Show a brief \\"正在加载统计数据\xe2\x80\xa6\\" notice 打开 a 
 
 msgid "Show a brief \\"Loading statistics\xe2\x80\xa6\\" notice when opening a statistics window, preventing accidental double-taps while e-ink refreshes."
 msgstr "Show a brief \\"正在加载统计数据\xe2\x80\xa6\\" notice 打开 a statistics window, 防止发生意外双击 在电子墨水屏刷新期间."
+
+msgid " et al."
+msgstr " et al."
+
+msgid "%1 × %2"
+msgstr "%1 × %2"
+
+msgid "(%d collection)"
+msgstr "(%d collection)"
+
+msgid "4-Cover Grid"
+msgstr "4-Cover Grid"
+
+msgid "Analogue"
+msgstr "[待翻译] Analogue"
+
+msgid "Bar"
+msgstr "[待翻译] Bar"
+
+msgid "Bar + Text"
+msgstr "Bar + Text"
+
+msgid "Book Menu"
+msgstr "Book Menu"
+
+msgid "Collection Menu"
+msgstr "Collection Menu"
+
+msgid "Columns"
+msgstr "[待翻译] Columns"
+
+msgid "Corner Badge"
+msgstr "Corner Badge"
+
+msgid "Cover Style"
+msgstr "Cover Style"
+
+msgid "Create Screen"
+msgstr "Create Screen"
+
+msgid "Create screen"
+msgstr "[待翻译] Create screen"
+
+msgid "Custom Quick Actions"
+msgstr "Custom Quick Actions"
+
+msgid "Custom Screen"
+msgstr "Custom Screen"
+
+msgid "Custom Screens"
+msgstr "Custom Screens"
+
+msgid "Custom Screens unavailable."
+msgstr "Custom Screens unavailable."
+
+msgid "Date added (newest)"
+msgstr "Date added (newest)"
+
+msgid "Date added (oldest)"
+msgstr "Date added (oldest)"
+
+msgid "Delete \\"%s\\"? This removes its layout, modules and Quick Action."
+msgstr "Delete \\"%s\\"? This removes its layout, modules and Quick Action."
+
+msgid "Description"
+msgstr "[待翻译] Description"
+
+msgid "Dynamic"
+msgstr "[待翻译] Dynamic"
+
+msgid "Edit Home Screen Layout"
+msgstr "Edit Home Screen Layout"
+
+msgid "Extra Custom Screens"
+msgstr "Extra Custom Screens"
+
+msgid "Featured Collection"
+msgstr "Featured Collection"
+
+msgid "Featured Collection — tap to configure"
+msgstr "Featured Collection — tap to configure"
+
+msgid "File size (largest)"
+msgstr "File size (largest)"
+
+msgid "File size (smallest)"
+msgstr "File size (smallest)"
+
+msgid "Flat Library"
+msgstr "Flat Library"
+
+msgid "Follow Library"
+msgstr "Follow Library"
+
+msgid "Global custom actions & icons"
+msgstr "Global custom actions & icons"
+
+msgid "Grid size"
+msgstr "[待翻译] Grid size"
+
+msgid "Grows or shrinks the cover so its height always matches the text column, keeping the cover's proportions.\nThe spacing between cover and text stays as set above.\nThe Cover size setting still applies on top of this, and the cover never shrinks below its 100% size."
+msgstr "Grows or shrinks the cover so its height always matches the text column, keeping the cover's proportions.\nThe spacing between cover and text stays as set above.\nThe Cover size setting still applies on top of this, and the cover never shrinks below its 100% size."
+
+msgid "Hide Book Spine"
+msgstr "Hide Book Spine"
+
+msgid "Justified"
+msgstr "[待翻译] Justified"
+
+msgid "Layout, wallpaper, presets and behaviour"
+msgstr "Layout, wallpaper, presets and behaviour"
+
+msgid "Long Press"
+msgstr "Long Press"
+
+msgid "Manual order"
+msgstr "[待翻译] Manual order"
+
+msgid "Name (A–Z)"
+msgstr "Name (A–Z)"
+
+msgid "Name (Z–A)"
+msgstr "Name (Z–A)"
+
+msgid "Navigation Bar — Background"
+msgstr "Navigation Bar — Background"
+
+msgid "Navigation Bar — Text and Icons"
+msgstr "Navigation Bar — Text and Icons"
+
+msgid "New Badge Color"
+msgstr "New Badge Color"
+
+msgid "New Book Badge"
+msgstr "New Book Badge"
+
+msgid "No custom screens yet."
+msgstr "No custom screens yet."
+
+msgid "Number of Books"
+msgstr "Number of Books"
+
+msgid "Open Module Settings"
+msgstr "Open Module Settings"
+
+msgid "Open module settings"
+msgstr "[待翻译] Open module settings"
+
+msgid "Open with…"
+msgstr "正在Open with…"
+
+msgid "Pages Badge"
+msgstr "Pages Badge"
+
+msgid "Pages Badge Color"
+msgstr "Pages Badge Color"
+
+msgid "Progress Badge Color"
+msgstr "Progress Badge Color"
+
+msgid "Progress Indicator"
+msgstr "Progress Indicator"
+
+msgid "Progress Style"
+msgstr "Progress Style"
+
+msgid "Progress and Badges"
+msgstr "Progress and Badges"
+
+msgid "Progress and Stats"
+msgstr "Progress and Stats"
+
+msgid "Rename screen"
+msgstr "[待翻译] Rename screen"
+
+msgid "Replaces the pagination bar with Prev/Next arrows at the edges of the navigation bar.\nThe arrows dim when there is no previous or next page.\nWith navpager active, as few as 1 tab and at most 4 tabs can be configured."
+msgstr "Replaces the pagination bar with Prev/Next arrows at the edges of the navigation bar.\nThe arrows dim when there is no previous or next page.\nWith navpager active, as few as 1 tab and at most 4 tabs can be configured."
+
+msgid "Round Overlay"
+msgstr "Round Overlay"
+
+msgid "Rows"
+msgstr "[待翻译] Rows"
+
+msgid "Scale for the collection count badge."
+msgstr "Scale for the collection count badge."
+
+msgid "Scale for the cover thumbnail only.\n100% is the default size.\nWhen Dynamic Cover Size is on, this scales the cover relative to its current dynamic size instead, and the cover never shrinks below its 100% size."
+msgstr "Scale for the cover thumbnail only.\n100% is the default size.\nWhen Dynamic Cover Size is on, this scales the cover relative to its current dynamic size instead, and the cover never shrinks below its 100% size."
+
+msgid "Scale for this module's corner badges (progress, pages, series, new book)."
+msgstr "Scale for this module's corner badges (progress, pages, series, new book)."
+
+msgid "Screen name"
+msgstr "[待翻译] Screen name"
+
+msgid "Series Badge"
+msgstr "Series Badge"
+
+msgid "Series Badge Color"
+msgstr "Series Badge Color"
+
+msgid "Set collection cover"
+msgstr "[待翻译] Set collection cover"
+
+msgid "Show Hidden Collection"
+msgstr "Show Hidden Collection"
+
+msgid "Shuffle now"
+msgstr "[待翻译] Shuffle now"
+
+msgid "Simple UI: Navigation Bar"
+msgstr "Simple UI: Navigation Bar"
+
+msgid "Spacing"
+msgstr "[待翻译] Spacing"
+
+msgid "Status — Abandoned"
+msgstr "Status — Abandoned"
+
+msgid "Status — Reading"
+msgstr "Status — Reading"
+
+msgid "Status — Unread"
+msgstr "Status — Unread"
+
+msgid "Tap \\"Create Screen\\" below to add one."
+msgstr "Tap \\"Create Screen\\" below to add one."
+
+msgid "The navigation bar is already available on this screen."
+msgstr "The navigation bar is already available on this screen."
+
+msgid "Unknown Author"
+msgstr "Unknown Author"
+
+msgid "When enabled, long-pressing the navigation bar opens its settings menu.\nDisable this to prevent the settings menu from appearing on long tap."
+msgstr "When enabled, long-pressing the navigation bar opens its settings menu.\nDisable this to prevent the settings menu from appearing on long tap."
+
+msgid "abandoned"
+msgstr "abandoned"
+
+msgid "in progress"
+msgstr "in progress"
+
+msgid "unread"
+msgstr "unread"
