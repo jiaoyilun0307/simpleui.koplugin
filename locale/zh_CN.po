@@ -5622,3 +5622,78 @@ msgstr "in progress"
 
 msgid "unread"
 msgstr "unread"
+
+msgid "%1 weeks"
+msgstr "%1 weeks"
+
+msgid "Apr"
+msgstr "[待翻译] Apr"
+
+msgid "Aug"
+msgstr "[待翻译] Aug"
+
+msgid "Calendar"
+msgstr "[待翻译] Calendar"
+
+msgid "Dec"
+msgstr "[待翻译] Dec"
+
+msgid "Feb"
+msgstr "[待翻译] Feb"
+
+msgid "How many weeks of history to include, and (in Calendar view) how many weeks the grid shows — this count is unaffected by Scale, which only resizes the cells. In Time of day view, this only changes how much history feeds the shading — the grid itself always has one column per hour."
+msgstr "How many weeks of history to include, and (in Calendar view) how many weeks the grid shows — this count is unaffected by Scale, which only resizes the cells. In Time of day view, this only changes how much history feeds the shading — the grid itself always has one column per hour."
+
+msgid "Jan"
+msgstr "[待翻译] Jan"
+
+msgid "Jul"
+msgstr "[待翻译] Jul"
+
+msgid "Jun"
+msgstr "[待翻译] Jun"
+
+msgid "Less"
+msgstr "[待翻译] Less"
+
+msgid "Mar"
+msgstr "[待翻译] Mar"
+
+msgid "More"
+msgstr "[待翻译] More"
+
+msgid "Nov"
+msgstr "[待翻译] Nov"
+
+msgid "Oct"
+msgstr "[待翻译] Oct"
+
+msgid "Reading Heatmap"
+msgstr "Reading Heatmap"
+
+msgid "Remove from list when finished"
+msgstr "[待翻译] Remove from list when finished"
+
+msgid "Scale for this module.\n100% is the default size. Capped at 100% here: the grid always has as many columns as \\"Weeks shown\\" (or, in Time of day view, 24), so there's no room to grow the cells past their autofit size without the grid overflowing the card."
+msgstr "Scale for this module.\n100% is the default size. Capped at 100% here: the grid always has as many columns as \\"Weeks shown\\" (or, in Time of day view, 24), so there's no room to grow the cells past their autofit size without the grid overflowing the card."
+
+msgid "Sep"
+msgstr "[待翻译] Sep"
+
+msgid "Show legend"
+msgstr "[待翻译] Show legend"
+
+msgid "TIME OF DAY"
+msgstr "TIME OF DAY"
+
+msgid "This book is marked as Finished, so it can't be added to To Be Read.\nChange its status to Reading or On Hold first."
+msgstr "This book is marked as Finished, so it can't be added to To Be Read.\nChange its status to Reading or On Hold first."
+
+msgid "Time of day"
+msgstr "[待翻译] Time of day"
+
+msgid "Toggle"
+msgstr "[待翻译] Toggle"
+
+msgid "Weeks shown"
+msgstr "[待翻译] Weeks shown"
