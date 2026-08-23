@@ -47,7 +47,6 @@ local function getSH()
 end
 
 -- Colours
-local _CLR_DARK   = Blitbuffer.COLOR_BLACK
 
 -- Vertical gaps between elements (base values at 100% scale; scaled in build()).
 local _BASE_COVER_GAP  = Screen:scaleBySize(16)  -- between cover and text column
@@ -150,7 +149,7 @@ local function buildProgressBarWithPct(w, pct, bar_h, scale, lbl_scale, face_inl
     local pct_str = string.format("%.0f%%", (pct or 0) * 100)
     -- face_inline is pre-resolved by build(); fallback for direct calls.
     local _face   = face_inline or Font:getFace(SUIStyle.FACE_REGULAR, math.max(7, math.floor(_BASE_INLINEPCT_FS * scale * lbl_scale)))
-    local _fg     = fg_color or _CLR_DARK
+    local _fg     = fg_color or SUIStyle.COLOR.text_primary
 
     local bar = UI.progressBar(bar_w, pct, bar_h)
 
@@ -320,6 +319,36 @@ end
 
 local function _getElemOrder(pfx)
     return _resolveElemOrder(SUISettings:readSetting(pfx .. ELEM_ORDER_KEY))
+end
+
+-- ---------------------------------------------------------------------------
+-- Author list rendering
+-- ---------------------------------------------------------------------------
+-- Author strings arrive as a single newline-separated string ("A\nB\nC").
+-- Aligned with KOReader's actual data format. 
+-- _splitAuthors breaks it into names (trimmed, empty tokens dropped). 
+-- _formatAuthors renders the result with these rules:
+-- 1. empty/whitespace input → "Unknown Author";
+-- 2. single author          → returned verbatim;
+-- 3. two or more author     → "Name1 et al."
+--    only the first name is kept, every other co-author is discarded.
+local function _splitAuthors(s)
+    local parts = {}
+    if not s or s == "" then return parts end
+    for piece in (s .. "\n"):gmatch("(.-)\r?\n") do
+        local trimmed = piece:match("^%s*(.-)%s*$")
+        if trimmed and trimmed ~= "" then
+            parts[#parts + 1] = trimmed
+        end
+    end
+    return parts
+end
+
+local function _formatAuthors(authors_str)
+    local parts = _splitAuthors(authors_str)
+    if #parts == 0 then return _("Unknown Author") end
+    if #parts == 1 then return parts[1] end
+    return parts[1] .. _(" et al.")
 end
 
 
@@ -535,14 +564,11 @@ function M.build(w, ctx)
     end
 
     -- Colour used for placeholder stats text (dimmer than the normal sub-text).
-    local CLR_PLACEHOLDER = Blitbuffer.gray(0.55)
+    local CLR_PLACEHOLDER = SUIStyle.COLOR.text_dim
 
-    -- Theme: when fg is set use it for all text; otherwise fall back to module defaults.
-    local _theme_fg        = SUIStyle.getThemeColor("fg")
-    local _theme_secondary = SUIStyle.getThemeColor("text_secondary")
-    local _CLR_DARK_EFF    = _theme_fg or _CLR_DARK
-    local CLR_TEXT_SUB_EFF = _theme_secondary or _theme_fg or CLR_TEXT_SUB
-    local CLR_PH_EFF       = _theme_secondary or _theme_fg or CLR_PLACEHOLDER
+    local _CLR_DARK_EFF    = SUIStyle.COLOR.text_primary
+    local CLR_TEXT_SUB_EFF = CLR_TEXT_SUB
+    local CLR_PH_EFF       = CLR_PLACEHOLDER
 
     -- Pre-resolve the inline-pct font face once for buildProgressBarWithPct.
     local face_inlinepct = Font:getFace(SUIStyle.FACE_REGULAR,
@@ -636,10 +662,10 @@ function M.build(w, ctx)
             meta[#meta+1] = title_w
             meta_has_content = true
 
-        elseif elem == "author" and show.author and bd.authors and bd.authors ~= "" then
+        elseif elem == "author" and show.author then
             gap_before(author_gap)
             meta[#meta+1] = UI.makeColoredText{
-                text            = bd.authors,
+                text            = _formatAuthors(bd.authors),
                 face            = face_author,
                 fgcolor         = CLR_TEXT_SUB_EFF,
                 width           = tw,
@@ -973,11 +999,10 @@ function M.build(w, ctx)
     local has_box    = show_frame or solid_bg
     local border_sz  = show_frame and SUIStyle.BORDER_SZ or 0
     local radius     = has_box and math.floor(Screen:scaleBySize(12) * scale) or 0
-    local border_color = Blitbuffer.gray(0.72)
-    border_color = SUIStyle.getThemeColor("separator") or border_color
+    local border_color = SUIStyle.COLOR.gray
     local bg_color = nil
     if solid_bg then
-        bg_color = SUIStyle.getThemeColor("bg") or Blitbuffer.COLOR_WHITE
+        bg_color = SUIStyle.COLOR.surface
     end
 
     local full_h = content_h
