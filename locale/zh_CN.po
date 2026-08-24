@@ -5678,3 +5678,24 @@ msgstr "Scale for this module.\n100% is the default size. Capped at 100% here: t
 
 msgid "Scale for this module.\n100% is the default size. Capped at 100% here: the grid always has as many columns as \\"Weeks shown\\" (or, in Time of day view, 24), so there's no room to grow the cells past their autofit size without the grid overflowing the card."
 msgstr "Scale for this module.\n100% is the default size. Capped at 100% here: the grid always has as many columns as \\"Weeks shown\\" (or, in Time of day view, 24), so there's no room to grow the cells past their autofit size without the grid overflowing the card."
+
+msgid "Browse…"
+msgstr "正在Browse…"
+
+msgid "Choose file"
+msgstr "[待翻译] Choose file"
+
+msgid "Choose icon"
+msgstr "[待翻译] Choose icon"
+
+msgid "Choose icon pack"
+msgstr "[待翻译] Choose icon pack"
+
+msgid "Choose wallpaper"
+msgstr "[待翻译] Choose wallpaper"
+
+msgid "Filter by name…"
+msgstr "正在Filter by name…"
+
+msgid "Scale for this module.\n100% is the default size. Capped at 100% here: the grid always has as many columns as \\"Weeks shown\\" (or, in Time of day view, 24), so there's no room to grow the cells past their autofit size without the grid overflowing the card."
+msgstr "Scale for this module.\n100% is the default size. Capped at 100% here: the grid always has as many columns as \\"Weeks shown\\" (or, in Time of day view, 24), so there's no room to grow the cells past their autofit size without the grid overflowing the card."
