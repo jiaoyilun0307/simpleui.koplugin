@@ -5605,3 +5605,21 @@ msgstr "Scale for this module.\n100% is the default size. Capped at 100% here: t
 
 msgid "Scale for this module.\n100% is the default size. Capped at 100% here: the grid always has as many columns as \\"Weeks shown\\" (or, in Time of day view, 24), so there's no room to grow the cells past their autofit size without the grid overflowing the card."
 msgstr "Scale for this module.\n100% is the default size. Capped at 100% here: the grid always has as many columns as \\"Weeks shown\\" (or, in Time of day view, 24), so there's no room to grow the cells past their autofit size without the grid overflowing the card."
+
+msgid "Battery Size"
+msgstr "Battery Size"
+
+msgid "Clock Size"
+msgstr "Clock Size"
+
+msgid "Date Size"
+msgstr "Date Size"
+
+msgid "Scale for the battery text only.\n100% is the default size."
+msgstr "Scale for the battery text only.\n100% is the default size."
+
+msgid "Scale for the clock face only.\n100% is the default size."
+msgstr "Scale for the clock face only.\n100% is the default size."
+
+msgid "Scale for the date text only.\n100% is the default size."
+msgstr "Scale for the date text only.\n100% is the default size."
