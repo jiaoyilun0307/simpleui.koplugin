@@ -604,8 +604,16 @@ local _NAV_ICON_SIZE = 16
 -- turnPageFn(delta) is called on tap; it owns clamping (via turnPage
 -- above), persisting the new page, and repainting — this function only
 -- decides whether each chevron is enabled for the CURRENT page/npages.
+--
+-- has_wallpaper (optional): when true, the chevrons are built inside
+-- Bottombar.withWallpaperAlphaIcons so their icons are alpha-blended from
+-- birth (see that function's doc comment for why it must happen at
+-- construction time, not after), and Bottombar.patchWallpaperIcon makes
+-- their button frame paint transparently too — together, the chevrons
+-- paint over the Homescreen wallpaper instead of showing their default
+-- opaque background.
 -- ---------------------------------------------------------------------------
-function GridRenderer.buildPageNavButtons(page, npages, row_h, turnPageFn)
+function GridRenderer.buildPageNavButtons(page, npages, row_h, turnPageFn, has_wallpaper)
     if npages <= 1 then return nil, nil end
     local icon_size = Screen:scaleBySize(_NAV_ICON_SIZE)
     local v_pad = math.max(0, math.floor((row_h - icon_size) / 2))
@@ -624,10 +632,20 @@ function GridRenderer.buildPageNavButtons(page, npages, row_h, turnPageFn)
             callback        = function() turnPageFn(delta) end,
         }
         Bottombar.patchDimmedIcon(btn)
+        if has_wallpaper then Bottombar.patchWallpaperIcon(btn) end
         return btn
     end
-    return make("chevron.left",  page > 1,      -1),
-           make("chevron.right", page < npages,  1)
+    local prev_btn, next_btn
+    if has_wallpaper then
+        Bottombar.withWallpaperAlphaIcons(function()
+            prev_btn, next_btn = make("chevron.left",  page > 1,      -1),
+                                  make("chevron.right", page < npages,  1)
+        end)
+    else
+        prev_btn, next_btn = make("chevron.left",  page > 1,      -1),
+                              make("chevron.right", page < npages,  1)
+    end
+    return prev_btn, next_btn
 end
 
 -- ---------------------------------------------------------------------------
@@ -739,7 +757,15 @@ function GridRenderer.build(w, ctx, opts)
     local D           = SH.getDims(scale, thumb_scale)
     local pct_fs      = math.max(8, math.floor(_BASE_RB_PCT_FS * scale * lbl_scale))
 
-    local inner_w = w - PAD * 2
+    -- Frame border / solid background — same optional box every other
+    -- homescreen module offers (module_currently.lua, module_heatmap.lua,
+    -- module_reading_goals.lua). Computed up front so inner_w below already
+    -- reserves room for the border, keeping the box's real outer width
+    -- equal to `w`.
+    local box = SUIStyle.computeBox(
+        GridRenderer.showFrame(pfx, id), GridRenderer.solidBg(pfx, id), scale, PAD)
+
+    local inner_w = w - box.inset_h
 
     -- Cover size: base is the auto-fit size (grid_cols covers + gaps filling
     -- inner_w). Width uses grid_cols, not the item count on this page, so a
@@ -1106,25 +1132,7 @@ function GridRenderer.build(w, ctx, opts)
         content = swipe_area
     end
 
-    local show_frame = GridRenderer.showFrame(pfx, id)
-    local solid_bg   = GridRenderer.solidBg(pfx, id)
-    local has_box    = show_frame or solid_bg
-    local border_sz  = show_frame and SUIStyle.BORDER_SZ or 0
-    local radius     = has_box and math.floor(Screen:scaleBySize(12) * scale) or 0
-    local border_color = SUIStyle.COLOR.gray
-    local bg_color = nil
-    if solid_bg then
-        bg_color = SUIStyle.COLOR.surface
-    end
-
-    local result = FrameContainer:new{
-        bordersize = border_sz,
-        radius     = radius,
-        color      = border_color,
-        background = bg_color,
-        padding = PAD, padding_top = has_box and PAD or 0, padding_bottom = has_box and PAD or 0,
-        content,
-    }
+    local result = SUIStyle.wrapBox(content, box)
     result._cover_slots = cover_slots
     -- Snapshot for GridRenderer.updateStats (below): the exact file list
     -- this widget was built with (already sliced to the current page), the
@@ -1180,6 +1188,14 @@ end
 -- re-derives the filtered file list from opts.getFileList()/opts.filterItem
 -- itself, exactly like build()'s own cold-cache path, and only once
 -- everything else checks out writes the result back into ctx[cache_key].
+--
+-- Also keeps ctx[npages_key] current even on the true-returning path: the
+-- displayed page's own slice can stay identical while the total item count
+-- crosses a page boundary elsewhere in the list, so npages must be
+-- refreshed independently of the identity check below. The caller is
+-- expected to re-sync the section-label header (page indicator + chevrons)
+-- off the back of this, via ScreenWidget:_syncBookModLabel — see that
+-- function's doc comment.
 -- ---------------------------------------------------------------------------
 function GridRenderer.updateStats(widget, ctx, opts)
     if not widget or not widget._row_update_funcs then return false end
@@ -1229,11 +1245,19 @@ function GridRenderer.updateStats(widget, ctx, opts)
     -- makeModule's M.build on every call, same table this function
     -- receives), not re-read from settings here, so this always agrees
     -- with what build() last actually used. persist=false: a stats-only
-    -- refresh must not move the page as a side effect.
+    -- refresh must not move the page as a side effect (never clamps the
+    -- stored page). npages, unlike page, isn't a user-facing selection —
+    -- it's a plain fact derived from the current file count — so it's
+    -- written back into ctx unconditionally below, same as build() already
+    -- does at its own call site, keeping the section-label's "x/y"
+    -- indicator and chevrons (sui_screen_engine.lua's pageIndicatorFor/
+    -- pageNavFor, both reading ctx) accurate even when this fast path
+    -- succeeds instead of falling back to a full build().
     local grid_rows = opts.grid_rows or 1
     local grid_cols = opts.grid_cols or opts.max_items or 5
     local max_items = grid_rows * grid_cols
-    local _, _, page_fps = _resolveCurrentPage(fps, ctx, id, max_items, opts.paged, false)
+    local _, npages, page_fps = _resolveCurrentPage(fps, ctx, id, max_items, opts.paged, false)
+    ctx["_row_npages_" .. id] = npages
 
     -- Identity check: same files, same order, same count as what this
     -- widget was actually built with. Any difference means the row's
@@ -1294,7 +1318,12 @@ function GridRenderer.getHeight(_ctx, opts)
     local grid_cols = opts.grid_cols or opts.max_items or 5
     local w = (_ctx and (_ctx.col_w or _ctx.inner_w))
               or (Screen:getWidth() - UI.SIDE_PAD * 2)
-    local inner_w = w - PAD * 2
+    -- Frame border / solid background — computed up front so inner_w below
+    -- mirrors build()'s own corrected value exactly (see build()'s comment
+    -- on why the border must be reserved here too, not just the padding).
+    local box = SUIStyle.computeBox(
+        GridRenderer.showFrame(pfx, id), GridRenderer.solidBg(pfx, id), scale, PAD)
+    local inner_w = w - box.inset_h
 
     -- cs uses the raw getters — mirrors build()'s cs above.
     local cs = Config.getModuleScaleRaw(id, pfx) * Config.getThumbScaleRaw(id, pfx)
@@ -1342,18 +1371,10 @@ function GridRenderer.getHeight(_ctx, opts)
     -- so they stay outside this multiplication.
     local h = grid_rows * cell_h + math.max(0, grid_rows - 1) * row_gap
 
-    local show_frame = GridRenderer.showFrame(pfx, id)
-    if show_frame or GridRenderer.solidBg(pfx, id) then
-        h = h + PAD * 2
-    end
-    -- Mirrors build()'s `border_sz = show_frame and SUIStyle.BORDER_SZ or 0`
-    -- passed as FrameContainer's `bordersize` — FrameContainer:getSize()
-    -- adds (margin + bordersize) * 2 to the content height, so the border
-    -- itself (not just the padding) grows the real widget by border_sz * 2
-    -- pixels whenever the frame is on.
-    if show_frame then
-        h = h + SUIStyle.BORDER_SZ * 2
-    end
+    -- box.inset_v already folds in the border (FrameContainer draws it
+    -- outside the padding — see computeBox's doc comment), so no separate
+    -- border_sz*2 addition is needed here.
+    h = h + box.inset_v
     return Config.getScaledLabelH() + h
 end
 

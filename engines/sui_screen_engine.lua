@@ -100,6 +100,15 @@ local function _getStatsProvider()
     return _SP
 end
 
+-- True until the very first ScreenWidget:onShow() this KOReader process (or
+-- plugin hot-reload — this module is evicted from package.loaded on
+-- teardown, which naturally resets this local) has consumed it. That one
+-- call is allowed to fetch live stats/books data synchronously so every
+-- module paints with correct data on its very first frame: a one-off delay
+-- at startup is acceptable, unlike the same delay on every reader return.
+-- Never re-armed afterwards, regardless of whether the fetch succeeded.
+local _cold_boot_pending = true
+
 -- Layout constants sourced from sui_core (single source of truth).
 local PAD                = UI.PAD
 local MOD_GAP            = UI.MOD_GAP
@@ -108,7 +117,7 @@ local SIDE_PAD           = UI.SIDE_PAD
 -- Static color defaults.
 
 local function _getTextMid()
-    return SUIStyle.COLOR.text_dim_alt
+    return SUIStyle.COLOR.text_dim
 end
 
 local function _getDotInactive()
@@ -261,7 +270,11 @@ local function sectionLabel(text, w, right_text, page_nav, landscape_factor)
 
     local key = text .. "|" .. w .. "|" .. tostring(scale) .. "|" .. tostring(right_text)
     if page_nav then
+        -- has_wallpaper is folded in too: it changes how the chevrons are
+        -- built (see GridRenderer.buildPageNavButtons), so toggling the
+        -- wallpaper must not reuse a cached widget built for the other state.
         key = key .. "|" .. page_nav.mod_id .. "|" .. tostring(page_nav.page) .. "|" .. tostring(page_nav.npages)
+            .. "|" .. tostring(page_nav.has_wallpaper)
     end
     if not _label_cache[key] then
         local face = Font:getFace(SUIStyle.FACE_REGULAR, fs)
@@ -295,7 +308,7 @@ local function sectionLabel(text, w, right_text, page_nav, landscape_factor)
                 local ok_gr, GridRenderer = pcall(require, "engines/sui_book_grid")
                 if ok_gr and GridRenderer then
                     prev_button, next_button = GridRenderer.buildPageNavButtons(
-                        page_nav.page, page_nav.npages, row_h, page_nav.turnPageFn)
+                        page_nav.page, page_nav.npages, row_h, page_nav.turnPageFn, page_nav.has_wallpaper)
                     if prev_button then
                         nav_w = prev_button:getSize().w + next_button:getSize().w + gap * 2
                     end
@@ -388,10 +401,11 @@ local function pageNavFor(self, mod, ctx)
     if not npages or npages <= 1 then return nil end
     local page = ctx["_row_page_" .. mod.id] or 1
     return {
-        mod_id     = mod.id,
-        page       = page,
-        npages     = npages,
-        turnPageFn = function(delta) self:_turnBookModPage(mod.id, delta) end,
+        mod_id        = mod.id,
+        page          = page,
+        npages        = npages,
+        turnPageFn    = function(delta) self:_turnBookModPage(mod.id, delta) end,
+        has_wallpaper = ctx.has_wallpaper,
     }
 end
 
@@ -2805,8 +2819,36 @@ function ScreenWidget:_refresh(keep_cache, books_only, stats_only)
         UIManager:setDirty(self, "ui")
 
         if defer_async then
-            if self._refresh_scheduled then return end
+            if self._refresh_scheduled then
+                -- BUGFIX: a deferred refresh is already queued, and its
+                -- stats_only-ness was fixed at schedule time below — the
+                -- callback only ever runs once (gated on _refresh_scheduled)
+                -- and, until this fix, always acted on whatever stats_only
+                -- value its own caller had passed, ignoring anyone who
+                -- called in after it was queued. Two call sites can race
+                -- for this same slot on device resume (SimpleUIPlugin:onResume
+                -- in main.lua wants the full refresh; ScreenWidget:onResume
+                -- right below wants stats_only) — whichever call reaches
+                -- here first silently determined what the single pending
+                -- callback would do, so if the stats_only call scheduled
+                -- first, the full refresh's caller (this branch) just
+                -- returned and its row-cache clear, label-cache invalidation,
+                -- and book-module rebuild (all gated on `not stats_only`
+                -- below) never ran — the paginated book-grid modules (TBR,
+                -- Recent, ...) silently kept whatever page/file-list state
+                -- they had before the still-pending callback fired.
+                --
+                -- Upgrading the pending flag in place — only ever from true
+                -- to false, never the reverse — means the callback always
+                -- ends up doing at least as much work as the strongest
+                -- caller seen before it fires, regardless of arrival order.
+                if not stats_only then
+                    self._refresh_pending_stats_only = false
+                end
+                return
+            end
             self._refresh_scheduled = true
+            self._refresh_pending_stats_only = stats_only
             local token = {}
             self._pending_refresh_token = token
 
@@ -2814,6 +2856,9 @@ function ScreenWidget:_refresh(keep_cache, books_only, stats_only)
                 if self._pending_refresh_token ~= token then return end
                 if _sget(self._id, "_instance") ~= self then return end
                 self._refresh_scheduled = false
+                -- Read live rather than the closed-over parameter: a later
+                -- caller may have upgraded this pending refresh (see above).
+                local stats_only = self._refresh_pending_stats_only
 
                 -- Open a DB connection if needed
                 if not self._db_conn and not self._db_sync_guard then
@@ -2989,6 +3034,17 @@ function ScreenWidget:_refresh(keep_cache, books_only, stats_only)
                                     end
                                 end
                             end
+
+                            -- Keeps this module's "x/y" page indicator and
+                            -- chevrons in sync regardless of which branch
+                            -- above ran: an in-place updateStats can shift
+                            -- npages without the current page's own slice
+                            -- changing (see GridRenderer.updateStats), and a
+                            -- full rebuild here — unlike _refreshBookModSlot's
+                            -- swipe/chevron path — never touched the header
+                            -- widget on its own. Same pattern as
+                            -- _refreshBookModSlot; see _syncBookModLabel.
+                            self:_syncBookModLabel(id)
                         end
                     end
 
@@ -3118,6 +3174,39 @@ function ScreenWidget:_turnBookModPage(mod_id, delta)
     return true
 end
 
+-- ---------------------------------------------------------------------------
+-- _syncBookModLabel(mod_id) — surgical repaint of a paginated book module's
+-- section-title header: the "x/y" page indicator and its chevrons.
+--
+-- A book module's grid content and its header live in separate widgets
+-- (see _book_mod_slots vs _book_mod_label_slots) — updating the former never
+-- touches the latter. Every caller that changes a paginated module's content
+-- (a page turn, a background stats refresh, a status/collection change, ...)
+-- must therefore also call this afterwards, or the header keeps showing the
+-- page/npages — and, worse, the chevrons keep the enabled/disabled state —
+-- from before the change, potentially blocking access to a page that just
+-- became reachable.
+--
+-- Reads ctx fresh (via pageIndicatorFor/pageNavFor) rather than trusting the
+-- caller to know the current page/npages, so this is always safe to call
+-- speculatively: it's a no-op (no setDirty) when the recomputed label widget
+-- is identical to the one already mounted.
+-- ---------------------------------------------------------------------------
+function ScreenWidget:_syncBookModLabel(mod_id)
+    local label_slot = self._book_mod_label_slots and self._book_mod_label_slots[mod_id]
+    if not (label_slot and label_slot.parent and label_slot.mod.label) then return end
+    local new_label = sectionLabel(label_slot.mod.label, label_slot.col_w,
+        pageIndicatorFor(label_slot.mod, self._ctx_cache), pageNavFor(self, label_slot.mod, self._ctx_cache),
+        self._ctx_cache and self._ctx_cache.landscape_factor)
+    if new_label == label_slot.parent[label_slot.index] then return end
+    label_slot.parent[label_slot.index] = new_label
+    if new_label.dimen then
+        UIManager:setDirty(self, function() return "ui", new_label.dimen, true end)
+    else
+        UIManager:setDirty(self, "ui")
+    end
+end
+
 function ScreenWidget:_refreshBookModSlot(mod_id)
     if not self._ctx_cache or not self._book_mod_slots then return false end
     local slot = self._book_mod_slots[mod_id]
@@ -3181,20 +3270,7 @@ function ScreenWidget:_refreshBookModSlot(mod_id)
     -- the tree we just replaced — without this, the number (and which
     -- chevron is enabled) would stay stale until the next full homescreen
     -- rebuild.
-    local label_slot = self._book_mod_label_slots and self._book_mod_label_slots[mod_id]
-    if label_slot and label_slot.parent and label_slot.mod.label then
-        local new_label = sectionLabel(label_slot.mod.label, label_slot.col_w,
-            pageIndicatorFor(label_slot.mod, self._ctx_cache), pageNavFor(self, label_slot.mod, self._ctx_cache),
-            self._ctx_cache and self._ctx_cache.landscape_factor)
-        if new_label ~= label_slot.parent[label_slot.index] then
-            label_slot.parent[label_slot.index] = new_label
-            if new_label.dimen then
-                UIManager:setDirty(self, function() return "ui", new_label.dimen, true end)
-            else
-                UIManager:setDirty(self, "ui")
-            end
-        end
-    end
+    self:_syncBookModLabel(mod_id)
 
     return true
 end
@@ -3356,6 +3432,16 @@ function ScreenWidget:onShow()
         need_async = true
     end
 
+    -- Consumed at most once per process (or per hot-reload): the very first
+    -- screen shown is allowed to block below on a live books+stats fetch
+    -- instead of taking the stale-then-correct path every other cold-open
+    -- uses. Every subsequent onShow() — including every reader return —
+    -- falls through to the unchanged behaviour further down.
+    local is_app_cold_boot = _cold_boot_pending
+    if is_app_cold_boot then
+        _cold_boot_pending = false
+    end
+
     -- Cold-open path: _cached_books_state is nil, so _buildCtx would call
     -- prefetchBooks() (sidecar I/O for every recent book) and SP.get() (DB
     -- queries) synchronously, blocking the first paint. This mirrors the
@@ -3389,45 +3475,97 @@ function ScreenWidget:onShow()
     -- _refresh() and corrects anything the stale data got wrong (book
     -- finished, new book opened since the cache was built, etc.).
     if not self._cached_books_state then
-        local SH = _getBookShared()
-        local stale = SH and SH.getStaleBooks and SH.getStaleBooks()
-        if stale then
-            -- Defensive: unlike prefetchBooks()'s live ReadHistory walk, this
-            -- persisted cross-process snapshot deliberately skips
-            -- lfs.attributes for speed (see the comment above), so it can
-            -- carry a filepath for a book that was deleted while KOReader
-            -- was closed (e.g. via Calibre over USB). Every other path in
-            -- this plugin that touches a book filepath (prefetchBooks,
-            -- TBR.getTBRList, Config.getCoverBB) already guards with the
-            -- same check; this cache was the one gap. A handful of stat()
-            -- calls here is negligible next to the instant-paint goal this
-            -- mechanism exists for, and it stops a dangling path from ever
-            -- reaching cover extraction / doc-open code further down.
+        if is_app_cold_boot then
+            -- App startup: fetch the real book state synchronously instead
+            -- of seeding from SH.getStaleBooks(). Mirrors the prefetchBooks()
+            -- call the deferred tick in _refresh() makes further below in
+            -- this file — same show_c/show_r resolution, same count — so the
+            -- very first paint already has authoritative data and needs no
+            -- follow-up correction.
+            local SH = _getBookShared()
+            if SH then
+                local mod_r  = Registry.get("recent")
+                local mod_cd = Registry.get("coverdeck")
+                local show_c = Registry.isEnabled(Registry.get("currently"), self._pfx)
+                local show_r = (mod_r and Registry.isEnabled(mod_r, self._pfx))
+                    or (mod_cd and Registry.isEnabled(mod_cd, self._pfx))
+                self._cached_books_state = SH.prefetchBooks(show_c, show_r, 15)
+            end
+            self._cached_books_state = self._cached_books_state
+                or { current_fp = nil, recent_fps = {}, prefetched_data = {} }
+        else
+            -- Cold-open path: _cached_books_state is nil, so _buildCtx would call
+            -- prefetchBooks() (sidecar I/O for every recent book) and SP.get() (DB
+            -- queries) synchronously, blocking the first paint. This mirrors the
+            -- EXACT same pattern already used for reading_stats: _defer_stats below
+            -- makes _buildCtx call SP.getStale() — a zero-cost return of the last
+            -- DB query result, falling back to `{}` (zeros/placeholder for one
+            -- frame) when nothing has ever been cached — instead of SP.get(). The
+            -- equivalent here is SH.getStaleBooks(): an instant reference to the
+            -- last successful SH.prefetchBooks() result, now persisted across
+            -- process restarts too (see module_books_shared.lua), with NO
+            -- ReadHistory walk, NO lfs.attributes, NO sidecar cache lookups, NO new
+            -- work of any kind — just a table reference (or a single lazy disk
+            -- read, at most once per process). is_book_mod modules (currently,
+            -- coverdeck, recent) render with the exact same data they last had,
+            -- identical in spirit to how reading_stats never flashes to zero on
+            -- return.
             --
-            -- KOBO_VIRTUAL:// paths (module_books_shared.lua's
-            -- _koboVirtualPath) are skipped: lfs.attributes cannot resolve
-            -- them, and there is no exported real-path lookup to reverse the
-            -- mapping here, so a real-file check would false-negative every
-            -- kepub on Kobo devices instead of only catching deleted books.
-            local function _existsOrVirtual(fp)
-                if fp:match("^KOBO_VIRTUAL://") then return true end
-                return lfs.attributes(fp, "mode") == "file"
-            end
-            if stale.current_fp and not _existsOrVirtual(stale.current_fp) then
-                stale.current_fp = nil
-            end
-            if stale.recent_fps then
-                local kept = {}
-                for _, fp in ipairs(stale.recent_fps) do
-                    if _existsOrVirtual(fp) then
-                        kept[#kept + 1] = fp
-                    end
+            -- getStaleBooks() returns nil only in the genuinely-first-ever-run case
+            -- (no in-memory cache AND no on-disk mirror — e.g. right after install,
+            -- or settings were cleared). Deliberately, NO active resolution (like
+            -- the previous SH.peekRecentBooks() fallback) is attempted in that
+            -- case: this mirrors SP.getStale() exactly, which has no equivalent
+            -- fallback either and simply lets reading_stats render `{}` for that
+            -- one frame. is_book_mod modules fall back to their own "no data yet"
+            -- path (build() returns nil/empty) the same way reading_stats shows
+            -- zeros — a single harmless frame, corrected by the deferred refresh
+            -- moments later, with zero extra work spent avoiding it.
+            --
+            -- need_async stays true regardless, so the full, authoritative
+            -- prefetchBooks() pass still runs ~50ms later via the deferred
+            -- _refresh() and corrects anything the stale data got wrong (book
+            -- finished, new book opened since the cache was built, etc.).
+            local SH = _getBookShared()
+            local stale = SH and SH.getStaleBooks and SH.getStaleBooks()
+            if stale then
+                -- Defensive: unlike prefetchBooks()'s live ReadHistory walk, this
+                -- persisted cross-process snapshot deliberately skips
+                -- lfs.attributes for speed (see the comment above), so it can
+                -- carry a filepath for a book that was deleted while KOReader
+                -- was closed (e.g. via Calibre over USB). Every other path in
+                -- this plugin that touches a book filepath (prefetchBooks,
+                -- TBR.getTBRList, Config.getCoverBB) already guards with the
+                -- same check; this cache was the one gap. A handful of stat()
+                -- calls here is negligible next to the instant-paint goal this
+                -- mechanism exists for, and it stops a dangling path from ever
+                -- reaching cover extraction / doc-open code further down.
+                --
+                -- KOBO_VIRTUAL:// paths (module_books_shared.lua's
+                -- _koboVirtualPath) are skipped: lfs.attributes cannot resolve
+                -- them, and there is no exported real-path lookup to reverse the
+                -- mapping here, so a real-file check would false-negative every
+                -- kepub on Kobo devices instead of only catching deleted books.
+                local function _existsOrVirtual(fp)
+                    if fp:match("^KOBO_VIRTUAL://") then return true end
+                    return lfs.attributes(fp, "mode") == "file"
                 end
-                stale.recent_fps = kept
+                if stale.current_fp and not _existsOrVirtual(stale.current_fp) then
+                    stale.current_fp = nil
+                end
+                if stale.recent_fps then
+                    local kept = {}
+                    for _, fp in ipairs(stale.recent_fps) do
+                        if _existsOrVirtual(fp) then
+                            kept[#kept + 1] = fp
+                        end
+                    end
+                    stale.recent_fps = kept
+                end
             end
+            self._cached_books_state = stale or { current_fp = nil, recent_fps = {}, prefetched_data = {} }
+            need_async = true
         end
-        self._cached_books_state = stale or { current_fp = nil, recent_fps = {}, prefetched_data = {} }
-        need_async = true
     end
 
     if self._navbar_container then
@@ -3448,7 +3586,12 @@ function ScreenWidget:onShow()
         self._navbar_inner = overlap
         _deferredFreeOldTree(old)
 
-        if need_async then
+        -- Only the ordinary cold-open enters deferred-stats mode. On the
+        -- app-cold-boot pass, _defer_stats stays falsy so _buildCtx() takes
+        -- its live branch below: opens the DB connection, calls SP.get()
+        -- for real, and computes status_counts / book stats synchronously —
+        -- exactly what the async correction tick would do, just inline.
+        if need_async and not is_app_cold_boot then
             self._defer_stats = true
         end
         
@@ -3459,7 +3602,7 @@ function ScreenWidget:onShow()
             ClockMod.scheduleRefresh(self)
         end
         
-        if need_async then
+        if need_async and not is_app_cold_boot then
             self._defer_stats = false
             self:_refresh(false)
         end

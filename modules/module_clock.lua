@@ -24,6 +24,7 @@ local UIManager    = require("ui/uimanager")
 local SUIStyle     = require("features/sui_style")
 local Config       = require("infra/sui_config")
 local SUISettings = require("infra/sui_store")
+local AAPaint      = require("infra/sui_aa_paint")
 local PAD          = UI.PAD
 local PAD2         = UI.PAD2
 local CLR_TEXT_SUB = UI.CLR_TEXT_SUB
@@ -380,12 +381,9 @@ end
 -- ---------------------------------------------------------------------------
 -- Analogue clock face
 -- ---------------------------------------------------------------------------
--- Drawn directly with per-pixel coverage-based anti-aliasing: for each pixel
--- near a tick or hand, compute how far it sits from the stroke's centre line
--- and blend black into it proportionally to the shape's coverage of that
--- pixel (see _blendPixel/_paintCapsule below). This needs no supersampling —
--- blitbuffer's own :scale() is nearest-neighbour, so drawing at a larger
--- size and scaling down would not actually smooth anything.
+-- Drawn directly with the coverage-based anti-aliasing primitives in
+-- infra/sui_aa_paint.lua (see that module's header for how the technique
+-- works) instead of relying on any native rounded-shape drawing.
 --
 -- No rim: bare ticks + hands read cleanly on their own, and a ring is one
 -- more shape whose stroke width would need to stay in proportion at every
@@ -402,45 +400,6 @@ end
 -- transparently over a wallpaper, the same way UI.makeColoredText composites
 -- coloured text — this drawing routine just fills the role that
 -- TextWidget:paintTo plays there.
-
--- Blends `ink` (0 = black) into pixel (px,py) by coverage in [0,1] —
--- over-compositing onto whatever grey value is already there, so
--- overlapping strokes (e.g. a tick crossing a hand) compound correctly
--- instead of one overwriting the other.
-local function _blendPixel(bb, px, py, cov, x0, y0, x1, y1)
-    if cov <= 0 then return end
-    if px < x0 or px > x1 or py < y0 or py > y1 then return end
-    if cov > 1 then cov = 1 end
-    local g = bb:getPixel(px, py):getColor8().a
-    bb:setPixel(px, py, Blitbuffer.Color8(math.floor(g * (1 - cov) + 0.5)))
-end
-
--- Paints an anti-aliased capsule (a straight stroke of full width `width`,
--- rounded at both ends) from (ax,ay) to (bx,by) onto `bb`. For every
--- candidate pixel, projects it onto the segment to find the nearest point
--- on the stroke's centre line, then blends by how far the pixel's centre
--- sits inside the stroke's half-width — pixels fully inside get full ink,
--- pixels straddling the edge get partial ink, giving a smooth edge at
--- whatever resolution `bb` actually is.
-local function _paintCapsule(bb, ax, ay, bx, by, width, x0, y0, x1, y1)
-    local half = width / 2
-    local dx, dy = bx - ax, by - ay
-    local len2 = dx * dx + dy * dy
-    local minx = math.floor(math.min(ax, bx) - half - 1)
-    local maxx = math.floor(math.max(ax, bx) + half + 1)
-    local miny = math.floor(math.min(ay, by) - half - 1)
-    local maxy = math.floor(math.max(ay, by) + half + 1)
-    for py = miny, maxy do
-        for px = minx, maxx do
-            local t = len2 > 0 and ((px - ax) * dx + (py - ay) * dy) / len2 or 0
-            if t < 0 then t = 0 elseif t > 1 then t = 1 end
-            local qx, qy = ax + t * dx, ay + t * dy
-            local ddx, ddy = px - qx, py - qy
-            local dist = math.sqrt(ddx * ddx + ddy * ddy)
-            _blendPixel(bb, px, py, half + 0.5 - dist, x0, y0, x1, y1)
-        end
-    end
-end
 
 -- Draws the face into `bb` (assumed already white-filled, size diameter ×
 -- diameter), in BLACK ink — UI.paintWithAlphaMask inverts and recolours it
@@ -462,9 +421,9 @@ local function _drawAnalogueFace(bb, diameter, hour, min)
         local sn, co   = math.sin(angle), math.cos(angle)
         local outer    = r - tick_gap
         local inner    = outer - tick_len
-        _paintCapsule(bb, cx + inner * sn, cy - inner * co,
-                          cx + outer * sn, cy - outer * co,
-                          tick_w, x0, y0, x1, y1)
+        AAPaint.paintCapsule(bb, cx + inner * sn, cy - inner * co,
+                                 cx + outer * sn, cy - outer * co,
+                                 tick_w, x0, y0, x1, y1)
     end
 
     -- Hands: no centre hub, so each hand's stroke starts a little past the
@@ -472,9 +431,9 @@ local function _drawAnalogueFace(bb, diameter, hour, min)
     local tail = math.max(diameter * 0.04, 2)
     local function drawHand(angle, length, width)
         local sn, co = math.sin(angle), math.cos(angle)
-        _paintCapsule(bb, cx - tail * sn, cy + tail * co,
-                          cx + length * sn, cy - length * co,
-                          width, x0, y0, x1, y1)
+        AAPaint.paintCapsule(bb, cx - tail * sn, cy + tail * co,
+                                 cx + length * sn, cy - length * co,
+                                 width, x0, y0, x1, y1)
     end
     local minute_angle = (min / 60) * (2 * math.pi)
     local hour_angle    = ((hour % 12) + min / 60) / 12 * (2 * math.pi)
@@ -513,7 +472,7 @@ local function _buildAnalogueClockWidget(diameter, fg_color)
             _drawAnalogueFace(tmp_bb, d, hour, min)
         end
 
-        UI.paintWithAlphaMask(nil, bb, x, y, d, d, fg_color, custom_paint_fn, self._tmp_bb)
+        UI.paintWithAlphaMask(widget, bb, x, y, d, d, fg_color, custom_paint_fn, self._tmp_bb)
     end
 
     function widget:onCloseWidget() self:free() end
@@ -593,18 +552,23 @@ local function build(w, pfx, vspan_pool, landscape_factor)
     -- twice — same convention as GridRenderer.build's `cs`. date/batt below
     -- keep the lf-scaled `scale`, since they're fixed-pixel elements from
     -- the shared type scale, not width-derived.
-    local raw_scale = Config.getModuleScaleRaw("clock", pfx)
-    local clock_w   = math.floor(inner_w * _CLOCK_W_PCT * raw_scale)
-    local clock_fs  = math.max(_CLOCK_FS_MIN, math.floor(inner_w * _CLOCK_FS_PCT * raw_scale))
-    local word_fs   = math.max(_WORD_FS_MIN,  math.floor(inner_w * _WORD_FS_PCT  * raw_scale))
+    local raw_scale  = Config.getModuleScaleRaw("clock", pfx)
+    local clock_elem = Config.getElemScale("clock", "clock", pfx)
+    local date_elem  = Config.getElemScale("clock", "date",  pfx)
+    local batt_elem  = Config.getElemScale("clock", "batt",  pfx)
 
-    -- Scale remaining dimensions from base values (fixed-pixel, lf-scaled).
-    local date_h        = math.max(8,  math.floor(_BASE_DATE_H    * scale))
+    local clock_w   = math.floor(inner_w * _CLOCK_W_PCT * raw_scale * clock_elem)
+    local clock_fs  = math.max(_CLOCK_FS_MIN, math.floor(inner_w * _CLOCK_FS_PCT * raw_scale * clock_elem))
+    local word_fs   = math.max(_WORD_FS_MIN,  math.floor(inner_w * _WORD_FS_PCT  * raw_scale * clock_elem))
+
+    -- Scale remaining dimensions from base values (fixed-pixel, lf-scaled),
+    -- each further scaled by its own element size on top of the module scale.
+    local date_h        = math.max(8,  math.floor(_BASE_DATE_H    * scale * date_elem))
     local date_gap      = math.max(0,  math.floor(_BASE_DATE_GAP  * scale * getDateGapPct(pfx) / 100))
     local batt_gap      = math.max(0,  math.floor(_BASE_BATT_GAP  * scale * getBattGapPct(pfx) / 100))
-    local date_fs       = math.max(8,  math.floor(_BASE_DATE_FS   * scale))
-    local batt_fs       = math.max(7,  math.floor(_BASE_BATT_FS   * scale))
-    local batt_h        = math.max(7,  math.floor(_BASE_BATT_H    * scale))
+    local date_fs       = math.max(8,  math.floor(_BASE_DATE_FS   * scale * date_elem))
+    local batt_fs       = math.max(7,  math.floor(_BASE_BATT_FS   * scale * batt_elem))
+    local batt_h        = math.max(7,  math.floor(_BASE_BATT_H    * scale * batt_elem))
 
     local bot_pad_extra = math.floor(_BASE_BOT_PAD_EXTRA * scale)
 
@@ -913,13 +877,16 @@ function M.getHeight(ctx)
     -- column-width estimate, not _REF_INNER_W above — that constant already
     -- has PAD*2 subtracted out, for calibrating the _*_PCT constants).
     local raw_scale        = Config.getModuleScaleRaw("clock", ctx.pfx)
+    local clock_elem        = Config.getElemScale("clock", "clock", ctx.pfx)
+    local date_elem         = Config.getElemScale("clock", "date",  ctx.pfx)
+    local batt_elem         = Config.getElemScale("clock", "batt",  ctx.pfx)
     local w_estimate        = ctx.col_w or ctx.inner_w or (Screen:getWidth() - UI.SIDE_PAD * 2)
     local inner_w_estimate  = w_estimate - PAD * 2
-    local clock_w   = math.floor(inner_w_estimate * _CLOCK_W_PCT * raw_scale)
-    local date_h    = math.max(8, math.floor(_BASE_DATE_H   * scale))
+    local clock_w   = math.floor(inner_w_estimate * _CLOCK_W_PCT * raw_scale * clock_elem)
+    local date_h    = math.max(8, math.floor(_BASE_DATE_H   * scale * date_elem))
     local date_gap  = math.max(0, math.floor(_BASE_DATE_GAP * scale * getDateGapPct(ctx.pfx) / 100))
     local batt_gap  = math.max(0, math.floor(_BASE_BATT_GAP * scale * getBattGapPct(ctx.pfx) / 100))
-    local batt_h    = math.max(7, math.floor(_BASE_BATT_H   * scale))
+    local batt_h    = math.max(7, math.floor(_BASE_BATT_H   * scale * batt_elem))
 
     local h_base      = PAD * 2 + PAD2
     local show_clock  = isClockEnabled(ctx.pfx)
@@ -951,20 +918,6 @@ function M.getHeight(ctx)
 end
 
 
-local function _makeScaleItem(ctx_menu)
-    local pfx = ctx_menu.pfx
-    local _lc = ctx_menu._
-    return Config.makeScaleItem({
-        text_func    = function() return _lc("Scale") end,
-        enabled_func = function() return not Config.isScaleLinked() end,
-        title        = _lc("Scale"),
-        info         = _lc("Scale for this module.\n100% is the default size."),
-        get          = function() return Config.getModuleScalePct("clock", pfx) end,
-        set          = function(v) Config.setModuleScale(v, "clock", pfx) end,
-        refresh      = ctx_menu.refresh,
-    })
-end
-
 function M.getMenuItems(ctx_menu)
     local pfx     = ctx_menu.pfx
     local refresh = ctx_menu.refresh
@@ -974,6 +927,47 @@ function M.getMenuItems(ctx_menu)
         SUISettings:saveSetting(pfx .. key, not current)
         refresh()
     end
+
+    -- Scale + per-element Size are grouped into a single "Size" submenu,
+    -- mirroring sui_book_grid.lua's size_group pattern.
+    local size_group = {}
+
+    size_group[#size_group + 1] = Config.makeScaleItem{
+        text_func    = function() return _lc("Scale") end,
+        enabled_func = function() return not Config.isScaleLinked() end,
+        title        = _lc("Scale"),
+        info         = _lc("Scale for this module.\n100% is the default size."),
+        get          = function() return Config.getModuleScalePct("clock", pfx) end,
+        set          = function(v) Config.setModuleScale(v, "clock", pfx) end,
+        refresh      = refresh,
+    }
+    size_group[#size_group + 1] = Config.makeScaleItem{
+        text_func    = function() return _lc("Clock Size") end,
+        enabled_func = function() return isClockEnabled(pfx) end,
+        title        = _lc("Clock Size"),
+        info         = _lc("Scale for the clock face only.\n100% is the default size."),
+        get          = function() return Config.getElemScalePct("clock", "clock", pfx) end,
+        set          = function(v) Config.setElemScale(v, "clock", "clock", pfx) end,
+        refresh      = refresh,
+    }
+    size_group[#size_group + 1] = Config.makeScaleItem{
+        text_func    = function() return _lc("Date Size") end,
+        enabled_func = function() return isDateEnabled(pfx) end,
+        title        = _lc("Date Size"),
+        info         = _lc("Scale for the date text only.\n100% is the default size."),
+        get          = function() return Config.getElemScalePct("clock", "date", pfx) end,
+        set          = function(v) Config.setElemScale(v, "clock", "date", pfx) end,
+        refresh      = refresh,
+    }
+    size_group[#size_group + 1] = Config.makeScaleItem{
+        text_func    = function() return _lc("Battery Size") end,
+        enabled_func = function() return isBattEnabled(pfx) end,
+        title        = _lc("Battery Size"),
+        info         = _lc("Scale for the battery text only.\n100% is the default size."),
+        get          = function() return Config.getElemScalePct("clock", "batt", pfx) end,
+        set          = function(v) Config.setElemScale(v, "clock", "batt", pfx) end,
+        refresh      = refresh,
+    }
 
     return {
         {
@@ -999,7 +993,10 @@ function M.getMenuItems(ctx_menu)
                 },
             },
         },
-        _makeScaleItem(ctx_menu),
+        {
+            text_func      = function() return _lc("Size") end,
+            sub_item_table = size_group,
+        },
         {
             -- Clock Style submenu: Digital / Word / Analogue
             text_func  = function() return _lc("Clock Style") end,
