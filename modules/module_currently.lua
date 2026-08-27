@@ -325,13 +325,9 @@ end
 -- Author list rendering
 -- ---------------------------------------------------------------------------
 -- Author strings arrive as a single newline-separated string ("A\nB\nC").
--- Aligned with KOReader's actual data format. 
--- _splitAuthors breaks it into names (trimmed, empty tokens dropped). 
--- _formatAuthors renders the result with these rules:
--- 1. empty/whitespace input → "Unknown Author";
--- 2. single author          → returned verbatim;
--- 3. two or more author     → "Name1 et al."
---    only the first name is kept, every other co-author is discarded.
+-- _formatAuthors returns nil when there is no usable name (caller hides the
+-- row, same policy as description), a single name verbatim, or "Name et al."
+-- when there are two or more.
 local function _splitAuthors(s)
     local parts = {}
     if not s or s == "" then return parts end
@@ -346,7 +342,7 @@ end
 
 local function _formatAuthors(authors_str)
     local parts = _splitAuthors(authors_str)
-    if #parts == 0 then return _("Unknown Author") end
+    if #parts == 0 then return nil end
     if #parts == 1 then return parts[1] end
     return parts[1] .. _(" et al.")
 end
@@ -422,9 +418,19 @@ local function _hasBox(pfx)
 end
 
 
--- Clears the stats cache (called from main.lua:onCloseDocument before rebuild).
+-- Clears the entire stats cache. Called from main.lua:onCloseDocument as a
+-- fallback when the closed book's md5 could not be resolved; safe since
+-- fetchBookStats() re-populates entries on demand.
 function M.invalidateCache()
-    -- Stale data is intentionally kept for the async UI update.
+    _bstats_cache = {}
+end
+
+-- Removes only the cache entry for the given md5, leaving stats cached for
+-- every other book intact. Mirrors module_coverdeck.invalidateCacheForMd5;
+-- called from main.lua:onCloseDocument so the closed book's stats are fresh
+-- on the next render without discarding the rest of the cache.
+function M.invalidateCacheForMd5(md5)
+    if md5 then _bstats_cache[md5] = nil end
 end
 
 -- Exposed for pre-computation in _buildCtx (sui_homescreen.lua).
@@ -435,14 +441,32 @@ function M.fetchBookStatsForCtx(md5, db_conn, force)
 end
 
 
+-- Empty placeholder when history has no existing books (same pattern as
+-- Quick Actions / Featured Collection / Collections).
+local function _emptyPlaceholder(w, h)
+    return CenterContainer:new{
+        dimen = Geom:new{ w = w, h = h },
+        UI.makeColoredText{
+            text    = _("No books to show yet — open a book to see it here."),
+            face    = Font:getFace(SUIStyle.FACE_REGULAR, SUIStyle.FS_BODY),
+            fgcolor = CLR_TEXT_SUB,
+            width   = w - PAD * 2,
+        },
+    }
+end
+
 -- Builds the module widget: cover on the left, text column on the right.
 -- Elements in the text column are rendered in user-configured order.
 function M.build(w, ctx)
     Config.applyLabelToggle(M, _("Currently Reading"))
-    if not ctx.current_fp then return nil end
+    if not ctx.current_fp then
+        return _emptyPlaceholder(w, M.getHeight(ctx))
+    end
 
     local SH = getSH()
-    if not SH then return nil end
+    if not SH then
+        return _emptyPlaceholder(w, M.getHeight(ctx))
+    end
 
     -- Use pre-read settings bundle from ctx when available (normal HS path).
     -- Falls back to direct reads only when called outside the homescreen.
@@ -673,16 +697,19 @@ function M.build(w, ctx)
             meta_has_content = true
 
         elseif elem == "author" and show.author then
-            gap_before(author_gap)
-            meta[#meta+1] = UI.makeColoredText{
-                text            = _formatAuthors(bd.authors),
-                face            = face_author,
-                fgcolor         = CLR_TEXT_SUB_EFF,
-                width           = tw,
-                max_width       = tw,
-                truncation_char = "…",  -- ellipsis
-            }
-            meta_has_content = true
+            local author_text = _formatAuthors(bd.authors)
+            if author_text then
+                gap_before(author_gap)
+                meta[#meta+1] = UI.makeColoredText{
+                    text            = author_text,
+                    face            = face_author,
+                    fgcolor         = CLR_TEXT_SUB_EFF,
+                    width           = tw,
+                    max_width       = tw,
+                    truncation_char = "…",
+                }
+                meta_has_content = true
+            end
 
         elseif elem == "series" and show.series and series_text ~= "" then
             gap_before(series_gap)
@@ -865,9 +892,11 @@ function M.build(w, ctx)
             if not _compact_stats_rendered then
                 _compact_stats_rendered = true
 
-                local stats_row = HorizontalGroup:new{ align = "center" }
-                
-                local function _update(nb, nd)
+                -- Rendered as a single TextWidget (not one widget per part +
+                -- separators) so the whole row can be capped to `tw` and
+                -- truncated with an ellipsis instead of stretching the
+                -- layout when the joined parts run long.
+                local function _composeText(nb, nd)
                     local secs_left
                     local avg_t = (nb and nb.avg_time and nb.avg_time > 0) and nb.avg_time or nd.avg_time
                     if avg_t and avg_t > 0 and nd.pages and nd.pages > 0 then
@@ -878,44 +907,43 @@ function M.build(w, ctx)
                     local parts = {}
                     for _i, e in ipairs(elem_order) do
                         if e == "book_time" and show.time and nb and nb.total_secs > 0 then
-                            parts[#parts+1] = { text = string.format(_("%s read"), fmtTime(nb.total_secs)), placeholder = false }
+                            parts[#parts+1] = string.format(_("%s read"), fmtTime(nb.total_secs))
                         elseif e == "book_remaining" and show.remain and secs_left then
-                            parts[#parts+1] = { text = string.format(_("%s left"), fmtTime(secs_left)), placeholder = false }
+                            parts[#parts+1] = string.format(_("%s left"), fmtTime(secs_left))
                         elseif e == "book_days" and show.days and nb and nb.days > 0 then
-                            parts[#parts+1] = { text = string.format(N_("%d day of reading", "%d days of reading", nb.days), nb.days), placeholder = false }
+                            parts[#parts+1] = string.format(N_("%d day of reading", "%d days of reading", nb.days), nb.days)
                         end
                     end
 
-                    if #parts == 0 then
-                        local any_active = (show.days or show.time or show.remain)
-                        if any_active then
-                            parts[#parts+1] = { text = string.format(_("%s read"), "—"), placeholder = true }
-                        end
+                    if #parts > 0 then
+                        return table.concat(parts, " · "), CLR_TEXT_SUB_EFF, true
                     end
 
-                    for i = #stats_row, 1, -1 do stats_row[i] = nil end
-                    
-                    for i, part in ipairs(parts) do
-                        if i > 1 then
-                            stats_row[#stats_row+1] = UI.makeColoredText{
-                                text    = " · ",
-                                face    = face_s,
-                                fgcolor = CLR_TEXT_SUB_EFF,
-                            }
-                        end
-                        stats_row[#stats_row+1] = UI.makeColoredText{
-                            text    = part.text,
-                            face    = face_s,
-                            fgcolor = part.placeholder and CLR_PH_EFF or CLR_TEXT_SUB_EFF,
-                        }
+                    local any_active = (show.days or show.time or show.remain)
+                    if any_active then
+                        return string.format(_("%s read"), "—"), CLR_PH_EFF, true
                     end
+                    return "", CLR_PH_EFF, false
                 end
 
-                _update(bstats, bd)
+                local text0, fg0, has_content0 = _composeText(bstats, bd)
+                local stats_w = UI.makeColoredText{
+                    text                    = text0,
+                    face                    = face_s,
+                    fgcolor                 = fg0,
+                    max_width               = tw,
+                    truncate_with_ellipsis  = true,
+                }
+
+                local function _update(nb, nd)
+                    local text, fg = _composeText(nb, nd)
+                    _updateColoredText(stats_w, text, fg)
+                end
                 table.insert(_cr_update_funcs, _update)
-                if #stats_row > 0 then
+
+                if has_content0 then
                     gap_before(pct_gap)
-                    meta[#meta+1] = stats_row
+                    meta[#meta+1] = stats_w
                     meta_has_content = true
                 end
             end

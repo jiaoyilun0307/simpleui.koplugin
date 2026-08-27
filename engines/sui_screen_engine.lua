@@ -100,6 +100,18 @@ local function _getStatsProvider()
     return _SP
 end
 
+-- Predicts which book occupies the Cover Deck's centre slot before any
+-- carousel navigation happens, so its stats can be pre-fetched off the paint
+-- path. Mirrors the ordering rule in module_coverdeck.buildRecentFps(): the
+-- active book takes the centre slot when there is one, otherwise the most
+-- recently read book takes its place. A guard at read time compares this
+-- prediction against the book actually centred in the carousel and falls
+-- back to a live query on mismatch, so an incorrect guess here never shows
+-- the wrong book's stats — it only costs one extra query on that render.
+local function _coverdeckDefaultCenterFp(current_fp, recent_fps)
+    return current_fp or (recent_fps and recent_fps[1])
+end
+
 -- True until the very first ScreenWidget:onShow() this KOReader process (or
 -- plugin hot-reload — this module is evicted from package.loaded on
 -- teardown, which naturally resets this local) has consumed it. That one
@@ -866,9 +878,12 @@ function ScreenWidget:init()
     local sh = Screen:getHeight()
     self.dimen = Geom:new{ w = sw, h = sh }
 
-    local _bar_y = sh - Bottombar.TOTAL_H()
+    -- Computed at hit-test time so a soft-parked instance raised after an
+    -- orientation change still blocks the bar correctly (init-time bar_y
+    -- would stay frozen at the pre-reader height).
     local function _in_bar(ges)
-        return ges and ges.pos and ges.pos.y >= _bar_y
+        if not (ges and ges.pos) then return false end
+        return ges.pos.y >= Screen:getHeight() - Bottombar.TOTAL_H()
     end
 
     self.ges_events = {
@@ -1117,9 +1132,21 @@ function ScreenWidget:init()
                     end
                     for mod_id, slot in pairs(self._book_mod_slots) do
                         if on_current_page[mod_id] then
-                            local widget = slot.widget
-                            if widget and widget.dimen and ges.pos:intersectWith(widget.dimen) then
-                                local sw = _findSwipeWidget(widget, 6)
+                            -- Hit-test against the layout wrapper when present: the raw
+                            -- build() result sits inside wrapBox (FrameContainer /
+                            -- HorizontalGroup for the module frame & background) and
+                            -- may not carry absolute screen dimen. The pooled wrapper
+                            -- always does — it is what the body lays out and paints.
+                            local hit_dimen
+                            if slot.has_menu and self._wrapper_pool then
+                                local wrap = self._wrapper_pool[mod_id]
+                                hit_dimen = wrap and wrap.dimen
+                            end
+                            if not hit_dimen then
+                                hit_dimen = slot.widget and slot.widget.dimen
+                            end
+                            if hit_dimen and ges.pos:intersectWith(hit_dimen) then
+                                local sw = _findSwipeWidget(slot.widget, 8)
                                 if sw and sw:onSwipe(nil, ges) then
                                     return true
                                 end
@@ -1746,7 +1773,11 @@ function ScreenWidget:_buildCtx()
                 -- max_recent is set to 15 so that after each module filters
                 -- finished books at render time, at least 5 unfinished entries
                 -- remain available for display.
-                self._cached_books_state = SH.prefetchBooks(show_c, show_r, max_recent)
+                local excl = SUISettings:readSetting(self._pfx .. "recent_exclude_currently")
+                if excl == nil then excl = true end
+                self._cached_books_state = SH.prefetchBooks(show_c, show_r, max_recent, {
+                    exclude_current = excl,
+                })
                 if Config.cover_extraction_pending then
                     self:_scheduleCoverPoll()
                 end
@@ -1873,8 +1904,7 @@ function ScreenWidget:_buildCtx()
     -- reuse it directly rather than repeating the visibility logic here.
     local coverdeck_center_stats = nil
     if coverdeck_needs_db and self._db_conn then
-        local saved_center_fp = SUISettings:readSetting(self._pfx .. "flow_recent_fp")
-        local center_fp = saved_center_fp or (bs.recent_fps and bs.recent_fps[1])
+        local center_fp = _coverdeckDefaultCenterFp(bs.current_fp, bs.recent_fps)
         local pe = center_fp and bs.prefetched_data and bs.prefetched_data[center_fp]
         local center_md5 = type(pe) == "table" and pe.partial_md5_checksum
         if center_md5 then
@@ -1902,10 +1932,10 @@ function ScreenWidget:_buildCtx()
             local pe_c  = bs.prefetched_data and bs.prefetched_data[bs.current_fp]
             local c_md5 = type(pe_c) == "table" and pe_c.partial_md5_checksum
             if c_md5 then
-                -- Fix 5: use pcall(require) instead of package.loaded so that the
-                -- module is always resolved even on the very first render, before
-                -- build() has had a chance to load it. require() is idempotent —
-                -- subsequent calls return the cached module at zero extra cost.
+                -- pcall(require) resolves the module even on the very first render,
+                -- before build() has had a chance to load it. require() is
+                -- idempotent — subsequent calls return the cached module at zero
+                -- extra cost.
                 local mc_ok, mc_mod = pcall(require, "modules/module_currently")
                 if mc_ok and mc_mod and mc_mod.fetchBookStatsForCtx then
                     currently_book_stats = {
@@ -2070,7 +2100,15 @@ function ScreenWidget:_showBookHoldDialog(fp, mod_id)
         -- what a module shows or how a cover looks (e.g. status badges),
         -- so re-render on close rather than trying to track exactly which
         -- action fired. This mirrors _navigateRefresh in module_coverdeck.lua.
-        refresh_fn = function() self_ref:_refreshImmediate(true) end,
+        refresh_fn = function()
+            -- Status change already invalidates the sidecar cache via
+            -- patchStatusButtons → _onStatusChanged. Drop the books prefetch
+            -- and ctx so the rebuild re-runs prefetchBooks() and picks up the
+            -- new percent/summary for Cover Deck + book-grid badges/bars.
+            self_ref._cached_books_state = nil
+            self_ref._ctx_cache          = nil
+            self_ref:_refreshImmediate(true)
+        end,
         -- "More by <Author>" (sui_browse_author, registered in main.lua)
         -- repaints FM.instance.file_chooser to the virtual author leaf, but
         -- the homescreen is what's actually on screen here, on top of FM —
@@ -2561,7 +2599,7 @@ function ScreenWidget:_updatePage(keep_cache, books_only, stats_only)
                         mod      = mod,
                         widget   = widget,
                         parent   = col_body,
-                        index    = #col_body + 1,
+                        index    = #col_body,
                         col_w    = col_w,
                         has_menu = has_menu,
                     }
@@ -2688,7 +2726,7 @@ function ScreenWidget:_updatePage(keep_cache, books_only, stats_only)
                         mod      = mod,
                         widget   = widget,
                         parent   = body,
-                        index    = #body + 1,
+                        index    = #body,
                         col_w    = inner_w,
                         has_menu = has_menu,
                     }
@@ -2875,7 +2913,11 @@ function ScreenWidget:_refresh(keep_cache, books_only, stats_only)
                             local show_c = Registry.isEnabled(Registry.get("currently"), self._pfx)
                             local show_r = (mod_r and Registry.isEnabled(mod_r, self._pfx)) or (mod_cd and Registry.isEnabled(mod_cd, self._pfx))
                             -- show_finished removed: each module filters independently at render time.
-                            local new_bs = SH.prefetchBooks(show_c, show_r, 15)
+                            local excl = SUISettings:readSetting(self._pfx .. "recent_exclude_currently")
+                            if excl == nil then excl = true end
+                            local new_bs = SH.prefetchBooks(show_c, show_r, 15, {
+                                exclude_current = excl,
+                            })
                             self._cached_books_state = new_bs
                             self._ctx_cache.prefetched = new_bs.prefetched_data
                             self._ctx_cache.current_fp = new_bs.current_fp
@@ -2972,9 +3014,10 @@ function ScreenWidget:_refresh(keep_cache, books_only, stats_only)
                     end
 
                     local MCD = package.loaded["modules/module_coverdeck"]
-                    if MCD and MCD.fetchBookStatsForCtx and self._ctx_cache.recent_fps then
-                        local saved_center_fp = SUISettings:readSetting(self._pfx .. "flow_recent_fp")
-                        local center_fp = saved_center_fp or self._ctx_cache.recent_fps[1]
+                    if MCD and MCD.fetchBookStatsForCtx
+                            and (self._ctx_cache.current_fp or self._ctx_cache.recent_fps) then
+                        local center_fp = _coverdeckDefaultCenterFp(
+                            self._ctx_cache.current_fp, self._ctx_cache.recent_fps)
                         local pe = center_fp and self._ctx_cache.prefetched and self._ctx_cache.prefetched[center_fp]
                         local md5 = pe and pe.partial_md5_checksum
                         if md5 then
@@ -3305,6 +3348,21 @@ function ScreenWidget:_refreshImmediate(keep_cache)
         -- sui_book_grid.lua for why that lives there instead of here.
         local ok_gr, GridRenderer = pcall(require, "engines/sui_book_grid")
         if ok_gr and GridRenderer then GridRenderer.clearRowCaches(self._ctx_cache) end
+        -- Hold-dialog actions (status, reset, ...) write the sidecar but
+        -- leave ctx.prefetched with the pre-action percent/summary. Clear
+        -- just those fields so the next build/getBookData re-reads them
+        -- from DocSettings without a full prefetchBooks (titles/covers/md5
+        -- stay cached). Progress badges on Cover Deck and book-grid modules
+        -- stay accurate after status changes on the homescreen.
+        local prefetched = self._ctx_cache.prefetched
+        if type(prefetched) == "table" then
+            for _, entry in pairs(prefetched) do
+                if type(entry) == "table" then
+                    entry.percent = nil
+                    entry.summary = nil
+                end
+            end
+        end
     end
     if not self._navbar_container then return end
     self:_updatePage(keep_cache or false)
@@ -3489,7 +3547,11 @@ function ScreenWidget:onShow()
                 local show_c = Registry.isEnabled(Registry.get("currently"), self._pfx)
                 local show_r = (mod_r and Registry.isEnabled(mod_r, self._pfx))
                     or (mod_cd and Registry.isEnabled(mod_cd, self._pfx))
-                self._cached_books_state = SH.prefetchBooks(show_c, show_r, 15)
+                local excl = SUISettings:readSetting(self._pfx .. "recent_exclude_currently")
+                if excl == nil then excl = true end
+                self._cached_books_state = SH.prefetchBooks(show_c, show_r, 15, {
+                    exclude_current = excl,
+                })
             end
             self._cached_books_state = self._cached_books_state
                 or { current_fp = nil, recent_fps = {}, prefetched_data = {} }
