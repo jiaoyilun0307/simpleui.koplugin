@@ -5623,3 +5623,171 @@ msgstr "Scale for the clock face only.\n100% is the default size."
 
 msgid "Scale for the date text only.\n100% is the default size."
 msgstr "Scale for the date text only.\n100% is the default size."
+
+msgid "%d files (%s)"
+msgstr "%d files (%s)"
+
+msgid "%d settings"
+msgstr "%d settings"
+
+msgid "Appearance & Style"
+msgstr "Appearance & Style"
+
+msgid "Backup"
+msgstr "[待翻译] Backup"
+
+msgid "Backup & Restore"
+msgstr "Backup & Restore"
+
+msgid "Backup created"
+msgstr "[待翻译] Backup created"
+
+msgid "Backup created:"
+msgstr "Backup created:"
+
+msgid "Backup failed."
+msgstr "Backup failed."
+
+msgid "Backup loaded. Choose what to import, then tap \\"Restore Selected…\\"."
+msgstr "Backup loaded. Choose what to import, then tap \\"Restore Selected…\\"."
+
+msgid "Backup restored.\nRestart KOReader now to finish applying all changes?"
+msgstr "Backup restored.\nRestart KOReader now to finish applying all changes?"
+
+msgid "Backup was made by a newer SimpleUI version. Please update this plugin first."
+msgstr "Backup was made by a newer SimpleUI version. Please update this plugin first."
+
+msgid "Choose backup file"
+msgstr "[待翻译] Choose backup file"
+
+msgid "Choose backup file…"
+msgstr "正在Choose backup file…"
+
+msgid "Copy this file somewhere safe (e.g. over USB)."
+msgstr "Copy this file somewhere safe (e.g. over USB)."
+
+msgid "Could not determine backup folder."
+msgstr "Could not determine backup folder."
+
+msgid "Could not open backup file for writing"
+msgstr "[待翻译] Could not open backup file for writing"
+
+msgid "Could not write backup file"
+msgstr "[待翻译] Could not write backup file"
+
+msgid "Creating backup…"
+msgstr "正在Creating backup…"
+
+msgid "Custom actions, rows and dispatcher bindings"
+msgstr "Custom actions, rows and dispatcher bindings"
+
+msgid "Custom icons"
+msgstr "[待翻译] Custom icons"
+
+msgid "Custom quotes"
+msgstr "[待翻译] Custom quotes"
+
+msgid "Export"
+msgstr "[待翻译] Export"
+
+msgid "Export Full Backup…"
+msgstr "正在Export Full Backup…"
+
+msgid "Export now…"
+msgstr "正在Export now…"
+
+msgid "File not found."
+msgstr "File not found."
+
+msgid "Folder covers, browse modes, series grouping"
+msgstr "Folder covers, browse modes, series grouping"
+
+msgid "Fonts, icon assignments, icon presets"
+msgstr "Fonts, icon assignments, icon presets"
+
+msgid "General — %d settings"
+msgstr "General — %d settings"
+
+msgid "Goals & Streaks"
+msgstr "Goals & Streaks"
+
+msgid "Hide Currently Reading book"
+msgstr "Hide Currently Reading book"
+
+msgid "Home Button Opens Home Screen"
+msgstr "Home Button Opens Home Screen"
+
+msgid "Icon files and installed packs from sui_icons/"
+msgstr "Icon files and installed packs from sui_icons/"
+
+msgid "Import Backup…"
+msgstr "正在Import Backup…"
+
+msgid "Last backup: %s%s"
+msgstr "Last backup: %s%s"
+
+msgid "Last backup: never"
+msgstr "Last backup: never"
+
+msgid "Layout, modules, custom screens, presets"
+msgstr "Layout, modules, custom screens, presets"
+
+msgid "Makes the device's Home button always open the SimpleUI Home Screen — while reading and while browsing files — instead of KOReader's native Home behaviour."
+msgstr "Makes the device's Home button always open the SimpleUI Home Screen — while reading and while browsing files — instead of KOReader's native Home behaviour."
+
+msgid "Navigation, status, title and quick settings bars"
+msgstr "Navigation, status, title and quick settings bars"
+
+msgid "No backup loaded yet."
+msgstr "No backup loaded yet."
+
+msgid "No books to show yet — open a book to see it here."
+msgstr "No books to show yet — open a book to see it here."
+
+msgid "Not a valid backup file."
+msgstr "Not a valid backup file."
+
+msgid "Nothing selected to import."
+msgstr "Nothing selected to import."
+
+msgid "On side covers too"
+msgstr "[待翻译] On side covers too"
+
+msgid "Quote pool files from sui_quotes/"
+msgstr "Quote pool files from sui_quotes/"
+
+msgid "Reading goals, streak mode and freeze bank"
+msgstr "Reading goals, streak mode and freeze bank"
+
+msgid "Restart now"
+msgstr "[待翻译] Restart now"
+
+msgid "Restore"
+msgstr "[待翻译] Restore"
+
+msgid "Restore Selected…"
+msgstr "正在Restore Selected…"
+
+msgid "Restore failed."
+msgstr "Restore failed."
+
+msgid "Restore failed. Your previous configuration was kept unchanged."
+msgstr "Restore failed. Your previous configuration was kept unchanged."
+
+msgid "Restore this backup? Existing settings for these categories will be replaced. Saved presets are merged — yours are kept."
+msgstr "Restore this backup? Existing settings for these categories will be replaced. Saved presets are merged — yours are kept."
+
+msgid "Save backup as"
+msgstr "[待翻译] Save backup as"
+
+msgid "This backup contains no settings or files."
+msgstr "This backup contains no settings or files."
+
+msgid "Total: %d settings, %d files (%s)"
+msgstr "Total: %d settings, %d files (%s)"
+
+msgid "Wallpaper settings and image files"
+msgstr "[待翻译] Wallpaper settings and image files"
+
+msgid "empty"
+msgstr "empty"
