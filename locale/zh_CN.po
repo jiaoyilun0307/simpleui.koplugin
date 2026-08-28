@@ -5791,3 +5791,6 @@ msgstr "[待翻译] Wallpaper settings and image files"
 
 msgid "empty"
 msgstr "empty"
+
+msgid "Backup loaded. Choose what to import, then tap \\"Restore Selected…\\"."
+msgstr "Backup loaded. Choose what to import, then tap \\"Restore Selected…\\"."
