@@ -5794,3 +5794,45 @@ msgstr "empty"
 
 msgid "Backup loaded. Choose what to import, then tap \\"Restore Selected…\\"."
 msgstr "Backup loaded. Choose what to import, then tap \\"Restore Selected…\\"."
+
+msgid "A simple UI for KOReader"
+msgstr "A simple UI for KOReader"
+
+msgid "Backup loaded. Choose what to import, then tap \\"Restore Selected…\\"."
+msgstr "Backup loaded. Choose what to import, then tap \\"Restore Selected…\\"."
+
+msgid "Column Width (Bento Grid)"
+msgstr "Column Width (Bento Grid)"
+
+msgid "Dashboard"
+msgstr "[待翻译] Dashboard"
+
+msgid "Date"
+msgstr "[待翻译] Date"
+
+msgid "Detail Below Ring"
+msgstr "Detail Below Ring"
+
+msgid "Detail Inside Ring"
+msgstr "Detail Inside Ring"
+
+msgid "No items."
+msgstr "No items."
+
+msgid "Ring Alignment"
+msgstr "Ring Alignment"
+
+msgid "Ring Style"
+msgstr "Ring Style"
+
+msgid "Rings"
+msgstr "[待翻译] Rings"
+
+msgid "Scale for the text inside the rings.\n100% is the default size."
+msgstr "Scale for the text inside the rings.\n100% is the default size."
+
+msgid "Share of the row this module occupies.\n100% = full width. Modules under 100% share a row when their widths fit (bento grid)."
+msgstr "Share of the row this module occupies.\n100% = full width. Modules under 100% share a row when their widths fit (bento grid)."
+
+msgid "Vertical space between items.\n100% is the default spacing."
+msgstr "Vertical space between items.\n100% is the default spacing."
