@@ -6128,3 +6128,6 @@ msgstr "Share of the row this module occupies.\n100% = full width. Modules under
 
 msgid "Vertical space between items.\n100% is the default spacing."
 msgstr "Vertical space between items.\n100% is the default spacing."
+
+msgid "days streak"
+msgstr "days streak"
