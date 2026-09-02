@@ -6131,3 +6131,12 @@ msgstr "Vertical space between items.\n100% is the default spacing."
 
 msgid "days streak"
 msgstr "days streak"
+
+msgid "Height of the spacer.\n100% is the default size.\nTap the arrows for fine steps, hold for larger ones."
+msgstr "Height of the spacer.\n100% is the default size.\nTap the arrows for fine steps, hold for larger ones."
+
+msgid "Home key opens Home Screen"
+msgstr "Home key opens Home Screen"
+
+msgid "Makes the device's physical Home key open the SimpleUI Home Screen — while reading and while browsing files — instead of KOReader's native Home behaviour. The file browser title-bar home icon still goes to the home folder."
+msgstr "Makes the device's physical Home key open the SimpleUI Home Screen — while reading and while browsing files — instead of KOReader's native Home behaviour. The file browser title-bar home icon still goes to the home folder."
