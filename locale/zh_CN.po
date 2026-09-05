@@ -6140,3 +6140,9 @@ msgstr "Home key opens Home Screen"
 
 msgid "Makes the device's physical Home key open the SimpleUI Home Screen — while reading and while browsing files — instead of KOReader's native Home behaviour. The file browser title-bar home icon still goes to the home folder."
 msgstr "Makes the device's physical Home key open the SimpleUI Home Screen — while reading and while browsing files — instead of KOReader's native Home behaviour. The file browser title-bar home icon still goes to the home folder."
+
+msgid "Quitting…"
+msgstr "正在Quitting…"
+
+msgid "Restarting…"
+msgstr "正在Restarting…"
