@@ -104,11 +104,7 @@ local function _guardedSetIcon(path, on_valid, on_invalid)
     if safe then
         on_valid(safe)
     else
-        local InfoMessage = require("ui/widget/infomessage")
-        UIManager:show(InfoMessage:new{
-            text    = _("Unsupported icon format.\nPlease use a PNG or SVG file."),
-            timeout = 3,
-        })
+        UI.Notify.toast(_("Unsupported icon format.\nPlease use a PNG or SVG file."))
         if on_invalid then on_invalid() end
     end
 end
@@ -169,8 +165,7 @@ end
 
 -- showUnavailable helper used inside execute closures.
 local function _unavailToast(msg)
-    local InfoMessage = require("ui/widget/infomessage")
-    UIManager:show(InfoMessage:new{ text = msg, timeout = 3 })
+    UI.Notify.toast(msg)
 end
 
 -- Helper: resolve the live FileManager instance.
@@ -250,12 +245,12 @@ end
 local function _doWifiToggle(plugin)
     local ok_hw, has_wifi = pcall(function() return Device:hasWifiToggle() end)
     if not (ok_hw and has_wifi) then
-        UIManager:show(require("ui/widget/infomessage"):new{ text = _("WiFi not available on this device."), timeout = 2 })
+        UI.Notify.toast(_("WiFi not available on this device."), 2)
         return
     end
     local ok_nm, NetworkMgr = pcall(require, "ui/network/manager")
     if not ok_nm or not NetworkMgr then
-        UIManager:show(require("ui/widget/infomessage"):new{ text = _("Network manager unavailable."), timeout = 2 })
+        UI.Notify.toast(_("Network manager unavailable."), 2)
         return
     end
     local ok_state, wifi_on = pcall(function() return NetworkMgr:isWifiOn() end)
@@ -263,7 +258,7 @@ local function _doWifiToggle(plugin)
     if wifi_on then
         Config.wifi_optimistic = false
         pcall(function() NetworkMgr:turnOffWifi() end)
-        UIManager:show(require("ui/widget/infomessage"):new{ text = _("Wi-Fi off"), timeout = 1 })
+        UI.Notify.toast(_("Wi-Fi off"), 1)
     else
         Config.wifi_optimistic = true
         local ok_on, err = pcall(function() NetworkMgr:turnOnWifi() end)
@@ -391,9 +386,7 @@ end
 local function _showFrontlightDialog(plugin)
     local ok_f, has_fl = pcall(function() return Device:hasFrontlight() end)
     if not ok_f or not has_fl then
-        UIManager:show(require("ui/widget/infomessage"):new{
-            text = _("Frontlight not available on this device."), timeout = 2,
-        })
+        UI.Notify.toast(_("Frontlight not available on this device."), 2)
         return
     end
     local widget = require("ui/widget/frontlightwidget"):new{}
@@ -513,7 +506,7 @@ end
 -- Uses _Bottombar().setTempTabActive to update the bar indicator while the
 -- dialog is open — that is a legitimate navbar operation, not action logic.
 local function _showPowerDialog(plugin)
-    if plugin._power_dialog then return end  -- guard: ignore double-tap
+    if plugin._power_dialog then return end
     local ButtonDialog  = require("ui/widget/buttondialog")
     local dialog_w      = math.floor(Screen:getWidth() * 0.42)
     local prev_action   = plugin.active_action
@@ -521,56 +514,83 @@ local function _showPowerDialog(plugin)
 
     BB.setTempTabActive(plugin, "power", true, prev_action)
 
-    local _quitting = false
+    -- When true, _clear skips tab restore (process is ending via Exit/Restart).
+    local _leaving = false
     local function _clear()
         plugin._power_dialog = nil
-        if _quitting then return end
+        if _leaving then return end
         BB.setTempTabActive(plugin, "power", false, prev_action)
+    end
+
+    -- Preserve ButtonDialog's region refresh (flashui on movable.dimen) so the
+    -- dialog pixels are cleared on e-ink, then run _clear for tab restore.
+    local function _onCloseWidget(dialog)
+        if dialog and dialog.movable and dialog.movable.dimen then
+            UIManager:setDirty(nil, function()
+                return "flashui", dialog.movable.dimen
+            end)
+        end
+        _clear()
+    end
+
+    -- Close the dialog. For process-ending actions, set the exit flag first so
+    -- navigate / _doShowHS cannot reopen the Homescreen before the stack empties.
+    local function _dismiss(leaving)
+        _leaving = leaving and true or false
+        if leaving then
+            UIManager._simpleui_exiting = true
+        end
+        local d = plugin._power_dialog
+        plugin._power_dialog = nil
+        if d then UIManager:close(d) end
+    end
+
+    -- Close and fully paint away the power dialog first, then show the sticky
+    -- notice on the next tick so the two never overlap. Exit/Restart run one
+    -- tick later, after the notice has been painted.
+    local function _leaveWithNotice(text, event_name)
+        _dismiss(true)
+        UIManager:forceRePaint()
+        UIManager:nextTick(function()
+            UI.Notify.sticky(text, { compact = true })
+            UIManager:nextTick(function()
+                UIManager:broadcastEvent(Event:new(event_name))
+            end)
+        end)
     end
 
     local buttons = {}
     if Device:canRestart() then
         buttons[#buttons + 1] = {{ text = _("Restart"), callback = function()
-            _quitting = true
-            local d = plugin._power_dialog; plugin._power_dialog = nil
-            UIManager:close(d)
-            -- Broadcast "Restart" (same event native KOReader's Exit menu uses)
-            -- instead of calling UIManager:restartKOReader() directly. This
-            -- routes through DeviceListener:onExit → FileManagerMenu:exitOrRestart
-            -- → self.ui:onClose(), which properly tears down the widget stack
-            -- (closing any still-open screen, e.g. Collections) before
-            -- restarting. Calling restartKOReader() directly skipped that
-            -- teardown, so pending in-memory-only changes — like a collection
-            -- just created but not yet flushed to disk — were lost.
-            UIManager:broadcastEvent(Event:new("Restart"))
+            -- Native path: DeviceListener:onRestart → exitOrRestart → restartKOReader.
+            _leaveWithNotice(_("Restarting…"), "Restart")
         end }}
     end
     if Device:canReboot() then
         buttons[#buttons + 1] = {{ text = _("Reboot"), callback = function()
-            local d = plugin._power_dialog; plugin._power_dialog = nil
-            UIManager:close(d); UIManager:askForReboot()
+            -- Confirm dialog may cancel; restore the tab, then ask.
+            _dismiss(false)
+            UIManager:askForReboot()
         end }}
     end
     if Device:canSuspend() then
         buttons[#buttons + 1] = {{ text = _("Sleep"), callback = function()
-            _quitting = true
-            local d = plugin._power_dialog; plugin._power_dialog = nil
-            UIManager:close(d); UIManager:flushSettings(); UIManager:suspend()
+            -- Session continues after wakeup — restore the tab, then suspend.
+            _dismiss(false)
+            UIManager:flushSettings()
+            UIManager:suspend()
         end }}
     end
     buttons[#buttons + 1] = {{ text = _("Quit"), callback = function()
-        _quitting = true
-        local d = plugin._power_dialog; plugin._power_dialog = nil
-        UIManager:close(d)
-        -- Broadcast "Exit" (same event native KOReader's Exit menu uses)
-        -- instead of calling UIManager:quit() directly — see note above.
-        UIManager:broadcastEvent(Event:new("Exit"))
+        -- "Quitting" not "Shutting down": KOReader exits to the host OS;
+        -- device power-off is a separate action when the device supports it.
+        _leaveWithNotice(_("Quitting…"), "Exit")
     end }}
 
     plugin._power_dialog = ButtonDialog:new{
         width              = dialog_w,
         tap_close_callback = _clear,
-        onCloseWidget      = _clear,
+        onCloseWidget      = _onCloseWidget,
         buttons            = buttons,
     }
     UIManager:show(plugin._power_dialog)
@@ -1606,12 +1626,8 @@ function QA.sui_show_custom_qa_list(plugin, ctx_menu, ctx)
         footer_enabled = function() return #Config.getCustomQAList() < MAX_CUSTOM_QA end,
         footer_action = function(ctx2)
             if #Config.getCustomQAList() >= MAX_CUSTOM_QA then
-                local InfoMessage = require("ui/widget/infomessage")
-                ctx_menu.UIManager:show(InfoMessage:new{
-                    text    = string.format(ctx_menu.N_("The maximum of %d quick action has been reached. Delete one first.",
-                              "The maximum of %d quick actions has been reached. Delete one first.", MAX_CUSTOM_QA), MAX_CUSTOM_QA),
-                    timeout = 2,
-                })
+                UI.Notify.toast(string.format(N_("The maximum of %d quick action has been reached. Delete one first.",
+                          "The maximum of %d quick actions has been reached. Delete one first.", MAX_CUSTOM_QA), MAX_CUSTOM_QA), 2)
                 return
             end
             QA.showQuickActionDialog(plugin, nil, function()
@@ -1806,7 +1822,7 @@ function QA.sui_build_qa_icons(plugin, ctx_menu, ctx)
                             local safe = ok_ss and SUIStyle and SUIStyle.safeIconPath(path, nil)
                             if safe then on_valid(safe)
                             else
-                                ctx_menu.UIManager:show(ctx_menu.InfoMessage:new{ text = _("Unsupported icon format.\nPlease use a PNG or SVG file."), timeout = 3 })
+                                UI.Notify.toast(_("Unsupported icon format.\nPlease use a PNG or SVG file."))
                             end
                         end
                         
@@ -2063,7 +2079,6 @@ end
 
 local function _showNerdIconInput(current_icon, on_select, on_cancel)
     local InputDialog = require("ui/widget/inputdialog")
-    local InfoMessage = require("ui/widget/infomessage")
     local current_hex = ""
     if current_icon then
         current_hex = current_icon:match("^nerd:([0-9A-Fa-f]+)$") or ""
@@ -2102,16 +2117,10 @@ local function _showNerdIconInput(current_icon, on_select, on_cancel)
                                     on_select,
                                     function() UIManager:nextTick(_openInputDlg) end)
                             else
-                                UIManager:show(InfoMessage:new{
-                                    text    = _("Codepoint out of valid Unicode range (0–10FFFF)."),
-                                    timeout = 3,
-                                })
+                                UI.Notify.toast(_("Codepoint out of valid Unicode range (0–10FFFF)."))
                             end
                         else
-                            UIManager:show(InfoMessage:new{
-                                text    = _("Invalid input. Please enter 1–6 hexadecimal digits (0–9, A–F)."),
-                                timeout = 3,
-                            })
+                            UI.Notify.toast(_("Invalid input. Please enter 1–6 hexadecimal digits (0–9, A–F)."))
                         end
                     end,
                 },
@@ -2327,7 +2336,6 @@ end
 
 function QA.showQuickActionDialog(plugin, qa_id, on_done)
     local MultiInputDialog = require("ui/widget/multiinputdialog")
-    local InfoMessage      = require("ui/widget/infomessage")
     local ButtonDialog     = require("ui/widget/buttondialog")
 
     local getNonFavColl    = Config.getNonFavoritesCollections
@@ -2484,7 +2492,7 @@ function QA.showQuickActionDialog(plugin, qa_id, on_done)
                   { text = _("Save"), is_enter_default = true,
                     callback = function()
                         if not current_action_type then
-                            UIManager:show(InfoMessage:new{ text = _("Please select an action."), timeout = 3 })
+                            UI.Notify.toast(_("Please select an action."))
                             return
                         end
                         local inputs = active_dialog:getFields()
@@ -2513,7 +2521,7 @@ function QA.showQuickActionDialog(plugin, qa_id, on_done)
     local function openFolderPicker()
         local ok_pc, PathChooser = pcall(require, "ui/widget/pathchooser")
         if not ok_pc or not PathChooser then
-            UIManager:show(InfoMessage:new{ text = _("Path chooser not available."), timeout = 3 })
+            UI.Notify.toast(_("Path chooser not available."))
             if active_dialog then UIManager:show(active_dialog) else cancelActionPicker() end
             return
         end
@@ -2559,7 +2567,7 @@ function QA.showQuickActionDialog(plugin, qa_id, on_done)
     local function openPluginPicker()
         local plugin_actions = _scanFMPlugins()
         if #plugin_actions == 0 then
-            UIManager:show(InfoMessage:new{ text = _("No plugins found."), timeout = 3 })
+            UI.Notify.toast(_("No plugins found."))
             cancelActionPicker()
             return
         end
@@ -2585,7 +2593,7 @@ function QA.showQuickActionDialog(plugin, qa_id, on_done)
     local function openDispatcherPicker()
         local actions = _scanDispatcherActions()
         if #actions == 0 then
-            UIManager:show(InfoMessage:new{ text = _("No system actions found."), timeout = 3 })
+            UI.Notify.toast(_("No system actions found."))
             cancelActionPicker()
             return
         end
@@ -2914,7 +2922,6 @@ end
 -- ---------------------------------------------------------------------------
 
 function QA.makeMenuItems(plugin, ctx_menu)
-    local InfoMessage = require("ui/widget/infomessage")
     local ConfirmBox  = require("ui/widget/confirmbox")
     local InputDialog = require("ui/widget/inputdialog")
 
@@ -2928,11 +2935,7 @@ function QA.makeMenuItems(plugin, ctx_menu)
             enabled_func = function() return #Config.getCustomQAList() < MAX_CUSTOM_QA end,
             callback     = function(_menu_self, suppress_refresh)
                 if #Config.getCustomQAList() >= MAX_CUSTOM_QA then
-                    UIManager:show(InfoMessage:new{
-                        text    = string.format(N_("The maximum of %d quick action has been reached. Delete one first.",
-                                  "The maximum of %d quick actions has been reached. Delete one first.", MAX_CUSTOM_QA), MAX_CUSTOM_QA),
-                        timeout = 2,
-                    })
+                    UI.Notify.toast(string.format(N_("The maximum of %d quick action has been reached. Delete one first.", "The maximum of %d quick actions has been reached. Delete one first.", MAX_CUSTOM_QA), MAX_CUSTOM_QA), 2)
                     return
                 end
                 if suppress_refresh then suppress_refresh() end
@@ -3049,8 +3052,7 @@ function QA.executeCustomQA(action_id, fm, show_unavailable_fn)
         if show_unavailable_fn then
             show_unavailable_fn(msg)
         else
-            local InfoMessage = require("ui/widget/infomessage")
-            UIManager:show(InfoMessage:new{ text = msg, timeout = 3 })
+            UI.Notify.toast(msg)
         end
     end
 

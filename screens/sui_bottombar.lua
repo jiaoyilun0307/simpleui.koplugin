@@ -21,8 +21,6 @@ local function Geom()            _Geom            = _Geom            or require(
 local function Font()            _Font            = _Font            or require("ui/font");                             return _Font            end
 local Blitbuffer      = require("ffi/blitbuffer")
 local UIManager       = require("ui/uimanager")
-local _InfoMessage
-local function InfoMessage() _InfoMessage = _InfoMessage or require("ui/widget/infomessage"); return _InfoMessage end
 local Device          = require("device")
 local Screen          = Device.screen
 local logger          = require("logger")
@@ -1253,7 +1251,7 @@ end
 -- ---------------------------------------------------------------------------
 
 local function showUnavailable(msg)
-    UIManager:show(InfoMessage():new{ text = msg, timeout = 3 })
+    UI.Notify.toast(msg)
 end
 
 local function setActiveAndRefreshFM(plugin, action_id, tabs)
@@ -1328,6 +1326,9 @@ local function _executeInPlace(action_id, plugin, fm)
 end
 
 function M.navigate(plugin, action_id, fm_self, tabs, force)
+    -- Do not navigate or reopen screens while KOReader is quitting.
+    if UIManager._simpleui_exiting or UIManager._exit_code ~= nil then return end
+
     -- When the HS tab is tapped from inside the reader, route through
     -- closeReaderToHomescreen so onClose(false) suppresses the reader's
     -- internal "full" refresh — same flash-free path as the gesture handler.
@@ -1819,10 +1820,7 @@ end
 -- window if called directly from somewhere else.
 function M.showFloatingBarWindow(fm)
     if M.isBarInjectedOnCurrentScreen() then
-        UIManager:show(InfoMessage():new{
-            text    = _("The navigation bar is already available on this screen."),
-            timeout = 2,
-        })
+        UI.Notify.toast(_("The navigation bar is already available on this screen."), 2)
         return
     end
 

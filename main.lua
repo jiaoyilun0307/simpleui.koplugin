@@ -3,7 +3,6 @@
 
 local WidgetContainer = require("ui/widget/container/widgetcontainer")
 local UIManager       = require("ui/uimanager")
-local InfoMessage     = require("ui/widget/infomessage")
 local logger          = require("logger")
 local Dispatcher      = require("dispatcher")
 
@@ -178,14 +177,10 @@ function SimpleUIPlugin:init()
                 logger.info("simpleui: updated from", prev_version, "to", current_version,
                     "— restart recommended")
                 UIManager:scheduleIn(1, function()
-                    local InfoMessage = require("ui/widget/infomessage")
-                    UIManager:show(InfoMessage:new{
-                        text = string.format(
+                    UI.Notify.toast(string.format(
                             _("Simple UI was updated (%s → %s).\n\nA restart is recommended to apply all changes cleanly."),
                             prev_version, current_version
-                        ),
-                        timeout = 6,
-                    })
+                        ), 6)
                 end)
             end
             SUISettings:set("simpleui_loaded_version", current_version)
@@ -1195,17 +1190,9 @@ function SimpleUIPlugin:init()
                 local ok, Updater = pcall(require, "infra/sui_updater")
                 if ok and Updater then Updater.scheduleAutoCheck() end
             end)
-            -- Patch ReaderStatistics:onSyncBookStats to close the SimpleUI
-            -- stats connection before every sync, including syncs triggered
-            -- from inside the Reader (where ScreenWidget is not on the
-            -- UIManager stack and therefore cannot handle the event itself).
-            -- The ScreenWidget:onSyncBookStats handler covers the common
-            -- case; this patch is the safety net for the remaining paths
-            -- (Reader menu → "Synchronize now", interval-based auto-sync).
-            -- We apply it unconditionally at init time — no scheduleIn needed
-            -- because PluginLoader has already initialised all plugins before
-            -- SimpleUI:init() runs, so the RS class table is already in
-            -- package.loaded.
+            -- Release statistics.sqlite3 before every cloud sync (Reader
+            -- menu, auto-sync, and paths with no screen on the stack).
+            -- See ScreenEngine.prepareForStatsSync.
             do
                 local RS = _requireStatistics()
                 if RS and RS.onSyncBookStats and not RS._sui_sync_patched then
@@ -1213,60 +1200,9 @@ function SimpleUIPlugin:init()
                     RS._sui_orig_onSyncBookStats = orig_onSyncBookStats
                     RS._sui_sync_patched         = true
                     RS.onSyncBookStats = function(self_rs, ...)
-                        -- Close every live screen's DB connection synchronously,
-                        -- before ReaderStatistics defers the actual sync to nextTick.
-                        -- ScreenEngine.liveScreenIds() covers the built-in Homescreen
-                        -- and any Custom Screen left open — a stats/currently-reading
-                        -- module can be enabled on either, and each screen keeps its
-                        -- own _db_conn (see ScreenWidget:_buildCtx in
-                        -- engines/sui_screen_engine.lua), so this must not be
-                        -- hardcoded to the Homescreen alone.
-                        local ScreenEngine = package.loaded["engines/sui_screen_engine"]
-                        if ScreenEngine then
-                            for _, id in ipairs(ScreenEngine.liveScreenIds()) do
-                                local screen = ScreenEngine.getInstance(id)
-                                if screen then
-                                    if screen._db_conn then
-                                        pcall(function() screen._db_conn:close() end)
-                                        screen._db_conn = nil
-                                    end
-                                    -- Guard prevents _buildCtx from reopening the connection
-                                    -- during the window between this call and the nextTick
-                                    -- sync.  Cleared two ticks later (after sync completes).
-                                    --
-                                    -- FIX: mirror the _db_sync_guard stuck-forever fix that was
-                                    -- already applied to ScreenWidget:onSyncBookStats.
-                                    -- The original code gated the entire tick callback on
-                                    --   HS._instance == hs_ref
-                                    -- If the screen instance was replaced between the guard
-                                    -- being set and the tick firing (e.g. a tab switch during a
-                                    -- Kobo sync cycle), the guard was never cleared on the
-                                    -- original instance and _buildCtx would never reopen the
-                                    -- DB for the rest of the session.  Fix: always clear the
-                                    -- guard on the original instance; only gate _refresh() on
-                                    -- that same id still being the live one.
-                                    -- scheduleIn(10) is a safety-net for the edge case where
-                                    -- tick callbacks are never invoked (UIManager teardown,
-                                    -- hot reload).
-                                    screen._db_sync_guard = true
-                                    local screen_ref = screen
-                                    local screen_id  = id
-                                    local cleared = false
-                                    local function clearGuard()
-                                        if cleared then return end
-                                        cleared = true
-                                        screen_ref._db_sync_guard = false
-                                        screen_ref._ctx_cache     = nil
-                                        if ScreenEngine.getInstance(screen_id) == screen_ref then
-                                            screen_ref:_refresh(false)
-                                        end
-                                    end
-                                    UIManager:tickAfterNext(function()
-                                        UIManager:nextTick(clearGuard)
-                                    end)
-                                    UIManager:scheduleIn(10, clearGuard)
-                                end
-                            end
+                        local SE = package.loaded["engines/sui_screen_engine"]
+                        if SE and SE.prepareForStatsSync then
+                            SE.prepareForStatsSync()
                         end
                         return orig_onSyncBookStats(self_rs, ...)
                     end
@@ -1396,10 +1332,7 @@ end
 -- that check (Bottombar.showFloatingBarWindow repeats it defensively too).
 function SimpleUIPlugin:onSimpleUINavbarWindow()
     if Bottombar.isBarInjectedOnCurrentScreen() then
-        UIManager:show(InfoMessage:new{
-            text    = _("The navigation bar is already available on this screen."),
-            timeout = 2,
-        })
+        UI.Notify.toast(_("The navigation bar is already available on this screen."), 2)
         return true
     end
     Bottombar.showFloatingBarWindow()
@@ -1451,12 +1384,39 @@ end
 -- always nil by the time a raise could fire. _raiseParkedScreen (infra/
 -- sui_patches.lua) is its successor, now that this loop leaves a parked
 -- screen's _instance alone for it to find.
+
+-- Mark exit early so HS reopen paths bail before _exit_code is set (that
+-- only happens once the window stack is empty). Force-close soft-parked
+-- screens so they cannot keep the stack non-empty and block quit.
+function SimpleUIPlugin:onExit()
+    UIManager._simpleui_exiting = true
+    local ScreenEngine = package.loaded["engines/sui_screen_engine"]
+    if ScreenEngine then
+        for _, id in ipairs(ScreenEngine.liveScreenIds()) do
+            local inst = ScreenEngine.getInstance(id)
+            if inst then
+                inst._parked = nil
+                inst._navbar_closing_intentionally = true
+                pcall(function() UIManager:close(inst) end)
+            end
+        end
+    end
+    return false
+end
+
+function SimpleUIPlugin:onRestart()
+    UIManager._simpleui_exiting = true
+    return false
+end
+
 function SimpleUIPlugin:onCloseWidget()
     local ScreenEngine = package.loaded["engines/sui_screen_engine"]
     if not ScreenEngine then return end
+    local exiting = UIManager._simpleui_exiting or UIManager._exit_code ~= nil
     for _, id in ipairs(ScreenEngine.liveScreenIds()) do
         local inst = ScreenEngine.getInstance(id)
-        if inst and not inst._parked then
+        if inst and (exiting or not inst._parked) then
+            inst._parked = nil
             inst._navbar_closing_intentionally = true
             UIManager:close(inst)
         end
@@ -1578,7 +1538,8 @@ function SimpleUIPlugin:onTeardown()
     -- (files replaced on disk without restarting KOReader) picks up new code
     -- on the next plugin load, instead of reusing the old in-memory versions.
     _menu_installer = nil
-    -- Restore the ReaderStatistics:onSyncBookStats patch.
+    -- Restore ReaderStatistics:onSyncBookStats and clear any in-flight
+    -- stats-sync guard so a hot reload cannot leave openStatsDB blocked.
     local RS = _requireStatistics()
     if RS and RS._sui_sync_patched then
         if RS._sui_orig_onSyncBookStats then
@@ -1586,6 +1547,10 @@ function SimpleUIPlugin:onTeardown()
             RS._sui_orig_onSyncBookStats = nil
         end
         RS._sui_sync_patched = nil
+    end
+    local ok_cfg, Cfg = pcall(require, "infra/sui_config")
+    if ok_cfg and Cfg and Cfg.endStatsSyncGuard then
+        Cfg.endStatsSyncGuard()
     end
     for _, mod in ipairs(_PLUGIN_MODULES) do
         package.loaded[mod] = nil
@@ -1901,11 +1866,13 @@ function SimpleUIPlugin:onCloseDocument()
     -- timeout=0.0 schedules the InfoMessage to close itself on the next tick.
     --
     -- Migration: if simpleui_hs_closing_notice_mode is absent, fall back to the
-    -- old boolean simpleui_hs_closing_notice (nil/true → "always", false → "never").
+    -- old boolean simpleui_hs_closing_notice. Explicit false → "never"; anything
+    -- else (true or unset) → "always". Default when neither key exists is "always".
     do
         local notice_mode = SUISettings:readSetting("simpleui_hs_closing_notice_mode")
         if not notice_mode then
-            notice_mode = SUISettings:nilOrTrue("simpleui_hs_closing_notice") and "always" or "never"
+            notice_mode = SUISettings:readSetting("simpleui_hs_closing_notice") == false
+                and "never" or "always"
         end
 
         local suppress = is_reload or cover_shown
@@ -1915,18 +1882,13 @@ function SimpleUIPlugin:onCloseDocument()
             -- UIManager:show() respects honor_silent_mode on InfoMessage, which
             -- means the notice is silently dropped when the Dispatcher has put
             -- the UIManager into silent mode to batch multiple gesture actions.
-            -- We bypass silent mode here by temporarily clearing it, showing the
-            -- notice and flushing it to the screen, then restoring the flag.
-            -- This is safe because forceRePaint() runs synchronously and the
-            -- InfoMessage is a non-blocking toast (timeout=0.0 auto-closes it);
-            -- no other widget draw or event dispatch occurs between the two lines.
+            -- Bypass silent mode for the sticky show + repaint, then restore.
             local was_silent = UIManager:isInSilentMode()
             if was_silent then UIManager:setSilentMode(false) end
-            UIManager:show(InfoMessage:new{
-                text    = _("Closing book…"),
-                timeout = 0.0,
-            })
-            UIManager:forceRePaint()
+            -- Hold the widget so closeClosingNotice (sui_patches) can dismiss it
+            -- when the Homescreen becomes visible. timeout=0.0 is a safety net
+            -- for paths that never raise the HS.
+            self._closing_notice = UI.Notify.sticky(_("Closing book…"), { timeout = 0.0 })
             if was_silent then UIManager:setSilentMode(true) end
         end
     end
@@ -2216,44 +2178,24 @@ function SimpleUIPlugin:onCloseDocument()
     end
 
     -- Currently Reading: invalidate book data so the next render shows fresh
-    -- progress. Uses surgical invalidation to avoid re-opening every sidecar.
+    -- progress. Always a full discard of the cached book-list state (never a
+    -- surgical per-entry patch): current_fp itself may have changed — the
+    -- just-closed book might not even be the one that becomes "current" next
+    -- (e.g. a different book was already ahead in ReadHistory) — and only a
+    -- fresh prefetchBooks() pass can re-resolve that. Mirrors the Cover Deck
+    -- block below exactly, so both book-list modules stay correct regardless
+    -- of which one (if any) is active alongside the other on a given screen.
     if any_currently_active then
-        local function _partial_invalidate(bs)
-            if not bs then return end
-            -- Drop the entry for the closed book so prefetchBooks() re-reads it.
-            -- current_fp is deliberately left untouched: SH.getBookData() and
-            -- fetchBookStats() both fall back to a synchronous direct re-read
-            -- when their cache is empty, so the closed book's data is already
-            -- fresh (not stale) on the very next render — meaning there is no
-            -- need to blank current_fp while waiting for the next
-            -- prefetchBooks() call, and doing so only cost a visible one-frame
-            -- flash to the empty-state placeholder before the deferred
-            -- refresh replaced it with the resolved book.
-            if bs.prefetched_data and closed_fp then
-                bs.prefetched_data[closed_fp] = nil
-            end
-        end
         for _, id in ipairs(screen_ids) do
             if currently_active_for[id] then
-                -- Skipped when coverdeck is also active on this same screen —
-                -- its block below will discard that screen's _cached_books_state
-                -- entirely, making the partial work redundant.
-                if not coverdeck_active_for[id] then
-                    local inst = ScreenEngine.getInstance(id)
-                    if inst then
-                        _partial_invalidate(inst._cached_books_state)
-                    end
-                    _partial_invalidate(ScreenEngine.getCachedBooksState(id))
-                end
-                -- When this screen is not live, the flat _cached_books_state
-                -- would otherwise be reused verbatim on the next
-                -- ScreenWidget:new{} — including its current_fp, which still
-                -- points at the just-closed book. Since a non-nil cached
-                -- state makes _buildCtx() skip prefetchBooks() entirely, that
-                -- stale current_fp would stick even after a different book
-                -- becomes "current" in the meantime. Discard it so the next
-                -- open is forced to call prefetchBooks() from scratch.
-                if not ScreenEngine.getInstance(id) then
+                local inst = ScreenEngine.getInstance(id)
+                if inst then
+                    inst._cached_books_state = nil
+                else
+                    -- Not currently visible — the flat, id-level state would
+                    -- otherwise be reused verbatim (current_fp included) on
+                    -- the next ScreenWidget:new{}. Discard it so that open is
+                    -- forced to call prefetchBooks() from scratch.
                     ScreenEngine.setCachedBooksState(id, nil)
                 end
                 needs_refresh_for[id] = true
