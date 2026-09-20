@@ -6230,3 +6230,6 @@ msgstr "正在Quitting…"
 
 msgid "Restarting…"
 msgstr "正在Restarting…"
+
+msgid "Bookmark browser requires a newer KOReader. Please update."
+msgstr "Bookmark browser requires a newer KOReader. Please update."
