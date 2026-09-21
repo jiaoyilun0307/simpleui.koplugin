@@ -6235,3 +6235,6 @@ msgstr "正在Restarting…"
 
 msgid "Bookmark browser requires a newer KOReader. Please update."
 msgstr "Bookmark browser requires a newer KOReader. Please update."
+
+msgid "Bluetooth"
+msgstr "[待翻译] Bluetooth"
