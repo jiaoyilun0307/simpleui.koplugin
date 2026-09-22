@@ -6238,3 +6238,21 @@ msgstr "Bookmark browser requires a newer KOReader. Please update."
 
 msgid "Bluetooth"
 msgstr "[待翻译] Bluetooth"
+
+msgid "CoverBrowser plugin is not enabled, some features will not work correctly."
+msgstr "CoverBrowser plugin is not enabled, some features will not work correctly."
+
+msgid "Enable"
+msgstr "启用"
+
+msgid "Incompatible plugins and patches have been disabled:"
+msgstr "Incompatible plugins and patches have been disabled:"
+
+msgid "Please delete the Project: Title plugin from your plugins folder and restart KOReader."
+msgstr "Please delete the Project: Title plugin from your plugins folder and restart KOReader."
+
+msgid "Please restart KOReader for the change to take effect."
+msgstr "Please restart KOReader for the change to take effect."
+
+msgid "Project: Title is not compatible with Simple UI."
+msgstr "Project: Title is not compatible with Simple UI."
