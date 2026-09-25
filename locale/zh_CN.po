@@ -6256,3 +6256,42 @@ msgstr "Please restart KOReader for the change to take effect."
 
 msgid "Project: Title is not compatible with Simple UI."
 msgstr "Project: Title is not compatible with Simple UI."
+
+msgid "0% transparent, 100% solid. Applies to the native page bar in Library, History, Collections and similar screens."
+msgstr "0% transparent, 100% solid. Applies to the native page bar in Library, History, Collections and similar screens."
+
+msgid "0% transparent, 100% solid. Rounded background behind title bar buttons (back, search, menu, …)."
+msgstr "0% transparent, 100% solid. Rounded background behind title bar buttons (back, search, menu, …)."
+
+msgid "0% transparent, 100% solid. Values in between add a scrim over the wallpaper."
+msgstr "0% transparent, 100% solid. Values in between add a scrim over the wallpaper."
+
+msgid "Background Opacity"
+msgstr "Background Opacity"
+
+msgid "Background width"
+msgstr "[待翻译] Background width"
+
+msgid "Button Opacity"
+msgstr "Button Opacity"
+
+msgid "Button Style"
+msgstr "Button Style"
+
+msgid "Card Opacity"
+msgstr "Card Opacity"
+
+msgid "Default: %1"
+msgstr "Default: %1"
+
+msgid "Navigation Bar Opacity"
+msgstr "Navigation Bar Opacity"
+
+msgid "Pagination Bar Opacity"
+msgstr "Pagination Bar Opacity"
+
+msgid "Status Bar Opacity"
+msgstr "Status Bar Opacity"
+
+msgid "Title Bar Button Opacity"
+msgstr "Title Bar Button Opacity"
