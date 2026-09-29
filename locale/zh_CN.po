@@ -6295,3 +6295,6 @@ msgstr "Status Bar Opacity"
 
 msgid "Title Bar Button Opacity"
 msgstr "Title Bar Button Opacity"
+
+msgid "Incompatible items have been disabled:"
+msgstr "Incompatible items have been disabled:"
