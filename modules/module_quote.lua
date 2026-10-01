@@ -18,7 +18,6 @@ local Blitbuffer     = require("ffi/blitbuffer")
 
 local Device         = require("device")
 
-local Font           = require("ui/font")
 
 local CenterContainer = require("ui/widget/container/centercontainer")
 local HorizontalGroup = require("ui/widget/horizontalgroup")
@@ -880,7 +879,7 @@ end
 
 
 
-local function buildWidget(inner_w, text_str, attr_str, face_quote, face_attr, vspan_gap, has_wallpaper, clr_quote, clr_attr, alignment)
+local function buildWidget(inner_w, text_str, attr_str, fonts, vspan_gap, has_wallpaper, clr_quote, clr_attr, alignment)
 
  local function makeTBW(text, face, fgcolor, bold)
         local args = {
@@ -906,10 +905,10 @@ local function buildWidget(inner_w, text_str, attr_str, face_quote, face_attr, v
     end
 
     local vg = VerticalGroup:new{ align = "center" }
-    vg[#vg+1] = makeTBW(text_str, face_quote, clr_quote or SUIStyle.COLOR.text_primary, nil)
+    vg[#vg+1] = makeTBW(text_str, fonts.quote_face, clr_quote or SUIStyle.COLOR.text_primary, fonts.quote_bold)
     if attr_str and attr_str ~= "" then
         vg[#vg+1] = vspan_gap
-        vg[#vg+1] = makeTBW(attr_str, face_attr,  clr_attr  or CLR_TEXT_SUB,    true)
+        vg[#vg+1] = makeTBW(attr_str, fonts.attr_face, clr_attr or CLR_TEXT_SUB, fonts.attr_bold)
     end
     return vg
 
@@ -917,7 +916,7 @@ end
 
 
 
-local function buildFromCustomQuote(inner_w, face_quote, face_attr, vspan_gap, pfx, has_wallpaper, clr_quote, clr_attr, alignment)
+local function buildFromCustomQuote(inner_w, fonts, vspan_gap, pfx, has_wallpaper, clr_quote, clr_attr, alignment)
 
     local q = pickCustomQuote(pfx)
 
@@ -927,7 +926,9 @@ local function buildFromCustomQuote(inner_w, face_quote, face_attr, vspan_gap, p
 
             text    = _("No custom quotes found. Add a .lua file to the plugin's sui_quotes/ folder and select it in Settings."),
 
-            face    = face_quote,
+            face    = fonts.quote_face,
+
+            bold    = fonts.quote_bold,
 
             fgcolor = clr_attr or CLR_TEXT_SUB,
 
@@ -945,13 +946,13 @@ local function buildFromCustomQuote(inner_w, face_quote, face_attr, vspan_gap, p
 
     if q.b and q.b ~= "" then attr = attr .. (attr ~= "" and ",  " or "") .. q.b end
 
-    return buildWidget(inner_w, "“" .. q.q .. "”", attr, face_quote, face_attr, vspan_gap, has_wallpaper, clr_quote, clr_attr, alignment)
+    return buildWidget(inner_w, "“" .. q.q .. "”", attr, fonts, vspan_gap, has_wallpaper, clr_quote, clr_attr, alignment)
 
 end
 
 
 
-local function buildFromQuote(inner_w, face_quote, face_attr, vspan_gap, has_wallpaper, clr_quote, clr_attr, alignment)
+local function buildFromQuote(inner_w, fonts, vspan_gap, has_wallpaper, clr_quote, clr_attr, alignment)
 
     local q = pickQuote()
 
@@ -961,7 +962,9 @@ local function buildFromQuote(inner_w, face_quote, face_attr, vspan_gap, has_wal
 
             text    = _("No quotes found."),
 
-            face    = face_quote,
+            face    = fonts.quote_face,
+
+            bold    = fonts.quote_bold,
 
             fgcolor = clr_attr or CLR_TEXT_SUB,
 
@@ -979,13 +982,13 @@ local function buildFromQuote(inner_w, face_quote, face_attr, vspan_gap, has_wal
 
     if q.b and q.b ~= "" then attr = attr .. (attr ~= "" and ",  " or "") .. q.b end
 
-    return buildWidget(inner_w, "\u{201C}" .. q.q .. "\u{201D}", attr, face_quote, face_attr, vspan_gap, has_wallpaper, clr_quote, clr_attr, alignment)
+    return buildWidget(inner_w, "\u{201C}" .. q.q .. "\u{201D}", attr, fonts, vspan_gap, has_wallpaper, clr_quote, clr_attr, alignment)
 
 end
 
 
 
-local function buildFromHighlight(inner_w, face_quote, face_attr, vspan_gap, has_wallpaper, clr_quote, clr_attr, alignment)
+local function buildFromHighlight(inner_w, fonts, vspan_gap, has_wallpaper, clr_quote, clr_attr, alignment)
 
     local h = pickHighlight()
 
@@ -1001,7 +1004,7 @@ local function buildFromHighlight(inner_w, face_quote, face_attr, vspan_gap, has
 
             _("Your highlights"),
 
-            face_quote, face_attr, vspan_gap, has_wallpaper
+            fonts, vspan_gap, has_wallpaper
 
         ), nil
 
@@ -1026,14 +1029,14 @@ local function buildFromHighlight(inner_w, face_quote, face_attr, vspan_gap, has
     local TRAILING_QUOTES = '["\'\u{201D}\u{2019}\u{201E}\u{201A}\u{00BB}\u{203A}%s]+$'
     local text = h.text:gsub(LEADING_QUOTES, ''):gsub(TRAILING_QUOTES, '')
     text = text:gsub('^[\u{2014}\u{2013}]%s*', '')
-    return buildWidget(inner_w, "\u{201C}" .. text .. "\u{201D}", attr, face_quote, face_attr, vspan_gap, has_wallpaper, clr_quote, clr_attr, alignment),
+    return buildWidget(inner_w, "\u{201C}" .. text .. "\u{201D}", attr, fonts, vspan_gap, has_wallpaper, clr_quote, clr_attr, alignment),
            h.filepath, h.title, h.pos0, h.page
 
 end
 
 
 
-local function buildFromMixed(inner_w, face_quote, face_attr, vspan_gap, has_wallpaper, clr_quote, clr_attr, alignment)
+local function buildFromMixed(inner_w, fonts, vspan_gap, has_wallpaper, clr_quote, clr_attr, alignment)
 
     local has_highlights = #getPool() > 0
 
@@ -1043,21 +1046,21 @@ local function buildFromMixed(inner_w, face_quote, face_attr, vspan_gap, has_wal
 
         if math.random(2) == 1 then
 
-            return buildFromHighlight(inner_w, face_quote, face_attr, vspan_gap, has_wallpaper, clr_quote, clr_attr, alignment)
+            return buildFromHighlight(inner_w, fonts, vspan_gap, has_wallpaper, clr_quote, clr_attr, alignment)
 
         else
 
-            return buildFromQuote(inner_w, face_quote, face_attr, vspan_gap, has_wallpaper, clr_quote, clr_attr, alignment), nil, nil, nil, nil
+            return buildFromQuote(inner_w, fonts, vspan_gap, has_wallpaper, clr_quote, clr_attr, alignment), nil, nil, nil, nil
 
         end
 
     elseif has_highlights then
 
-        return buildFromHighlight(inner_w, face_quote, face_attr, vspan_gap, has_wallpaper, clr_quote, clr_attr, alignment)
+        return buildFromHighlight(inner_w, fonts, vspan_gap, has_wallpaper, clr_quote, clr_attr, alignment)
 
     else
 
-        return buildFromQuote(inner_w, face_quote, face_attr, vspan_gap, has_wallpaper, clr_quote, clr_attr, alignment), nil, nil, nil, nil
+        return buildFromQuote(inner_w, fonts, vspan_gap, has_wallpaper, clr_quote, clr_attr, alignment), nil, nil, nil, nil
 
     end
 
@@ -1067,7 +1070,7 @@ end
 
 -- Same as buildFromMixed, but pairs the user's highlights with the selected
 -- custom quotes file instead of the built-in quotes.lua pool.
-local function buildFromCustomMixed(inner_w, face_quote, face_attr, vspan_gap, pfx, has_wallpaper, clr_quote, clr_attr, alignment)
+local function buildFromCustomMixed(inner_w, fonts, vspan_gap, pfx, has_wallpaper, clr_quote, clr_attr, alignment)
 
     local has_highlights = #getPool() > 0
 
@@ -1078,21 +1081,21 @@ local function buildFromCustomMixed(inner_w, face_quote, face_attr, vspan_gap, p
 
         if math.random(2) == 1 then
 
-            return buildFromHighlight(inner_w, face_quote, face_attr, vspan_gap, has_wallpaper, clr_quote, clr_attr, alignment)
+            return buildFromHighlight(inner_w, fonts, vspan_gap, has_wallpaper, clr_quote, clr_attr, alignment)
 
         else
 
-            return buildFromCustomQuote(inner_w, face_quote, face_attr, vspan_gap, pfx, has_wallpaper, clr_quote, clr_attr, alignment), nil, nil, nil, nil
+            return buildFromCustomQuote(inner_w, fonts, vspan_gap, pfx, has_wallpaper, clr_quote, clr_attr, alignment), nil, nil, nil, nil
 
         end
 
     elseif has_highlights then
 
-        return buildFromHighlight(inner_w, face_quote, face_attr, vspan_gap, has_wallpaper, clr_quote, clr_attr, alignment)
+        return buildFromHighlight(inner_w, fonts, vspan_gap, has_wallpaper, clr_quote, clr_attr, alignment)
 
     else
 
-        return buildFromCustomQuote(inner_w, face_quote, face_attr, vspan_gap, pfx, has_wallpaper, clr_quote, clr_attr, alignment), nil, nil, nil, nil
+        return buildFromCustomQuote(inner_w, fonts, vspan_gap, pfx, has_wallpaper, clr_quote, clr_attr, alignment), nil, nil, nil, nil
 
     end
 
@@ -1122,6 +1125,12 @@ M.enabled_key = "quote_enabled"
 
 M.default_on  = false
 
+-- Text elements with a user-selectable font family and size.
+M.text_elems  = { "quote", "author" }
+
+-- The attribution is bold until the user picks another variant.
+Config.declareTextVariants(M.id, { author = "bold" })
+
 M.getCountLabel = nil
 
 
@@ -1141,21 +1150,28 @@ end
 
 
 
+-- Font sizes of the quote and author text: module scale × per-element text scale.
+local function fontSizes(scale, styles)
+    return math.max(7, math.floor(_BASE_QUOTE_FS     * scale * styles.quote.scale)),
+           math.max(6, math.floor(_BASE_QUOTE_ATTR_FS * scale * styles.author.scale))
+end
+
 function M.build(w, ctx)
 
     local scale      = Config.getModuleScale("quote", ctx.pfx) * (ctx.landscape_factor or 1)
 
-    local quote_fs   = math.max(7, math.floor(_BASE_QUOTE_FS     * scale))
-
-    local attr_fs    = math.max(6, math.floor(_BASE_QUOTE_ATTR_FS * scale))
+    local styles     = Config.resolveTextStyles(ctx, M.id, M.text_elems)
+    local quote_fs, attr_fs = fontSizes(scale, styles)
 
     local quote_gap  = math.max(1, math.floor(_BASE_QUOTE_GAP    * scale))
 
 
 
-    local face_quote = Font:getFace(SUIStyle.FACE_REGULAR, quote_fs)
-
-    local face_attr  = Font:getFace(SUIStyle.FACE_REGULAR, attr_fs)
+    -- Faces of the quote text and its attribution, with the emboldening flag
+    -- each still needs.
+    local fonts = {}
+    fonts.quote_face, fonts.quote_bold = SUIStyle.getTextFace(styles.quote,  quote_fs)
+    fonts.attr_face,  fonts.attr_bold  = SUIStyle.getTextFace(styles.author, attr_fs)
 
     local vspan_gap  = VerticalSpan:new{ width = quote_gap }
 
@@ -1179,23 +1195,23 @@ function M.build(w, ctx)
 
     if source == "highlights" then
 
-        content, hl_filepath, hl_title, hl_pos0, hl_page = buildFromHighlight(inner_w, face_quote, face_attr, vspan_gap, has_wallpaper, _clr_quote, _clr_attr, alignment)
+        content, hl_filepath, hl_title, hl_pos0, hl_page = buildFromHighlight(inner_w, fonts, vspan_gap, has_wallpaper, _clr_quote, _clr_attr, alignment)
 
     elseif source == "mixed" then
 
-        content, hl_filepath, hl_title, hl_pos0, hl_page = buildFromMixed(inner_w, face_quote, face_attr, vspan_gap, has_wallpaper, _clr_quote, _clr_attr, alignment)
+        content, hl_filepath, hl_title, hl_pos0, hl_page = buildFromMixed(inner_w, fonts, vspan_gap, has_wallpaper, _clr_quote, _clr_attr, alignment)
 
     elseif source == "custom" then
 
-        content = buildFromCustomQuote(inner_w, face_quote, face_attr, vspan_gap, ctx and ctx.pfx, has_wallpaper, _clr_quote, _clr_attr, alignment)
+        content = buildFromCustomQuote(inner_w, fonts, vspan_gap, ctx and ctx.pfx, has_wallpaper, _clr_quote, _clr_attr, alignment)
 
     elseif source == "custom_mixed" then
 
-        content, hl_filepath, hl_title, hl_pos0, hl_page = buildFromCustomMixed(inner_w, face_quote, face_attr, vspan_gap, ctx and ctx.pfx, has_wallpaper, _clr_quote, _clr_attr, alignment)
+        content, hl_filepath, hl_title, hl_pos0, hl_page = buildFromCustomMixed(inner_w, fonts, vspan_gap, ctx and ctx.pfx, has_wallpaper, _clr_quote, _clr_attr, alignment)
 
     else
 
-        content = buildFromQuote(inner_w, face_quote, face_attr, vspan_gap, has_wallpaper, _clr_quote, _clr_attr, alignment)
+        content = buildFromQuote(inner_w, fonts, vspan_gap, has_wallpaper, _clr_quote, _clr_attr, alignment)
 
     end
 
@@ -1321,16 +1337,19 @@ function M.getHeight(_ctx)
     local lf         = (_ctx and _ctx.landscape_factor) or (UI.isLandscape() and UI.getLandscapeFactor() or 1)
     local scale      = Config.getModuleScale("quote", _ctx and _ctx.pfx) * lf
 
-    local quote_fs   = math.max(7, math.floor(_BASE_QUOTE_FS     * scale))
+    local styles     = Config.resolveTextStyles(_ctx, M.id, M.text_elems)
+    local quote_fs, attr_fs = fontSizes(scale, styles)
+    local quote_lh   = SUIStyle.lineReserve(styles.quote, quote_fs, quote_fs)
 
     local quote_gap  = math.max(1, math.floor(_BASE_QUOTE_GAP    * scale))
 
-    local attr_h     = math.max(6, math.floor(_BASE_QUOTE_ATTR_H * scale))
+    local attr_h     = SUIStyle.lineReserve(styles.author, attr_fs,
+        math.max(6, math.floor(_BASE_QUOTE_ATTR_H * scale * styles.author.scale)))
 
     local fixed = isFixedHeight(_ctx and _ctx.pfx)
     local lines = fixed and _FIXED_LINES or 4  -- 4 is the dynamic estimate
 
-    return PAD + quote_fs * lines + quote_gap + attr_h + PAD2
+    return PAD + quote_lh * lines + quote_gap + attr_h + PAD2
 
 end
 
@@ -1374,7 +1393,7 @@ function M.getMenuItems(ctx_menu)
 
 
 
-    return {
+    local rows = {
 
         {
 
@@ -1575,6 +1594,15 @@ function M.getMenuItems(ctx_menu)
             },
         },
 
+        Config.makeTextSection({
+            mod_id  = M.id,
+            elems   = M.text_elems,
+            labels  = { quote = _lc("Quote"), author = _lc("Author") },
+            info    = _lc("Size of this text.\n100% is the default size."),
+            pfx     = pfx,
+            refresh = refresh,
+            _lc     = _lc,
+        }),
         {
             text         = _lc("Fixed Height"),
             checked_func = function() return isFixedHeight(pfx) end,
@@ -1586,7 +1614,44 @@ function M.getMenuItems(ctx_menu)
 
     }
 
+    local content_rows, size_rows, appearance_extra = {}, {}, {}
+    local text_opts = {
+        mod_id  = M.id,
+        elems   = M.text_elems,
+        labels  = { quote = _lc("Quote"), author = _lc("Author") },
+        info    = _lc("Size of this text.\n100% is the default size."),
+        pfx     = pfx,
+        refresh = refresh,
+        _lc     = _lc,
+    }
+    for _, row in ipairs(rows) do
+        local label = row.text
+        if type(label) ~= "string" and row.text_func then
+            local ok, v = pcall(row.text_func)
+            if ok then label = v end
+        end
+        label = label or ""
+        if label == _lc("Scale") then
+            size_rows[#size_rows + 1] = row
+        elseif label == _lc("Text") or label == _lc("Fonts") then
+            -- text_opts
+        elseif label == _lc("Alignment") or label == _lc("Fixed Height") then
+            appearance_extra[#appearance_extra + 1] = row
+        else
+            content_rows[#content_rows + 1] = row
+        end
+    end
+    return Config.buildModuleMenu({
+        content = content_rows,
+        appearance = {
+            size  = #size_rows > 0 and size_rows or nil,
+            text  = text_opts,
+            extra = #appearance_extra > 0 and appearance_extra or nil,
+        },
+    }, ctx_menu)
 end
+
+
 
 
 

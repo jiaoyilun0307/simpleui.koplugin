@@ -980,7 +980,8 @@ local function collectionsCellHeight(cw, pfx)
     local lf          = UI.isLandscape() and UI.getLandscapeFactor() or 1
     local scale       = Config.getModuleScale("collections", pfx) * lf
     local thumb_scale = Config.getThumbScale("collections", pfx) * lf
-    local lbl_scale   = Config.getItemLabelScale("collections", pfx) * lf
+    local styles      = Config.resolveTextStyles({ pfx = pfx }, "collections", { "label" })
+    local lbl_scale   = (styles.label and styles.label.scale) or 1
     local d = getDims(scale, thumb_scale, lbl_scale, cw, getHideSpine())
     return d.coll_cell_h
 end
@@ -994,7 +995,8 @@ local function buildCollectionCell(coll_name, cw, cell_h, ctx)
     local lf          = ctx.landscape_factor or 1
     local scale       = Config.getModuleScale("collections", pfx) * lf
     local thumb_scale = Config.getThumbScale("collections", pfx) * lf
-    local lbl_scale   = Config.getItemLabelScale("collections", pfx) * lf
+    local styles      = Config.resolveTextStyles({ pfx = pfx }, "collections", { "label" })
+    local lbl_scale   = (styles.label and styles.label.scale) or 1
     local rc      = getRC()
     local files    = rc and getCollectionFilesFromRC(rc, coll_name) or {}
     local count    = #files
@@ -1029,10 +1031,11 @@ local function buildCollectionCell(coll_name, cw, cell_h, ctx)
 
     -- Single-line label capped to cover width (same truncation pattern as
     -- GridRenderer / Recent progress labels).
+    local label_face, label_bold = SUIStyle.getTextFace(styles.label, d.coll_lbl_fs)
     local label_w = UI.makeColoredText{
         text                   = display_name,
-        face                   = Font:getFace(SUIStyle.FACE_REGULAR, d.coll_lbl_fs),
-        bold                   = true,
+        face                   = label_face,
+        bold                   = label_bold,
         fgcolor                = CLR_TEXT_SUB_EFF,
         max_width              = d.coll_w,
         truncate_with_ellipsis = true,
@@ -1476,6 +1479,7 @@ local mod = GridRenderer.makeModule{
     id          = "collections",
     name        = _("Collections"),
     label       = _("Collections"),
+    text_label  = _("Label"),
     default_on  = false,
     is_book_mod = true,   -- needed for the surgical repaint of the swipe between pages
     max_items   = MAX_ITEMS,

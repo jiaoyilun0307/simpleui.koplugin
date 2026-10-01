@@ -6,15 +6,12 @@ local Blitbuffer      = require("ffi/blitbuffer")
 local CenterContainer = require("ui/widget/container/centercontainer")
 local datetime        = require("datetime")
 local Device          = require("device")
-local Font            = require("ui/font")
 local FrameContainer  = require("ui/widget/container/framecontainer")
 local Geom            = require("ui/geometry")
 local TextBoxWidget   = require("ui/widget/textboxwidget")
 local TextWidget      = require("ui/widget/textwidget")
 local VerticalGroup   = require("ui/widget/verticalgroup")
 local VerticalSpan    = require("ui/widget/verticalspan")
-local LeftContainer   = require("ui/widget/container/leftcontainer")
-local RightContainer  = require("ui/widget/container/rightcontainer")
 local WidgetContainer = require("ui/widget/container/widgetcontainer")
 local Screen          = Device.screen
 local _ = require("infra/sui_i18n").translate
@@ -409,41 +406,49 @@ local function timeToWords(hour, min, is_12h)
 end
 
 -- ---------------------------------------------------------------------------
+-- Item slot
+--
+-- Wraps a widget in a row of fixed height and the widget's own width, with the
+-- widget vertically centred. The fixed height keeps the module height
+-- independent of font metrics (see M.getHeight).
+-- ---------------------------------------------------------------------------
+
+local function _slot(wgt, h)
+    local size = wgt:getSize()
+    if not wgt.dimen then wgt.dimen = size end
+    return CenterContainer:new{
+        dimen = Geom:new{ w = size.w, h = h },
+        wgt,
+    }
+end
+
+-- ---------------------------------------------------------------------------
 -- Word clock widget builder
 --
--- Returns a VerticalGroup containing two TextBoxWidget lines (hour + minutes)
--- so that each line can be centred/aligned independently within inner_w.
+-- Returns a VerticalGroup containing two lines (hour + minutes), aligned
+-- relative to each other by `align`.
 -- Using two separate widgets (rather than one multi-line TextBoxWidget) gives
 -- us reliable height control on e-ink devices, where multi-line TextBoxWidget
 -- getSize() sometimes reports incorrect heights before the first paint.
 -- ---------------------------------------------------------------------------
 
-local function _buildWordClockWidget(text, face, inner_w, align)
+local function _buildWordClockWidget(text, face, bold, align)
     -- Split the "Hour\nMinutes" string into two parts.
     local nl = text:find("\n")
     local line1 = nl and text:sub(1, nl - 1) or text
     local line2 = nl and text:sub(nl + 1)    or ""
 
-    local ContainerClass = CenterContainer
-    if align == "left"  then ContainerClass = LeftContainer  end
-    if align == "right" then ContainerClass = RightContainer end
-
     -- Measure a single line height once.
-    local probe = TextWidget:new{ text = line1, face = face, bold = true }
+    local probe = TextWidget:new{ text = line1, face = face, bold = bold }
     local line_h = probe:getSize().h
     probe:free()
 
     local function makeLine(txt)
-        local wgt = UI.makeColoredText{
-            text    = txt,
-            face    = face,
-            bold    = true,
-        }
-        if not wgt.dimen then wgt.dimen = wgt:getSize() end
-        return ContainerClass:new{
-            dimen = Geom:new{ w = inner_w, h = line_h },
-            wgt,
-        }
+        return _slot(UI.makeColoredText{
+            text = txt,
+            face = face,
+            bold = bold,
+        }, line_h)
     end
 
     local vg = VerticalGroup:new{ align = align }
@@ -615,18 +620,49 @@ local function _vspan(px, pool)
     return VerticalSpan:new{ width = px }
 end
 
+-- Text elements with a user-selectable font family and size scale.
+-- Size lives only in Config text styles (_text_scale_*); no parallel scale keys.
+local TEXT_ELEMS = { "clock", "date", "battery" }
+
+-- The time is bold until the user picks another variant.
+Config.declareTextVariants("clock", { clock = "bold" })
+
+-- One-shot: copy legacy *_elem_scale values into text-style scales, then delete
+-- the legacy keys. Runs at most once per prefix per process.
+local _LEGACY_ELEM = { clock = "clock", date = "date", battery = "batt" }
+local _elem_migrated = {}
+
+local function _migrateLegacyElemScales(pfx)
+    pfx = pfx or "simpleui_hs_"
+    if _elem_migrated[pfx] then return end
+    _elem_migrated[pfx] = true
+    for elem, legacy in pairs(_LEGACY_ELEM) do
+        local text_key = pfx .. "clock_text_scale_" .. elem
+        if SUISettings:get(text_key) == nil then
+            local pct = Config.getElemScalePct("clock", legacy, pfx)
+            if pct ~= Config.SCALE_DEF then
+                Config.setTextStyleScale(pct, "clock", elem, pfx)
+            end
+        end
+        SUISettings:del(pfx .. "clock_" .. legacy .. "_elem_scale")
+    end
+end
+
 -- landscape_factor is accepted for API compatibility; size uses raw module
 -- scale only. inner_w is already the column width in landscape spread, so
 -- applying lf again would shrink twice (same convention as GridRenderer).
-local function build(w, pfx, vspan_pool, landscape_factor)
+-- `styles` (text style per element) is read from settings when omitted.
+local function build(w, pfx, vspan_pool, landscape_factor, styles)
     local lf    = landscape_factor or 1
+    _migrateLegacyElemScales(pfx)
+    styles = styles or Config.readTextStyles("clock", TEXT_ELEMS, pfx)
     local scale = Config.getModuleScale("clock", pfx) * lf
     local inner_w = w - PAD * 2
 
     local raw_scale  = Config.getModuleScaleRaw("clock", pfx)
-    local clock_elem = Config.getElemScale("clock", "clock", pfx)
-    local date_elem  = Config.getElemScale("clock", "date",  pfx)
-    local batt_elem  = Config.getElemScale("clock", "batt",  pfx)
+    local clock_elem = styles.clock.scale or 1
+    local date_elem  = styles.date.scale or 1
+    local batt_elem  = styles.battery.scale or 1
 
     local clock_span, clock_fs = _clockMetrics(inner_w, pfx, raw_scale, clock_elem)
     local clock_w  = clock_fs
@@ -646,66 +682,49 @@ local function build(w, pfx, vspan_pool, landscape_factor)
     local sub_fg = CLR_TEXT_SUB
 
     local align = getAlignment(pfx)
-    local ContainerClass = CenterContainer
-    if align == "left" then ContainerClass = LeftContainer
-    elseif align == "right" then ContainerClass = RightContainer end
-
     local vg = VerticalGroup:new{ align = align }
-
-    local function wrapText(wgt)
-        if not wgt.dimen then wgt.dimen = wgt:getSize() end
-        return wgt
-    end
 
     local function appendClock()
         if clock_style == "word" then
             local is_12h = G_reader_settings:isTrue("twelve_hour_clock")
             local t      = os.date("*t", os.time())
             local wc_text = timeToWords(t.hour, t.min, is_12h)
-            vg[#vg+1] = _buildWordClockWidget(wc_text, Font:getFace(SUIStyle.FACE_REGULAR, word_fs), inner_w, align)
+            local face_word, bold_word = SUIStyle.getTextFace(styles.clock, word_fs)
+            vg[#vg+1] = _buildWordClockWidget(wc_text, face_word, bold_word, align)
         elseif clock_style == "analogue" then
             local diameter = math.min(clock_span, inner_w)
             if diameter % 2 == 1 then diameter = diameter - 1 end
             local face_widget = _buildAnalogueClockWidget(diameter, SUIStyle.COLOR.text_primary)
-            if face_widget then
-                vg[#vg+1] = ContainerClass:new{
-                    dimen = Geom:new{ w = inner_w, h = diameter },
-                    face_widget,
-                }
-            end
+            if face_widget then vg[#vg+1] = face_widget end
         else
-            vg[#vg+1] = ContainerClass:new{
-                dimen = Geom:new{ w = inner_w, h = clock_w },
-                wrapText(UI.makeColoredText{
-                    text    = datetime.secondsToHour(os.time(), G_reader_settings:isTrue("twelve_hour_clock")),
-                    face    = Font:getFace(SUIStyle.FACE_REGULAR, clock_fs),
-                    bold    = true,
-                }),
-            }
+            local face_clock, bold_clock = SUIStyle.getTextFace(styles.clock, clock_fs)
+            vg[#vg+1] = _slot(UI.makeColoredText{
+                text = datetime.secondsToHour(os.time(), G_reader_settings:isTrue("twelve_hour_clock")),
+                face = face_clock,
+                bold = bold_clock,
+            }, clock_w)
         end
     end
 
     local function appendDate()
-        vg[#vg+1] = ContainerClass:new{
-            dimen = Geom:new{ w = inner_w, h = date_h },
-            wrapText(UI.makeColoredText{
-                text    = _localDate(),
-                face    = Font:getFace(SUIStyle.FACE_REGULAR, date_fs),
-                fgcolor = sub_fg,
-            }),
-        }
+        local face_date, bold_date = SUIStyle.getTextFace(styles.date, date_fs)
+        vg[#vg+1] = _slot(UI.makeColoredText{
+            text    = _localDate(),
+            face    = face_date,
+            bold    = bold_date,
+            fgcolor = sub_fg,
+        }, date_h)
     end
 
     local function appendBattery()
         local lvl, charging = _battInfo()
-        vg[#vg+1] = ContainerClass:new{
-            dimen = Geom:new{ w = inner_w, h = batt_h },
-            wrapText(UI.makeColoredText{
-                text    = _battText(lvl, charging),
-                face    = Font:getFace(SUIStyle.FACE_REGULAR, batt_fs),
-                fgcolor = sub_fg,
-            }),
-        }
+        local face_batt, bold_batt = SUIStyle.getTextFace(styles.battery, batt_fs)
+        vg[#vg+1] = _slot(UI.makeColoredText{
+            text    = _battText(lvl, charging),
+            face    = face_batt,
+            bold    = bold_batt,
+            fgcolor = sub_fg,
+        }, batt_h)
     end
 
     local appenders = {
@@ -722,10 +741,13 @@ local function build(w, pfx, vspan_pool, landscape_factor)
 
     if #vg == 0 then return nil end
 
+    -- `fit_align` makes the module chrome hug the content and position it
+    -- within the column (see ModuleChrome.wrap).
     return FrameContainer:new{
         bordersize     = 0,
         padding        = PAD,
         padding_bottom = PAD2 + bot_pad_extra,
+        fit_align      = align,
         vg,
     }
 end
@@ -740,6 +762,7 @@ M.id         = "clock"
 M.name       = _("Clock")
 M.label      = nil
 M.default_on = true
+M.text_elems = TEXT_ELEMS
 
 function M.isEnabled(pfx)
     return isClockEnabled(pfx) or isDateEnabled(pfx) or isBattEnabled(pfx)
@@ -956,14 +979,17 @@ function M.build(w, ctx)
         -- Full column width for surgical re-wrap (set by screen engine).
         ctx._screen_widget._clock_col_w    = ctx.col_w
     end
-    return build(w, ctx.pfx, ctx.vspan_pool, ctx.landscape_factor)
+    return build(w, ctx.pfx, ctx.vspan_pool, ctx.landscape_factor,
+        Config.resolveTextStyles(ctx, M.id, TEXT_ELEMS))
 end
 
 function M.getHeight(ctx)
+    _migrateLegacyElemScales(ctx.pfx)
+    local styles     = Config.resolveTextStyles(ctx, M.id, TEXT_ELEMS)
     local raw_scale  = Config.getModuleScaleRaw("clock", ctx.pfx)
-    local clock_elem = Config.getElemScale("clock", "clock", ctx.pfx)
-    local date_elem  = Config.getElemScale("clock", "date",  ctx.pfx)
-    local batt_elem  = Config.getElemScale("clock", "batt",  ctx.pfx)
+    local clock_elem = styles.clock.scale or 1
+    local date_elem  = styles.date.scale or 1
+    local batt_elem  = styles.battery.scale or 1
     local w_estimate = ctx.col_w or ctx.inner_w or (Screen:getWidth() - UI.SIDE_PAD * 2)
     local inner_w_estimate = w_estimate - PAD * 2
 
@@ -1027,40 +1053,12 @@ function M.getMenuItems(ctx_menu)
         set          = function(v) Config.setModuleScale(v, "clock", pfx) end,
         refresh      = refresh,
     }
-    size_group[#size_group + 1] = Config.makeScaleItem{
-        text_func    = function() return _lc("Clock Size") end,
-        enabled_func = function() return isClockEnabled(pfx) end,
-        title        = _lc("Clock Size"),
-        info         = _lc("Scale for the clock face only.\n100% is the default size."),
-        get          = function() return Config.getElemScalePct("clock", "clock", pfx) end,
-        set          = function(v) Config.setElemScale(v, "clock", "clock", pfx) end,
-        refresh      = refresh,
-    }
-    size_group[#size_group + 1] = Config.makeScaleItem{
-        text_func    = function() return _lc("Date Size") end,
-        enabled_func = function() return isDateEnabled(pfx) end,
-        title        = _lc("Date Size"),
-        info         = _lc("Scale for the date text only.\n100% is the default size."),
-        get          = function() return Config.getElemScalePct("clock", "date", pfx) end,
-        set          = function(v) Config.setElemScale(v, "clock", "date", pfx) end,
-        refresh      = refresh,
-    }
-    size_group[#size_group + 1] = Config.makeScaleItem{
-        text_func    = function() return _lc("Battery Size") end,
-        enabled_func = function() return isBattEnabled(pfx) end,
-        title        = _lc("Battery Size"),
-        info         = _lc("Scale for the battery text only.\n100% is the default size."),
-        get          = function() return Config.getElemScalePct("clock", "batt", pfx) end,
-        set          = function(v) Config.setElemScale(v, "clock", "batt", pfx) end,
-        refresh      = refresh,
-    }
-
+    
     local items = {
         {
-            -- Items row: manual order + show/hide, same Arrange pattern as
-            -- collections / quick_actions (SUI ArrangeList with eye toggle;
+            -- Arrange row: manual order (SUI ArrangeList with eye toggle;
             -- classic SortWidget for reorder plus checklist rows).
-            text = _lc("Items"),
+            text = _lc("Arrange"),
             keep_menu_open = true,
             callback = function()
                 local order = getItemOrder(pfx)
@@ -1171,11 +1169,17 @@ function M.getMenuItems(ctx_menu)
         }
     end
 
-    items[#items + 1] = {
-        text_func      = function() return _lc("Size") end,
-        sub_item_table = size_group,
+    local text_opts = {
+        mod_id  = M.id,
+        elems   = TEXT_ELEMS,
+        labels  = { clock = _lc("Clock"), date = _lc("Date"), battery = _lc("Battery") },
+        info    = _lc("Size of this text.\n100% is the default size."),
+        pfx     = pfx,
+        refresh = refresh,
+        _lc     = _lc,
     }
-    items[#items + 1] = {
+    local appearance_extra = {}
+    appearance_extra[#appearance_extra + 1] = {
         text_func  = function() return _lc("Clock Style") end,
         value_func = function()
             local style = getClockStyle(pfx)
@@ -1207,7 +1211,7 @@ function M.getMenuItems(ctx_menu)
             },
         },
     }
-    items[#items + 1] = {
+    appearance_extra[#appearance_extra + 1] = {
         text_func  = function() return _lc("Alignment") end,
         value_func = function() return alignLabel(getAlignment(pfx), _lc) end,
         separator      = true,
@@ -1237,7 +1241,7 @@ function M.getMenuItems(ctx_menu)
     }
 
     if #getVisibleItems(pfx) > 1 then
-        items[#items + 1] = {
+        appearance_extra[#appearance_extra + 1] = {
             text_func  = function() return _lc("Spacing") end,
             value_func = function() return getItemGapPct(pfx) .. "%" end,
             keep_menu_open = true,
@@ -1264,7 +1268,16 @@ function M.getMenuItems(ctx_menu)
         }
     end
 
-    return items
+    -- items[1] is the Items entry; classic show toggles follow when not SUI.
+    local item_rows = items
+    return Config.buildModuleMenu({
+        items = item_rows,
+        appearance = {
+            size  = size_group,
+            text  = text_opts,
+            extra = appearance_extra,
+        },
+    }, ctx_menu)
 end
 
 return M

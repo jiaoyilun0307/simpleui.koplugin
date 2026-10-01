@@ -142,7 +142,7 @@ local function buildPanel(touch_menu)
     local icon_size = math.floor(btn_size * 0.52)
     local ok_style, SUIStyle = pcall(require, "features/sui_style")
     local lbl_fs    = math.max(6, math.floor((ok_style and SUIStyle.FS_DETAIL or 15) * (getLabelScalePct() / 100)))
-    local lbl_face  = Font:getFace(ok_style and SUIStyle.FACE_REGULAR or "cfont", lbl_fs)
+    local lbl_face, lbl_bold = SUIStyle.getTextFace(_Config().getChromeLabelStyle("quick_settings"), lbl_fs)
     local border_sz = ok_style and SUIStyle.BORDER_SZ or 1
 
     local function makeButton(action_id)
@@ -158,7 +158,8 @@ local function buildPanel(touch_menu)
             lbl_sp       = Screen:scaleBySize(2),
             lbl_h        = lbl_face.size,
             lbl_fs       = lbl_fs,
-            lbl_face     = ok_style and SUIStyle.FACE_REGULAR or "cfont",
+            lbl_face     = lbl_face,
+            lbl_bold     = lbl_bold,
             lbl_w        = btn_size + Screen:scaleBySize(6),
             lbl_width    = btn_size + Screen:scaleBySize(6),
         })
@@ -1244,6 +1245,12 @@ function QSBar.makeMenuItems(ctx_menu)
                 set          = function(v) SUISettings:saveSetting(LABEL_SCALE_KEY, v) end,
                 refresh      = refresh,
             }),
+            _Config().makeChromeLabelFontItem({
+                bar     = "quick_settings",
+                title   = _("Font"),
+                refresh = refresh,
+                _lc     = _,
+            }),
             {
                 text           = _("Hide Label"),
                 checked_func   = function() return not showLabels() end,
@@ -1343,7 +1350,30 @@ function QSBar.makeMenuItems(ctx_menu)
         end,
     }
 
-    return items
+    local Config = require("infra/sui_config")
+    -- The enable toggle is the first row and stays on top as the master row.
+    local master = { items[1] }
+    local item_rows, content_rows, appearance_extra, behaviour = {}, {}, {}, {}
+    for i = 2, #items do
+        local row = items[i]
+        local label = row.text or ""
+        if label == _("Quick Actions") then
+            item_rows[#item_rows + 1] = row
+        elseif label == _("Frontlight Slider") or label == _("Warmth Slider") then
+            content_rows[#content_rows + 1] = row
+        elseif label == _("Settings on Long Tap") then
+            behaviour[#behaviour + 1] = row
+        else
+            appearance_extra[#appearance_extra + 1] = row
+        end
+    end
+    return Config.buildModuleMenu({
+        master     = master,
+        items      = item_rows,
+        content    = content_rows,
+        appearance = { extra = appearance_extra },
+        behaviour  = behaviour,
+    }, ctx_menu)
 end
 
 return QSBar
