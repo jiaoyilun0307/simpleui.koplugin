@@ -6439,3 +6439,30 @@ msgstr "Title Bar Button Opacity"
 
 msgid "Incompatible items have been disabled:"
 msgstr "Incompatible items have been disabled:"
+
+msgid "Bold"
+msgstr "[待翻译] Bold"
+
+msgid "Bold italic"
+msgstr "[待翻译] Bold italic"
+
+msgid "Content"
+msgstr "[待翻译] Content"
+
+msgid "Don't Invert Colored Icons in Night Mode"
+msgstr "Don't Invert Colored Icons in Night Mode"
+
+msgid "Icons that contain color keep their original colors in night mode instead of being inverted.\nMonochrome icons are not affected and keep following the interface colors.\nRequires a color screen."
+msgstr "Icons that contain color keep their original colors in night mode instead of being inverted.\nMonochrome icons are not affected and keep following the interface colors.\nRequires a color screen."
+
+msgid "Italic"
+msgstr "[待翻译] Italic"
+
+msgid "Progress Text"
+msgstr "Progress Text"
+
+msgid "Proportions"
+msgstr "[待翻译] Proportions"
+
+msgid "Regular"
+msgstr "[待翻译] Regular"
