@@ -397,6 +397,49 @@ function M.setWifiHideWhenOff(v)
     SUISettings:set("simpleui_topbar_wifi_hide_when_off", v)
 end
 
+-- "Start with Home Screen" lives in KOReader's own "start_with" setting, so the
+-- native Start With menu and the plugin menu share a single source of truth.
+local START_WITH_KEY        = "start_with"
+local START_WITH_HOMESCREEN = "homescreen_simpleui"
+local START_WITH_DEFAULT    = "filemanager"
+
+function M.isStartWithHomescreen()
+    return G_reader_settings:readSetting(START_WITH_KEY) == START_WITH_HOMESCREEN
+end
+
+-- Enabling selects the Home Screen. Disabling only reverts to the default when
+-- the Home Screen is the active choice, leaving any other selection untouched.
+function M.setStartWithHomescreen(on)
+    if on then
+        G_reader_settings:saveSetting(START_WITH_KEY, START_WITH_HOMESCREEN)
+    elseif M.isStartWithHomescreen() then
+        G_reader_settings:saveSetting(START_WITH_KEY, START_WITH_DEFAULT)
+    end
+end
+
+-- Destination shown after closing a book. Independent of the launch screen.
+local KEY_CLOSE_TARGET = "simpleui_hs_book_close_target"
+M.BOOK_CLOSE_TARGET = {
+    HOMESCREEN  = "homescreen",
+    LIBRARY     = "library",      -- file browser at the home folder
+    BOOK_FOLDER = "book_folder",  -- file browser at the folder of the closed book
+}
+local _CLOSE_TARGETS = {}
+for _k, id in pairs(M.BOOK_CLOSE_TARGET) do _CLOSE_TARGETS[id] = true end
+
+function M.getBookCloseTarget()
+    local target = SUISettings:readSetting(KEY_CLOSE_TARGET)
+    return _CLOSE_TARGETS[target] and target or M.BOOK_CLOSE_TARGET.HOMESCREEN
+end
+
+function M.setBookCloseTarget(target)
+    if _CLOSE_TARGETS[target] then SUISettings:saveSetting(KEY_CLOSE_TARGET, target) end
+end
+
+function M.returnsToBookFolder()
+    return M.getBookCloseTarget() == M.BOOK_CLOSE_TARGET.BOOK_FOLDER
+end
+
 function M.homeLabel()
     return _("Library")
 end
@@ -1294,9 +1337,9 @@ function M.makeScaleItem(opts)
     }
 end
 
--- Backdrop opacity entry (0–100 %, labelled Transparent / N% / Solid),
--- shared by every surface drawn over the wallpaper. The dialog documents the
--- semantic default, which its reset button restores.
+-- Wallpaper strength entry (0–100 %, labelled Transparent / N% / Solid by
+-- default), shared by every surface and tint drawn over the wallpaper. The
+-- dialog documents the semantic default, which its reset button restores.
 -- opts: {
 --   title         — entry text and dialog title
 --   get / set     — strength accessors (0–100)
@@ -1305,11 +1348,15 @@ end
 --   info          — optional dialog description (generic one otherwise)
 --   enabled_func  — optional menu enabled state
 --   value_func    — optional override of the value label
+--   value_max     — optional upper bound (defaults to 100)
+--   format        — optional strength → label formatter (defaults to
+--                   Transparent / N% / Solid)
 --   _lc           — optional translator (defaults to the plugin translator)
 -- }
 function M.makeBackdropStrengthItem(opts)
     local _lc = opts._lc or _
     local function label(strength)
+        if opts.format then return opts.format(strength) end
         return require("features/sui_wallpaper").formatBackdropStrength(strength, _lc)
     end
     return {
@@ -1327,7 +1374,7 @@ function M.makeBackdropStrengthItem(opts)
                 info_text     = info .. "\n" .. T(_lc("Default: %1"), label(opts.default_value)),
                 value         = opts.get(),
                 value_min     = 0,
-                value_max     = 100,
+                value_max     = opts.value_max or 100,
                 value_step    = 5,
                 unit          = "%",
                 ok_text       = _("Apply"),
@@ -1712,15 +1759,20 @@ function M.makeCoverHoldModeItem(opts)
     }
 end
 
--- Generic N-way radio submenu ("Type: X →" row that opens a list of radio
--- choices), extracted from the get/set/refresh shape already used above by
+-- Generic N-way radio submenu: a row with a static label and the current
+-- choice shown as its right-side value, opening a list of radio choices.
+-- Extracted from the get/set/refresh shape already used above by
 -- makeCoverHoldModeItem. Any settings-menu consumer with more than an on/off
 -- toggle (a style/type/color picker) can reuse this instead of hand-rolling
 -- its own sub_item_table_func.
 --
+-- The label never embeds the current choice (no "Type: X"); the choice is
+-- exposed only through value_func / mandatory_func.
+--
 -- opts:
 --   text          string    static row label (ignored if text_func given)
 --   text_func     function? () -> string, overrides `text`
+--   help_text     string?   long-press help for the row
 --   options       { { value = any, label = string }, ... }  (required,
 --                 ordered — this order is also the menu order)
 --   get           function() -> current value (required)
@@ -1746,6 +1798,7 @@ function M.makeRadioSubmenuItem(opts)
         text_func      = opts.text_func or function() return opts.text end,
         value_func     = function() return _labelFor(get()) end,
         mandatory_func = function() return _labelFor(get()) end,
+        help_text      = opts.help_text,
         enabled_func   = opts.enabled_func,
         separator      = opts.separator,
         sub_item_table_func = function()
@@ -2551,10 +2604,18 @@ function M.applyFirstRunDefaults()
     local function def(k, v)
         if SUISettings:get(k) == nil then SUISettings:set(k, v) end
     end
-    local function gdef(k, v)
-        if G_reader_settings:readSetting(k) == nil then
-            G_reader_settings:saveSetting(k, v)
+
+    -- Book-close destination. Existing installs keep their current behaviour:
+    -- the legacy "return to book folder" toggle wins, otherwise the Home
+    -- Screen was only shown on close when it was also the launch screen.
+    if SUISettings:get(KEY_CLOSE_TARGET) == nil then
+        local target = M.BOOK_CLOSE_TARGET.HOMESCREEN
+        if SUISettings:isTrue("simpleui_hs_return_to_book_folder") then
+            target = M.BOOK_CLOSE_TARGET.BOOK_FOLDER
+        elseif SUISettings:get("simpleui_onboarding_done") and not M.isStartWithHomescreen() then
+            target = M.BOOK_CLOSE_TARGET.LIBRARY
         end
+        SUISettings:set(KEY_CLOSE_TARGET, target)
     end
 
     -- Navbar
@@ -2667,9 +2728,6 @@ function M.applyFirstRunDefaults()
     def("simpleui_qs_bar_bg",              "flat")
     def("simpleui_qs_bar_settings_on_hold", true)
     def("simpleui_qs_bar_slots",            { "wifi_toggle", "bookmark_browser", "frontlight", "night_mode", "power", "sui_settings" })
-
-    -- KOReader global: open homescreen on launch (only set once on fresh install)
-    gdef("start_with", "homescreen_simpleui")
 
     SUISettings:flush()
 end

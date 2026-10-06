@@ -1647,12 +1647,7 @@ function ScreenWidget:_initLayout()
             -- Always paint from y=0 so the wallpaper is anchored at the top
             -- and covers the full screen area.
             _bg:paintTo(bb, x, 0)
-            -- Opacity: 0 = fully opaque (no lighten), 1-99 = fade toward white.
-            -- lightenRect is a cheap in-place blitbuffer op — safe on e-ink.
-            local opacity = SUIWallpaper.styleGetWallpaperOpacityValue()
-            if opacity and opacity > 0 then
-                bb:lightenRect(x, 0, Screen:getWidth(), Screen:getHeight(), opacity / 100)
-            end
+            SUIWallpaper.paintTint(bb, x, 0, Screen:getWidth(), Screen:getHeight())
             _orig_paintTo(self, bb, x, y)
         end
     end
@@ -3920,7 +3915,7 @@ end
 -- _raiseParkedScreen (infra/sui_patches.lua) promotes the parked instance
 -- back to the foreground with a scoped partial refresh instead of a full
 -- rebuild; any reader-close path that will not show the Homescreen this
--- time (e.g. "Return to Book Folder") closes the parked instance for real
+-- time (e.g. the Library or Book Folder close targets) closes the parked instance for real
 -- instead of leaving it dangling with increasingly stale data.
 --
 -- _navbar_closing_intentionally makes onCloseWidget (above) treat a real

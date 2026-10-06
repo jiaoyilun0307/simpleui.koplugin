@@ -81,13 +81,6 @@ local _hs_boot_done = false
 -- eliminating the visible flash between reader and homescreen.
 local _hs_pending_after_reader = false  -- kept for reset in teardown only
 
--- Cached value of the "start_with" setting. Updated whenever the user changes
--- the setting so UIManager.show / close avoid repeated settings reads.
--- Initialised lazily (nil until first read via isStartWithHS) so that
--- applyFirstRunDefaults() in main.lua:init() has a chance to write
--- "start_with" before we latch it for the boot session.
-local _start_with_hs = nil
-
 -- Navbar keyboard-focus state (D-pad devices only).
 -- _navbar_kb_capture: the transparent InputContainer on the UIManager stack,
 --   or nil when keyboard focus is inactive.
@@ -216,12 +209,7 @@ end
 -- Private helpers
 -- ---------------------------------------------------------------------------
 
-local function isStartWithHS()
-    if _start_with_hs == nil then
-        _start_with_hs = G_reader_settings:readSetting("start_with", "filemanager") == "homescreen_simpleui"
-    end
-    return _start_with_hs
-end
+local isStartWithHS = Config.isStartWithHomescreen
 
 -- Linear search used in low-frequency paths (boot, resume).
 -- Hot paths build a set with tabsToSet() instead.
@@ -851,14 +839,13 @@ function M.patchFileManagerClass(plugin)
 
             if this._navbar_container then
                 local t = Config.loadTabConfig()
-                -- "Return to Book Folder" only applies to native reader closes
+                -- The book-close target only applies to native reader closes
                 -- (KOReader onClose → showFileManager without an explicit SimpleUI
                 -- destination). Explicit paths (Homescreen, Library, …) never set
                 -- the pending flag and always force their own landing path.
                 local pending_folder = this._sui_return_to_book_folder_pending
                 this._sui_return_to_book_folder_pending = nil
-                local return_to_folder = pending_folder
-                    or SUISettings:isTrue("simpleui_hs_return_to_book_folder")
+                local return_to_folder = pending_folder or Config.returnsToBookFolder()
                 if not return_to_folder then
                     plugin.active_action = "home"
                     local home = G_reader_settings:readSetting("home_dir")
@@ -1124,57 +1111,19 @@ function M.patchStartWithMenu()
         local sub    = result.sub_item_table
         if type(sub) ~= "table" then return result end
 
-        -- Wrap every native item's callback to clear _start_with_hs when a
-        -- native option is selected. Without this, selecting e.g. "file browser"
-        -- writes the setting directly but leaves _start_with_hs=true, causing
-        -- the HS to keep opening on boot even after the user switched away.
-        for _, item in ipairs(sub) do
-            if item.radio and type(item.callback) == "function" then
-                local orig_cb    = item.callback
-                local orig_check = item.checked_func
-                item.callback = function()
-                    _start_with_hs = false
-                    orig_cb()
-                end
-                -- Also read the setting directly so checked_func stays in sync
-                -- even when _start_with_hs cache and the persisted setting drift.
-                if orig_check then
-                    item.checked_func = function()
-                        if _start_with_hs then return false end
-                        return orig_check()
-                    end
-                end
-            end
-        end
-
-        -- Resolve gettext once so the loop and the menu entry share the same string.
-        local hs_text = _("Home Screen")
-
-        -- Add the entry only if it is not already present.
-        local found = false
-        for _, item in ipairs(sub) do
-            if item.text == hs_text and item.radio then found = true; break end
-        end
-        if not found then
-            table.insert(sub, math.max(1, #sub), {
-                text         = hs_text,
-                -- Read the setting directly as ground truth; fall back to the
-                -- cache only when the setting hasn't been written yet.
-                checked_func = function()
-                    return G_reader_settings:readSetting("start_with") == "homescreen_simpleui"
-                end,
-                callback = function()
-                    G_reader_settings:saveSetting("start_with", "homescreen_simpleui")
-                    _start_with_hs = true
-                end,
-                radio = true,
-            })
-        end
+        -- Native items read and write "start_with" directly, so only the
+        -- Home Screen radio item needs to be added.
+        table.insert(sub, math.max(1, #sub), {
+            text         = _("Home Screen"),
+            checked_func = Config.isStartWithHomescreen,
+            callback     = function() Config.setStartWithHomescreen(true) end,
+            radio        = true,
+        })
 
         -- Update the parent item label when Home Screen is the active choice.
         local orig_text_func = result.text_func
         result.text_func = function()
-            if G_reader_settings:readSetting("start_with") == "homescreen_simpleui" then
+            if Config.isStartWithHomescreen() then
                 return _("Start with") .. ": " .. _("Home Screen")
             end
             return orig_text_func and orig_text_func() or _("Start with")
@@ -2597,7 +2546,7 @@ function M.patchUIManagerClose(plugin)
         -- closeReaderToHomescreen sets tearing_down=true, so the ReaderUI branch
         -- below is skipped for those paths. This block is a last-resort fallback
         -- for any path not covered above (e.g. a third-party plugin closing the reader).
-        if isStartWithHS()
+        if (widget.name == "ReaderUI" or isStartWithHS())
                 and widget.covers_fullscreen
                 and (widget.title_bar or widget.name)
                 and widget.name ~= "homescreen"
@@ -2655,8 +2604,7 @@ function M.patchUIManagerClose(plugin)
                     -- was never really closed from the user's point of view, so
                     -- nothing should ever try to show the Home Screen here.
                     if not widget.tearing_down and not UIManager._simpleui_reload_in_progress then
-                        local return_to_folder = SUISettings:isTrue("simpleui_hs_return_to_book_folder")
-                        if not return_to_folder then
+                        if Config.getBookCloseTarget() == Config.BOOK_CLOSE_TARGET.HOMESCREEN then
                             local prev_action = active_plugin.active_action
                             local _ao2 = { bookmark_browser=true, wifi_toggle=true, frontlight=true, power=true }
                             if active_plugin.active_action == nil or not _ao2[active_plugin.active_action] then
@@ -3093,9 +3041,8 @@ function M.showHSAfterResume(plugin, force)
         if not force then return end
         -- Forced path: the reader is open on wakeup but the user wants the
         -- Homescreen regardless. closeReaderToHomescreen() already performs
-        -- onClose(false) + showFileManager() + raising/showing the HS (or
-        -- landing in the book's folder if "Return to Book Folder" is on),
-        -- so there is nothing left to do here once it has been scheduled.
+        -- onClose(false) + showFileManager() + raising/showing the HS, so
+        -- there is nothing left to do here once it has been scheduled.
         M.closeReaderToHomescreen(plugin, false)
         return
     end
@@ -3935,7 +3882,7 @@ end
 -- _prepareReaderClose
 --
 -- Flags for an explicit reader→Homescreen close.
--- "Return to Book Folder" is intentionally NOT applied here — that setting
+-- The book-close target is intentionally NOT applied here — that setting
 -- only affects native KOReader closes (see patchUIManagerClose / FM onShow).
 -- Explicit SimpleUI destinations always win (HS, Library, History, …).
 -- Returns: file, prev_action
@@ -4063,7 +4010,7 @@ end
 
 -- Closes a soft-parked screen instance for real instead of leaving it
 -- dangling alive-but-hidden. Used by any reader-close path that will NOT
--- show the Homescreen this time (e.g. "Return to Book Folder", Library).
+-- show the Homescreen this time (e.g. the Library or Book Folder close targets).
 _dropParkedScreen = function(screen_module)
     local inst = screen_module and screen_module._instance
     if not (inst and inst._parked) then return end
@@ -4148,13 +4095,15 @@ function M.closeReaderToHomescreen(plugin, via_gesture)
     local RUI = package.loaded["apps/reader/readerui"]
     if not (RUI and RUI.instance) then return end
     local readerui = RUI.instance
+    -- A close is already in progress for this reader.
+    if readerui.tearing_down then return end
 
     local file, prev_action =
         _prepareReaderClose(plugin, readerui, via_gesture)
 
     UIManager:nextTick(function()
         local RUI2 = package.loaded["apps/reader/readerui"]
-        if RUI2 and RUI2.instance and RUI2.instance ~= readerui then return end
+        if not (RUI2 and RUI2.instance == readerui) then return end
         _closeReaderToHomescreenSync(plugin, readerui, file, prev_action)
     end)
 end
@@ -4287,10 +4236,15 @@ function M.wireReaderMenuFMTab(plugin, readerui)
 
         if menu_ref.onTapCloseMenu then menu_ref:onTapCloseMenu() end
 
-        -- Native TouchMenu exit is the only path that honours
-        -- "Return to Book Folder". Explicit SimpleUI destinations
-        -- (gesture Home, QA Home, QA Library, …) never consult it.
-        if SUISettings:isTrue("simpleui_hs_return_to_book_folder") then
+        -- Native TouchMenu exit is the only path that honours the book-close
+        -- target. Explicit SimpleUI destinations (gesture Home, QA Home,
+        -- QA Library, …) never consult it.
+        local target = Config.getBookCloseTarget()
+        if target == Config.BOOK_CLOSE_TARGET.LIBRARY then
+            M.closeReaderToLibrary(plugin)
+            return
+        end
+        if target == Config.BOOK_CLOSE_TARGET.BOOK_FOLDER then
             local file = readerui.document and readerui.document.file
             local fm_pre = liveFM()
             if fm_pre then
@@ -4352,10 +4306,6 @@ function M.wireReaderHomeKey(plugin, readerui)
     readerui._simpleui_home_key_patched = true
 end
 
--- Close the reader and return to the Library (FM at home_dir) with no
--- Homescreen appearing on top — equivalent to the user closing the reader
--- when "return to book folder" / "Start with Homescreen" are both off.
--- Safe to call when the reader is NOT open (no-op in that case).
 -- Close the reader and land on the Library (FM at home_dir) with no
 -- Homescreen on top. Safe when the reader is not open (no-op).
 function M.closeReaderToLibrary(plugin)
@@ -4426,14 +4376,13 @@ end
 -- direct access to the KOReader-level widgets without walking the full tree.
 -- ---------------------------------------------------------------------------
 
--- Paint the wallpaper onto bb, anchored at y=0 (top of screen), with opacity.
+-- Paint the wallpaper onto bb, anchored at y=0 (top of screen), with its tint.
 local function _paintWallpaper(bg_widget, bb, x, y)
     if not bg_widget then return end
-    local ok_wp, SUIWallpaper = pcall(require, "features/sui_wallpaper")
-    local opacity = ok_wp and SUIWallpaper and SUIWallpaper.styleGetWallpaperOpacityValue() or 0
     bg_widget:paintTo(bb, x, 0)
-    if opacity and opacity > 0 then
-        bb:lightenRect(x, 0, Screen:getWidth(), Screen:getHeight(), opacity / 100)
+    local ok_wp, SUIWallpaper = pcall(require, "features/sui_wallpaper")
+    if ok_wp and SUIWallpaper then
+        SUIWallpaper.paintTint(bb, x, 0, Screen:getWidth(), Screen:getHeight())
     end
 end
 
@@ -5392,12 +5341,8 @@ function M.teardownAll(plugin)
 
     -- Reset module-level state so a re-enable cycle starts clean.
     -- Transient flags are cleared unconditionally.
-    -- _start_with_hs is reset to nil (not false) so isStartWithHS() performs a
-    -- fresh lazy read on the next installAll cycle, picking up any setting
-    -- change made while the plugin was disabled.
     _hs_boot_done             = false
     _hs_pending_after_reader  = false
-    _start_with_hs            = nil
     _navpager_rebuild_pending = false
 
     -- Clear lazy-refresh flag on the FM instance, if any.
