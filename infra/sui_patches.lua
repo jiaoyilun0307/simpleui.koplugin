@@ -9,6 +9,7 @@ local logger    = require("logger")
 local _         = require("infra/sui_i18n").translate
 
 local Config    = require("infra/sui_config")
+local Size      = require("ui/size")
 local UI        = require("infra/sui_core")
 local Bottombar = require("screens/sui_bottombar")
 local SUISettings = require("infra/sui_store")
@@ -355,11 +356,6 @@ function M.patchFileManagerClass(plugin)
         -- not following actual navigation (e.g. staying lit on "Homescreen"
         -- after tapping into the Library).
         local plugin = _live_plugin or plugin
-        -- Calculate total navbar height (bottom bar + optional top bar).
-        local topbar_on = SUISettings:nilOrTrue("simpleui_topbar_enabled")
-        fm_self._navbar_height = Bottombar.TOTAL_H()
-            + (topbar_on and require("screens/sui_topbar").TOTAL_TOP_H() or 0)
-
         -- Reset the "first show" guard so onShow reinitialises on the next open.
         fm_self._navbar_already_shown = nil
 
@@ -532,7 +528,9 @@ function M.patchFileManagerClass(plugin)
             end
         end
 
-        orig_setupLayout(fm_self)
+        -- The title bar is built inside setupLayout and sizes the file chooser, so
+        -- its style metrics have to apply during the build.
+        Titlebar().runWithStyleMetrics(orig_setupLayout, fm_self)
 
         -- cur_w/cur_h computed here (rather than immediately before the guard
         -- block below, where they used to live) so the diagnostic log below
@@ -799,6 +797,7 @@ function M.patchFileManagerClass(plugin)
             -- Note: we intentionally do NOT require the "homescreen" tab to be
             -- present in the navbar. "Start with Home Screen" is a launch
             -- behaviour, independent of whether the user has kept the tab.
+            logger.info("simpleui[diag]: first FM setupLayout start_with_hs=", isStartWithHS())
             if isStartWithHS() then
                 plugin.active_action      = "homescreen"
                 fm_self._hs_autoopen_pending = true
@@ -919,8 +918,8 @@ function M.patchFileManagerClass(plugin)
             end
             plugin:_updateFMHomeIcon()
 
-            -- Mark the library as visited so the homescreen can invalidate its
-            -- cover cache if CoverBrowser has replaced native-size bitmaps.
+            -- Marks the file browser as visited since the last homescreen
+            -- close (consumed by ScreenWidget:onCloseWidget).
             local HS = liveHS()
             if HS then HS._library_was_visited = true end
         end
@@ -1146,9 +1145,7 @@ function M.patchBookList(plugin)
     BookList.new = function(class, attrs, ...)
         attrs = attrs or {}
         if not attrs.height and not attrs._navbar_height_reduced then
-            attrs.height                 = UI.getContentHeight()
-            attrs.y                      = UI.getContentTop()
-            attrs._navbar_height_reduced = true
+            UI.fitToContentArea(attrs)
         end
         return orig_bl_new(class, attrs, ...)
     end
@@ -1184,10 +1181,8 @@ function M.patchCollections(plugin)
                 and attrs.covers_fullscreen and attrs.is_borderless
                 and attrs.is_popout == false
                 and not attrs.height and not attrs._navbar_height_reduced then
-            attrs.height                 = UI.getContentHeight()
-            attrs.y                      = UI.getContentTop()
-            attrs._navbar_height_reduced = true
-            attrs.name                   = attrs.name or "coll_list"
+            UI.fitToContentArea(attrs)
+            attrs.name = attrs.name or "coll_list"
         end
         return orig_menu_new(class, attrs, ...)
     end
@@ -1411,9 +1406,7 @@ function M.patchFullscreenWidgets(plugin)
         SortWidget.new = function(class, attrs, ...)
             attrs = attrs or {}
             if attrs.covers_fullscreen and not attrs._navbar_height_reduced then
-                attrs.height                 = UI.getContentHeight()
-                attrs.y                      = UI.getContentTop()
-                attrs._navbar_height_reduced = true
+                UI.fitToContentArea(attrs)
             end
             -- Temporarily wrap TitleBar.new to inject horizontal padding, then
             -- restore it immediately after SortWidget is built.
@@ -1422,7 +1415,7 @@ function M.patchFullscreenWidgets(plugin)
                 orig_tb_new = TitleBar.new
                 TitleBar.new = function(tb_class, tb_attrs, ...)
                     tb_attrs = tb_attrs or {}
-                    tb_attrs.title_h_padding = Screen:scaleBySize(24)
+                    tb_attrs.title_h_padding = UI.SIDE_M()
                     return orig_tb_new(tb_class, tb_attrs, ...)
                 end
             end
@@ -1457,9 +1450,7 @@ function M.patchFullscreenWidgets(plugin)
         PathChooser.new = function(class, attrs, ...)
             attrs = attrs or {}
             if attrs.covers_fullscreen and not attrs._navbar_height_reduced then
-                attrs.height                 = UI.getContentHeight()
-                attrs.y                      = UI.getContentTop()
-                attrs._navbar_height_reduced = true
+                UI.fitToContentArea(attrs)
             end
             return orig_pc_new(class, attrs, ...)
         end
@@ -2656,18 +2647,232 @@ function M.patchUIManagerClose(plugin)
 end
 
 -- ---------------------------------------------------------------------------
+-- Library pages — side margin
+-- Every display mode lays its items out over the full menu width. The hooks
+-- below inset the item area so its first and last items sit on the side
+-- margin shared with every other full-width surface.
+-- ---------------------------------------------------------------------------
+
+-- Menus of the library pages: file browser, history and collections.
+local LIBRARY_PAGE_NAMES = {
+    filemanager = true, history = true, collections = true, coll_list = true,
+}
+
+-- Distance between the side margin and the margin a display mode already
+-- applies at the item area edge. Zero outside the library pages.
+local function _sideInset(menu, native_margin)
+    if not (LIBRARY_PAGE_NAMES[menu.name] and menu.covers_fullscreen) then return 0 end
+    return math.max(0, UI.SIDE_M() - native_margin)
+end
+
+-- Menu fields that carry the full menu width. Display modes read them to size
+-- items and row separators, which must all share one width.
+local MENU_WIDTH_FIELDS = { "width", "screen_w" }
+
+-- Calls fn(menu, ...) with the menu width reduced by `inset` on both sides.
+local function _withInsetWidth(menu, inset, fn, ...)
+    if inset == 0 then return fn(menu, ...) end
+    local inner = menu.inner_dimen
+    inner.w = inner.w - 2 * inset
+    local saved = {}
+    for _, field in ipairs(MENU_WIDTH_FIELDS) do
+        saved[field] = menu[field]
+        if saved[field] then menu[field] = saved[field] - 2 * inset end
+    end
+    local ok, result = pcall(fn, menu, ...)
+    inner.w = inner.w + 2 * inset
+    for _, field in ipairs(MENU_WIDTH_FIELDS) do
+        if saved[field] then menu[field] = saved[field] end
+    end
+    if not ok then error(result, 0) end
+    return result
+end
+
+-- Shifts the item area right by `inset`, wrapping it on first use.
+local function _setBodyInset(menu, inset)
+    local body = menu._sui_inset_body
+    if not body then
+        if inset == 0 then return end
+        local HorizontalGroup = require("ui/widget/horizontalgroup")
+        local HorizontalSpan  = require("ui/widget/horizontalspan")
+        body = HorizontalGroup:new{
+            align = "top",
+            HorizontalSpan:new{ width = inset },
+            menu.item_group,
+        }
+        for i, child in ipairs(menu.content_group) do
+            if child == menu.item_group then
+                menu.content_group[i] = body
+                break
+            end
+        end
+        menu._sui_inset_body = body
+    end
+    body[1].width = inset
+    body:resetLayout()
+end
+
+-- Calls the class-level _recalculateDimen of the menu's current display mode,
+-- bypassing any instance override.
+local function _callClassRecalculate(menu, ...)
+    local instance_fn = rawget(menu, "_recalculateDimen")
+    menu._recalculateDimen = nil
+    local ok, err = pcall(menu._recalculateDimen, menu, ...)
+    menu._recalculateDimen = instance_fn
+    if not ok then error(err, 0) end
+end
+
+-- Classic list mode: the menu builds its own rows over the full menu width.
+-- Each row is narrowed by the inset and its content is moved in by the side
+-- margin through items_padding.
+local function _applyClassicInset(menu)
+    local side  = UI.SIDE_M()
+    local inset = math.max(0, side - Size.padding.fullscreen)
+    menu._sui_side_inset = 0
+    _setBodyInset(menu, 0)
+    menu.items_padding = side
+    menu.item_dimen.w  = menu.inner_dimen.w - 2 * inset
+end
+
+-- Instance-level _recalculateDimen of the library page menus. The display mode
+-- of a menu can change while it is open and rebinds the class-level function,
+-- so the classic inset is decided here on every layout pass. Mosaic and list
+-- modes are handled by the display mode hooks below.
+local function _libraryRecalculate(menu, ...)
+    _callClassRecalculate(menu, ...)
+    if menu._updateItemsBuildUI == nil and menu.item_dimen then
+        _applyClassicInset(menu)
+    end
+end
+
+-- ---------------------------------------------------------------------------
+-- Shared hooks
+-- Hook state lives on the patched class, so it outlives plugin instances: the
+-- hooks are installed once and shared by every instance using them.
+-- ---------------------------------------------------------------------------
+
+-- Registers `owner` as a user of the hooks stored on `target` under
+-- `state_key`. Returns a new state ({ users, hooks }) when the caller must
+-- install the hooks, nil when they are already installed.
+local function _acquireHooks(target, state_key, owner)
+    local state = rawget(target, state_key)
+    if state then
+        state.users[owner] = true
+        return nil
+    end
+    state = { users = { [owner] = true }, hooks = {} }
+    target[state_key] = state
+    return state
+end
+
+-- Replaces target[key] with `wrapped` and records it in `state` for removal.
+local function _addHook(state, target, key, wrapped)
+    state.hooks[#state.hooks + 1] = { target = target, key = key, orig = target[key], wrapped = wrapped }
+    target[key] = wrapped
+end
+
+-- Unregisters `owner` and removes the hooks once no user is left. Returns
+-- true when they were removed.
+local function _releaseHooks(target, state_key, owner)
+    local state = rawget(target, state_key)
+    if not state then return false end
+    state.users[owner] = nil
+    if next(state.users) then return false end
+    for i = #state.hooks, 1, -1 do
+        local h = state.hooks[i]
+        if rawget(h.target, h.key) == h.wrapped then h.target[h.key] = h.orig end
+    end
+    target[state_key] = nil
+    return true
+end
+
+-- Display modes whose layout is inset, with the margin each one already
+-- applies at the item area edge.
+local SIDE_MARGIN_MODES = {
+    { module = "mosaicmenu", native_margin = function(menu) return menu.item_margin end },
+    { module = "listmenu",   native_margin = function() return 0 end },
+}
+
+local SIDE_MARGIN_STATE = "_simpleui_side_margin"
+
+-- Installs the side margin hooks on `DisplayMode` unless already present.
+local function _installSideMargin(DisplayMode, native_margin, owner)
+    local state = _acquireHooks(DisplayMode, SIDE_MARGIN_STATE, owner)
+    if not state then return end
+
+    local FileChooser      = require("ui/widget/filechooser")
+    local orig_recalculate = DisplayMode._recalculateDimen
+    local orig_build       = DisplayMode._updateItemsBuildUI
+
+    -- native_margin(menu) is read after the mode has run _recalculateDimen.
+    local function recalculate(menu, ...)
+        orig_recalculate(menu, ...)
+        local inset = _sideInset(menu, native_margin(menu))
+        menu._sui_side_inset = inset
+        if inset > 0 then _withInsetWidth(menu, inset, orig_recalculate, ...) end
+    end
+
+    local function build(menu, ...)
+        local inset  = menu._sui_side_inset or 0
+        local result = _withInsetWidth(menu, inset, orig_build, ...)
+        _setBodyInset(menu, inset)
+        return result
+    end
+
+    -- The item builder holding the item class upvalue stays reachable here.
+    DisplayMode._simpleui_native_build = orig_build
+
+    for key, wrapped in pairs({
+        _recalculateDimen   = recalculate,
+        _updateItemsBuildUI = build,
+    }) do
+        local orig = DisplayMode[key]
+        _addHook(state, DisplayMode, key, wrapped)
+        -- The file browser binds display mode functions on its own class when
+        -- a mode is set up, so that binding is replaced as well.
+        if rawget(FileChooser, key) == orig then
+            _addHook(state, FileChooser, key, wrapped)
+        end
+    end
+end
+
+local function _uninstallSideMargin(DisplayMode, owner)
+    if _releaseHooks(DisplayMode, SIDE_MARGIN_STATE, owner) then
+        DisplayMode._simpleui_native_build = nil
+    end
+end
+
+function M.patchCoverMenuSideMargin(plugin)
+    for _, mode in ipairs(SIDE_MARGIN_MODES) do
+        local ok, DisplayMode = pcall(require, mode.module)
+        if ok and DisplayMode then
+            _installSideMargin(DisplayMode, mode.native_margin, plugin)
+        end
+    end
+end
+
+function M.unpatchCoverMenuSideMargin(plugin)
+    for _, mode in ipairs(SIDE_MARGIN_MODES) do
+        local DisplayMode = package.loaded[mode.module]
+        if DisplayMode then _uninstallSideMargin(DisplayMode, plugin) end
+    end
+end
+
+-- ---------------------------------------------------------------------------
 -- Menu.init patch — pagination bar visibility
 -- Removes the pagination bar from fullscreen FM-style menus when
 -- "navbar_pagination_visible" is off, and fixes horizontal swipe propagation.
 -- ---------------------------------------------------------------------------
 
+local MENU_INIT_STATE = "_simpleui_menu_init"
+
 function M.patchMenuInitForPagination(plugin)
     local Menu = require("ui/widget/menu")
-    local TARGET_NAMES = {
-        filemanager = true, history = true, collections = true, coll_list = true,
-    }
-    local orig_menu_init  = Menu.init
-    plugin._orig_menu_init = orig_menu_init
+    -- Sub pages of the library.
+    local SUB_PAGE_NAMES = { history = true, collections = true, coll_list = true }
+    local state = _acquireHooks(Menu, MENU_INIT_STATE, plugin)
+    if not state then return end
+    local orig_menu_init = Menu.init
 
     Menu.init = function(menu_self, ...)
         -- Centralised keyboard-shortcut indicator suppression.
@@ -2682,7 +2887,17 @@ function M.patchMenuInitForPagination(plugin)
             menu_self.is_enable_shortcut = false
         end
 
-        orig_menu_init(menu_self, ...)
+        if LIBRARY_PAGE_NAMES[menu_self.name] and menu_self.covers_fullscreen then
+            menu_self._recalculateDimen = _libraryRecalculate
+        end
+
+        -- The title bar is built inside init and sizes the item area, so the
+        -- tabs style metrics have to apply during the build.
+        if SUB_PAGE_NAMES[menu_self.name] and menu_self.covers_fullscreen then
+            Titlebar().runWithStyleMetrics(orig_menu_init, menu_self, ...)
+        else
+            orig_menu_init(menu_self, ...)
+        end
 
         -- Apply icon overrides for collections/history/FM menus.
         pcall(function()
@@ -2702,7 +2917,7 @@ function M.patchMenuInitForPagination(plugin)
         -- Fix: Menu:onSwipe does not return true, so horizontal swipes propagate
         -- to FM's filemanager_swipe zone and advance two pages. Wrap onSwipe to
         -- consume the event after it is handled.
-        local is_target = TARGET_NAMES[menu_self.name]
+        local is_target = LIBRARY_PAGE_NAMES[menu_self.name]
             or (menu_self.covers_fullscreen and menu_self.is_borderless and menu_self.title_bar_fm_style)
         if is_target then
             local orig_onSwipe = menu_self.onSwipe
@@ -2727,12 +2942,12 @@ function M.patchMenuInitForPagination(plugin)
         -- liveFM() ~= nil restricts the fallback to menus actually created
         -- while FM is the active screen (e.g. Collections' property/folder
         -- sub-lists, which have no explicit name), matching the same intent
-        -- as TARGET_NAMES without re-exposing the Reader-side leak.
+        -- as LIBRARY_PAGE_NAMES without re-exposing the Reader-side leak.
         local is_fm_style_overlay = menu_self.covers_fullscreen
                                  and menu_self.is_borderless
                                  and menu_self.title_bar_fm_style
                                  and liveFM() ~= nil
-        if not TARGET_NAMES[menu_self.name] and not is_fm_style_overlay then
+        if not LIBRARY_PAGE_NAMES[menu_self.name] and not is_fm_style_overlay then
             return
         end
 
@@ -2759,6 +2974,7 @@ function M.patchMenuInitForPagination(plugin)
         -- Override _recalculateDimen to suppress pagination widget updates.
         -- page_return_arrow and page_info are no longer layout children here,
         -- so nil them out during the call to prevent KOReader sizing them.
+        local layout_recalculate = rawget(menu_self, "_recalculateDimen") or _callClassRecalculate
         menu_self._recalculateDimen = function(self_inner, no_recalculate_dimen)
             local saved_arrow = self_inner.page_return_arrow
             local saved_text  = self_inner.page_info_text
@@ -2766,12 +2982,7 @@ function M.patchMenuInitForPagination(plugin)
             self_inner.page_return_arrow = nil
             self_inner.page_info_text    = nil
             self_inner.page_info         = nil
-            local instance_fn = self_inner._recalculateDimen
-            self_inner._recalculateDimen = nil
-            local ok, err = pcall(function()
-                self_inner:_recalculateDimen(no_recalculate_dimen)
-            end)
-            self_inner._recalculateDimen = instance_fn
+            local ok, err = pcall(layout_recalculate, self_inner, no_recalculate_dimen)
             self_inner.page_return_arrow = saved_arrow
             self_inner.page_info_text    = saved_text
             self_inner.page_info         = saved_info
@@ -2779,6 +2990,8 @@ function M.patchMenuInitForPagination(plugin)
         end
         menu_self:_recalculateDimen()
     end
+
+    state.hooks[1] = { target = Menu, key = "init", orig = orig_menu_init, wrapped = Menu.init }
 end
 
 -- ---------------------------------------------------------------------------
@@ -5072,6 +5285,7 @@ function M.installAll(plugin)
     M.patchReaderShowCoroutine(plugin)
     M.patchUIManagerClose(plugin)
     M.patchMenuInitForPagination(plugin)
+    M.patchCoverMenuSideMargin(plugin)
     M.patchMenuForNavpager(plugin)
     M.patchBookInfoNavigation(plugin)
     M.patchStatusButtons(plugin)
@@ -5196,16 +5410,15 @@ function M.teardownAll(plugin)
             Menu.new              = plugin._orig_menu_new
             plugin._orig_menu_new = nil
         end
-        if plugin._orig_menu_init then
-            Menu.init              = plugin._orig_menu_init
-            plugin._orig_menu_init = nil
-        end
+        _releaseHooks(Menu, MENU_INIT_STATE, plugin)
         if plugin._orig_menu_update_page_info then
             Menu.updatePageInfo                = plugin._orig_menu_update_page_info
             plugin._orig_menu_update_page_info = nil
         end
         Menu._simpleui_navpager_patched = nil
     end
+
+    M.unpatchCoverMenuSideMargin(plugin)
 
     local FileManager = package.loaded["apps/filemanager/filemanager"]
     if FileManager then
@@ -5224,10 +5437,10 @@ function M.teardownAll(plugin)
         if plugin._orig_fm_setup then
             FileManager.setupLayout = plugin._orig_fm_setup
             plugin._orig_fm_setup   = nil
+            -- Cleared with the restore so the next installAll reinstalls the
+            -- wrapper; other instances leave the shared guard untouched.
+            FileManager._simpleui_setup_patched = nil
         end
-        -- Clear the setupLayout guard so patchFileManagerClass reinstalls the
-        -- wrapper cleanly on the next installAll (e.g. after disable→enable).
-        FileManager._simpleui_setup_patched = nil
     end
 
     local FMColl = package.loaded["apps/filemanager/filemanagercollection"]

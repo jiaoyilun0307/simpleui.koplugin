@@ -40,7 +40,7 @@ local BSTATS_CACHE_MAX = 20   -- max md5 entries kept in the stats LRU cache
 -- so narrower columns (multi-column Custom Screens, landscape spread)
 -- scale down proportionally.
 -- ---------------------------------------------------------------------------
-local _REF_INNER_W   = Screen:getWidth() - UI.SIDE_PAD * 2 - PAD * 2
+local _REF_INNER_W   = UI.getInnerW() - PAD * 2
 local _CENTER_W_PCT  = Screen:scaleBySize(140) / _REF_INNER_W
 local _CENTER_W_MIN  = Screen:scaleBySize(60)  -- floor so covers never collapse to unreadable size
 
@@ -308,16 +308,15 @@ end
 
 -- ---------------------------------------------------------------------------
 -- Progress badge (pentagon) — delegated to the shared helper so the
--- drawing primitive matches every other progress badge in the app.
--- Coverdeck is a single-instance module (no per-instance id), so there
--- is no per-instance size override — only color, via
--- getProgressBadgeColorOverride/setProgressBadgeColor above.
+-- drawing primitive matches every other progress badge in the app. Color
+-- and size come from the module's own settings.
 -- ---------------------------------------------------------------------------
 local function applyProgressBadge(cover_widget, bd, cw, ch, pfx, ref_w, ref_h)
     local SH = getSH()
     if not SH or not SH.applyProgressBadge then return cover_widget end
-    local color = getProgressBadgeColorOverride(pfx)
-    return SH.applyProgressBadge(cover_widget, bd, cw, ch, color, ref_w, ref_h)
+    return SH.applyProgressBadge(cover_widget, bd, cw, ch,
+        getProgressBadgeColorOverride(pfx), ref_w, ref_h,
+        Config.getBadgeScalePct("coverdeck", pfx))
 end
 
 -- ---------------------------------------------------------------------------
@@ -767,7 +766,7 @@ function M.build(w, ctx)
     -- side/far slots use the crop-to-fill path (SH.getCroppedBookCover).
     local function buildCover(fp, cw, ch)
         local bd    = SH.getBookData(fp, ctx.prefetched and ctx.prefetched[fp])
-        local cover = SH.getBookCover(fp, cw, ch) or SH.coverPlaceholder(bd.title, bd.authors, cw, ch)
+        local cover = SH.getBookCover(fp, cw, ch, true) or SH.coverPlaceholder(bd.title, bd.authors, cw, ch, true)
         if show_progress_badge then
             cover = applyProgressBadge(cover, bd, cw, ch, pfx)
         end
@@ -775,7 +774,7 @@ function M.build(w, ctx)
     end
     local function buildCroppedCover(fp, cw, ch, align)
         local bd    = SH.getBookData(fp, ctx.prefetched and ctx.prefetched[fp])
-        local cover = SH.getCroppedBookCover(fp, cw, ch, align) or SH.coverPlaceholder(bd.title, bd.authors, cw, ch)
+        local cover = SH.getCroppedBookCover(fp, cw, ch, align, true) or SH.coverPlaceholder(bd.title, bd.authors, cw, ch, true)
         -- Right-hand peeks show the cover's right edge — where the progress
         -- badge sits — so paint it there too when enabled (optional setting).
         -- Left peeks crop the left edge (badge would be off-canvas).
@@ -819,11 +818,20 @@ function M.build(w, ctx)
 
     -- Tappable carousel container
     local group_h  = center_h + TOP_CLEAR
-    local overlap  = OverlapGroup:new{ dimen = Geom:new{ w = inner_w, h = group_h }, unpack(items) }
-    -- Annotate each cover_slot with its container+index inside the OverlapGroup.
+    local overlap  = OverlapGroup:new{ dimen = Geom:new{ w = inner_w, h = group_h } }
+    -- One shadow layer behind every cover: no shadow lands on a neighbouring
+    -- cover, and overlapping shadows are shaded once.
+    local slot_rects = {}
     for i, slot in ipairs(cover_slots) do
-        slot.container = overlap
-        slot.idx       = i
+        slot_rects[i] = { x = slot.overlap_offset[1], y = slot.overlap_offset[2], w = slot.w, h = slot.h }
+    end
+    overlap[#overlap + 1] = SH.buildCoverShadowLayer(inner_w, group_h, slot_rects)
+    -- Annotate each cover_slot with its container+index inside the OverlapGroup.
+    local covers_start = #overlap
+    for i, item in ipairs(items) do
+        overlap[covers_start + i] = item
+        cover_slots[i].container  = overlap
+        cover_slots[i].idx        = covers_start + i
     end
     local tappable = InputContainer:new{
         dimen    = Geom:new{ w = inner_w, h = group_h },
@@ -1121,8 +1129,8 @@ function M.updateCovers(widget, ctx)
         -- alignment forward, or a reload would re-crop them centred and
         -- lose the "peeking edge" illusion.
         local new_cover = (slot.kind == "crop")
-            and SH.getCroppedBookCover(slot.fp, slot.w, slot.h, slot.align)
-            or SH.getBookCover(slot.fp, slot.w, slot.h)
+            and SH.getCroppedBookCover(slot.fp, slot.w, slot.h, slot.align, true)
+            or SH.getBookCover(slot.fp, slot.w, slot.h, true)
         if new_cover then
             -- Re-apply progress badge after a late cover load (build() already
             -- did this for centre + right peeks; the poll would otherwise
@@ -1222,7 +1230,7 @@ function M.getHeight(ctx)
     -- getHeight has no real widget width to work with, so estimate one.
     local raw_scale       = c and c.scale       or Config.getModuleScaleRaw("coverdeck", pfx)
     local raw_thumb_scale = c and c.thumb_scale or Config.getThumbScaleRaw("coverdeck", pfx)
-    local w_estimate       = (ctx and (ctx.col_w or ctx.inner_w)) or (Screen:getWidth() - UI.SIDE_PAD * 2)
+    local w_estimate       = (ctx and (ctx.col_w or ctx.inner_w)) or UI.getInnerW()
     local inner_w_estimate = w_estimate - PAD * 2
 
     -- Visibility flags: uses the pre-read bundle when available, mirroring build().
@@ -1678,6 +1686,14 @@ function M.getMenuItems(ctx_menu)
             get          = function() return getProgressBadgeColorOverride(pfx) end,
             set          = function(v) setProgressBadgeColor(pfx, v) end,
             refresh      = refresh,
+        },
+        Config.makeBadgeSizeItem{
+            info         = _lc("Scale for the progress badge."),
+            enabled_func = function() return showProgressBadge(pfx) end,
+            get          = function() return Config.getBadgeScalePct("coverdeck", pfx) end,
+            set          = function(v) Config.setBadgeScale(v, "coverdeck", pfx) end,
+            refresh      = refresh,
+            _lc          = _lc,
         },
     }
     return Config.buildModuleMenu({

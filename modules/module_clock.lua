@@ -23,7 +23,6 @@ local Config       = require("infra/sui_config")
 local SUISettings = require("infra/sui_store")
 local AAPaint      = require("infra/sui_aa_paint")
 local PAD          = UI.PAD
-local PAD2         = UI.PAD2
 local CLR_TEXT_SUB = UI.CLR_TEXT_SUB
 
 -- ---------------------------------------------------------------------------
@@ -83,7 +82,7 @@ local _CLOCK_FRAC_BENTO = 1.0
 local _CLOCK_FACE_FULL  = 75   -- digital face size at full-row 35% span, scale 1
 local _CLOCK_SIZE_MIN   = 10
 
-local _REF_FULL_INNER_W = Screen:getWidth() - UI.SIDE_PAD * 2 - PAD * 2
+local _REF_FULL_INNER_W = UI.getInnerW() - PAD * 2
 local _REF_FULL_SPAN    = _REF_FULL_INNER_W * _CLOCK_FRAC_FULL
 
 -- Ratios relative to digital face size.
@@ -92,8 +91,6 @@ local _DATE_FS_RATIO  = 20 / 75
 local _BATT_FS_RATIO  = 18 / 75
 local _DATE_H_RATIO   = 17 / 75
 local _BATT_H_RATIO   = 15 / 75
-
-local _BASE_BOT_PAD_EXTRA = Screen:scaleBySize(4)
 
 -- Gap between visible items (clock/date/battery), scaled the same way as
 -- every other module's inter-element spacing (base px * module scale),
@@ -240,22 +237,7 @@ end
 -- Manual arrangement order of the three fixed items. Unknown or missing
 -- keys are appended in DEFAULT_ORDER so the list always covers every item.
 local function getItemOrder(pfx)
-    local raw = SUISettings:readSetting(pfx .. SETTING_ORDER)
-    local known = { clock = true, date = true, battery = true }
-    local order = {}
-    local seen  = {}
-    if type(raw) == "table" then
-        for _, k in ipairs(raw) do
-            if known[k] and not seen[k] then
-                order[#order + 1] = k
-                seen[k] = true
-            end
-        end
-    end
-    for _, k in ipairs(DEFAULT_ORDER) do
-        if not seen[k] then order[#order + 1] = k end
-    end
-    return order
+    return Config.mergeOrder(SUISettings:readSetting(pfx .. SETTING_ORDER), DEFAULT_ORDER)
 end
 
 local function saveItemOrder(pfx, order)
@@ -411,14 +393,22 @@ end
 -- Wraps a widget in a row of fixed height and the widget's own width, with the
 -- widget vertically centred. The fixed height keeps the module height
 -- independent of font metrics (see M.getHeight).
+-- `shift` (px, positive = down) offsets the widget from the centre; it is
+-- applied as a spacer on the opposite side, which the centring then halves.
 -- ---------------------------------------------------------------------------
 
-local function _slot(wgt, h)
+local function _slot(wgt, h, shift)
     local size = wgt:getSize()
     if not wgt.dimen then wgt.dimen = size end
+    local content = wgt
+    if shift and shift > 0 then
+        content = VerticalGroup:new{ VerticalSpan:new{ width = shift * 2 }, wgt }
+    elseif shift and shift < 0 then
+        content = VerticalGroup:new{ wgt, VerticalSpan:new{ width = -shift * 2 } }
+    end
     return CenterContainer:new{
         dimen = Geom:new{ w = size.w, h = h },
-        wgt,
+        content,
     }
 end
 
@@ -673,8 +663,6 @@ local function build(w, pfx, vspan_pool, landscape_factor, styles)
     local batt_h   = math.max(7, math.floor(clock_fs * _BATT_H_RATIO  * batt_elem))
     local item_gap = math.max(0, math.floor(_BASE_ITEM_GAP * scale * getItemGapPct(pfx) / 100))
 
-    local bot_pad_extra = math.floor(_BASE_BOT_PAD_EXTRA * scale)
-
     local visible     = getVisibleItems(pfx)
     local clock_style = getClockStyle(pfx)
 
@@ -697,11 +685,12 @@ local function build(w, pfx, vspan_pool, landscape_factor, styles)
             if face_widget then vg[#vg+1] = face_widget end
         else
             local face_clock, bold_clock = SUIStyle.getTextFace(styles.clock, clock_fs)
+            local time_text = datetime.secondsToHour(os.time(), G_reader_settings:isTrue("twelve_hour_clock"))
             vg[#vg+1] = _slot(UI.makeColoredText{
-                text = datetime.secondsToHour(os.time(), G_reader_settings:isTrue("twelve_hour_clock")),
+                text = time_text,
                 face = face_clock,
                 bold = bold_clock,
-            }, clock_w)
+            }, clock_w, SUIStyle.inkCentreShift(face_clock, time_text, bold_clock))
         end
     end
 
@@ -742,12 +731,12 @@ local function build(w, pfx, vspan_pool, landscape_factor, styles)
 
     -- `fit_align` makes the module chrome hug the content and position it
     -- within the column (see ModuleChrome.wrap). Horizontal insets come from
-    -- the chrome, so only vertical padding is applied here.
+    -- the chrome; equal vertical padding keeps the block optically centred.
     return FrameContainer:new{
         bordersize     = 0,
         padding        = 0,
         padding_top    = PAD,
-        padding_bottom = PAD2 + bot_pad_extra,
+        padding_bottom = PAD,
         fit_align      = align,
         vg,
     }
@@ -855,8 +844,7 @@ local function _tick()
 
     if body and idx and body[idx] and screen._navbar_container then
         local sw      = Screen:getWidth()
-        local SIDE_PAD = require("infra/sui_core").SIDE_M()
-        local inner_w  = screen._clock_inner_w or (sw - SIDE_PAD * 2)
+        local inner_w = screen._clock_inner_w or UI.getInnerW(sw)
 
         -- Pass the screen's landscape factor through explicitly so the
         -- surgical swap matches the size _updatePage would have built.
@@ -991,7 +979,7 @@ function M.getHeight(ctx)
     local clock_elem = styles.clock.scale or 1
     local date_elem  = styles.date.scale or 1
     local batt_elem  = styles.battery.scale or 1
-    local w_estimate = ctx.col_w or ctx.inner_w or (Screen:getWidth() - UI.SIDE_PAD * 2)
+    local w_estimate = ctx.col_w or ctx.inner_w or UI.getInnerW()
     local inner_w_estimate = w_estimate - PAD * 2
 
     -- Same scale basis as build(): module scale * landscape factor.
@@ -1002,7 +990,7 @@ function M.getHeight(ctx)
     local batt_h   = math.max(7, math.floor(clock_fs * _BATT_H_RATIO  * batt_elem))
     local item_gap = math.max(0, math.floor(_BASE_ITEM_GAP * scale * getItemGapPct(ctx.pfx) / 100))
 
-    local h_base  = PAD * 2 + PAD2
+    local h_base  = PAD * 2
     local visible = getVisibleItems(ctx.pfx)
     local style   = getClockStyle(ctx.pfx)
 

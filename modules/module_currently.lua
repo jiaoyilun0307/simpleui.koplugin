@@ -28,6 +28,7 @@ local Size            = require("ui/size")
 
 -- Internal dependencies
 local Config       = require("infra/sui_config")
+local SectionLabel = require("engines/sui_section_label")
 local UI           = require("infra/sui_core")
 local SUISettings  = require("infra/sui_store")
 local SUIStyle     = require("features/sui_style")
@@ -114,6 +115,16 @@ end
 
 local function setProgressBadgeColor(pfx, v)
     SUISettings:saveSetting(pfx .. SETTING_PROGRESS_BADGE_COLOR, v)
+end
+
+-- Draws the progress pentagon over a cover through the shared helper, using
+-- the module's own color and size settings.
+local function applyProgressBadge(cover, bd, cw, ch, pfx)
+    local SH = getSH()
+    if not SH or not SH.applyProgressBadge then return cover end
+    return SH.applyProgressBadge(cover, bd, cw, ch,
+        getProgressBadgeColorOverride(pfx), nil, nil,
+        Config.getBadgeScalePct("currently", pfx))
 end
 
 -- Setting key for stats layout: "default" (one line per stat) or "compact" (single row with · separator + ETA)
@@ -545,7 +556,6 @@ end
 -- Builds the module widget: cover on the left, text column on the right.
 -- Elements in the text column are rendered in user-configured order.
 function M.build(w, ctx)
-    Config.applyLabelToggle(M, _("Currently Reading"))
     if not ctx.current_fp then
         return _emptyPlaceholder(w, M.getHeight(ctx), ctx.has_wallpaper)
     end
@@ -1139,9 +1149,8 @@ function M.build(w, ctx)
     -- Optional progress pentagon on the cover (same primitive as Coverdeck
     -- and the book-grid modules). Applied after the cover is resolved so
     -- late loads in updateCovers can re-apply it the same way.
-    if showProgressBadge(pfx) and SH.applyProgressBadge then
-        local color = getProgressBadgeColorOverride(pfx)
-        cover = SH.applyProgressBadge(cover, bd, cover_w, cover_h, color)
+    if showProgressBadge(pfx) then
+        cover = applyProgressBadge(cover, bd, cover_w, cover_h, pfx)
     end
 
     local full_h = content_h
@@ -1269,10 +1278,9 @@ function M.updateCovers(widget, _ctx)
     for _, slot in ipairs(tappable._cover_slots) do
         local new_cover = SH.getBookCover(slot.fp, slot.w, slot.h)
         if new_cover then
-            if show_badge and SH.applyProgressBadge then
+            if show_badge then
                 local bd = SH.getBookData(slot.fp, _ctx and _ctx.prefetched and _ctx.prefetched[slot.fp])
-                local color = getProgressBadgeColorOverride(pfx)
-                new_cover = SH.applyProgressBadge(new_cover, bd, slot.w, slot.h, color)
+                new_cover = applyProgressBadge(new_cover, bd, slot.w, slot.h, pfx)
             end
             slot.container[slot.idx] = new_cover
         elseif not Config.isCoverMissing(slot.fp) then
@@ -1288,7 +1296,7 @@ end
 -- under-allocating space and causing overlap with the module below.
 function M.getHeight(_ctx)
     local SH = getSH()
-    if not SH then return Config.getScaledLabelH() end
+    if not SH then return SectionLabel.height(M.id, _ctx and _ctx.landscape_factor) end
     local pfx = _ctx and _ctx.pfx
     -- Use pre-read settings bundle from ctx when available (normal HS path).
     -- c.scale/c.thumb_scale/c.lbl_scale (from ctx.cfg) are RAW; apply
@@ -1311,7 +1319,7 @@ function M.getHeight(_ctx)
     -- contract, M.getHeight(ctx)), so it estimates it the same way
     -- module_clock/module_coverdeck/module_quick_actions already do.
     local w_estimate = (_ctx and (_ctx.col_w or _ctx.inner_w))
-                        or (Screen:getWidth() - UI.SIDE_PAD * 2)
+                        or UI.getInnerW()
     local _cover_ratio = SH.getDims(1.0, 1.0).COVER_H / SH.getDims(1.0, 1.0).COVER_W
     local cover_w, cover_h = _computeCoverDims(w_estimate, raw_thumb_scale * raw_scale, _cover_ratio)
     local D = { COVER_W = cover_w, COVER_H = cover_h }
@@ -1444,7 +1452,7 @@ function M.getHeight(_ctx)
             content_h = content_h + SUIStyle.BORDER_SZ * 2
         end
     end
-    return Config.getScaledLabelH() + content_h
+    return SectionLabel.height(M.id, lf) + content_h
 end
 
 
@@ -2006,6 +2014,14 @@ function M.getMenuItems(ctx_menu)
             set          = function(v) setProgressBadgeColor(pfx, v) end,
             refresh      = refresh,
         },
+        Config.makeBadgeSizeItem{
+            info         = _lc("Scale for the progress badge."),
+            enabled_func = function() return showProgressBadge(pfx) end,
+            get          = function() return Config.getBadgeScalePct("currently", pfx) end,
+            set          = function(v) Config.setBadgeScale(v, "currently", pfx) end,
+            refresh      = refresh,
+            _lc          = _lc,
+        },
     }
 
     local progress_stats_entry = {
@@ -2070,7 +2086,7 @@ function M.getMenuItems(ctx_menu)
     }
 
     local appearance_extra = {
-        Config.makeLabelToggleItem("currently", _("Currently Reading"), refresh, _lc),
+        Config.makeLabelToggleItem("currently", refresh, _lc),
     }
 
     return Config.buildModuleMenu({
