@@ -6426,3 +6426,51 @@ msgstr "[待翻译] Proportions"
 
 msgid "Regular"
 msgstr "[待翻译] Regular"
+
+msgid "A folder named \\"Books\\" will be created and set as the library home."
+msgstr "A folder named \\"Books\\" will be created and set as the library home."
+
+msgid "At least one item must stay visible."
+msgstr "At least one item must stay visible."
+
+msgid "Choose a different folder"
+msgstr "[待翻译] Choose a different folder"
+
+msgid "Choose the folder where you will place all your books. Simple UI uses it to show your books in the Library."
+msgstr "Choose the folder where you will place all your books. Simple UI uses it to show your books in the Library."
+
+msgid "Classic"
+msgstr "[待翻译] Classic"
+
+msgid "Cover Shadow"
+msgstr "Cover Shadow"
+
+msgid "Create a \\"Books\\" folder"
+msgstr "Create a \\"Books\\" folder"
+
+msgid "Hide Book Stack"
+msgstr "Hide Book Stack"
+
+msgid "Hide Folder Book Stack"
+msgstr "Hide Folder Book Stack"
+
+msgid "Landscape mosaic mode"
+msgstr "[待翻译] Landscape mosaic mode"
+
+msgid "Pick any existing folder to use as the library home."
+msgstr "Pick any existing folder to use as the library home."
+
+msgid "Portrait list mode"
+msgstr "[待翻译] Portrait list mode"
+
+msgid "Portrait mosaic mode"
+msgstr "[待翻译] Portrait mosaic mode"
+
+msgid "Set the Home Folder"
+msgstr "Set the Home Folder"
+
+msgid "Tabs and Search"
+msgstr "Tabs and Search"
+
+msgid "The title bar style will change after restart.\n\nRestart now?"
+msgstr "The title bar style will change after restart.\n\nRestart now?"
