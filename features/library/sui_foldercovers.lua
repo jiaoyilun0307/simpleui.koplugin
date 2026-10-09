@@ -438,9 +438,10 @@ end
 
 function M.invalidateCache()
     _itc = nil
-    -- Ribbon / pentagon scratch buffers live in sui_cover_widgets.lua.
+    -- Ribbon / pentagon / shadow buffers live in sui_cover_widgets.lua.
     CoverWidgets.clearRibbonCache()
     CoverWidgets.clearPentagonMaskCache()
+    CoverWidgets.clearShadowCache()
 end
 
 -- Public wrapper for the FileChooser item-table cache invalidation.
@@ -843,11 +844,21 @@ local function _installStripPatch(MosaicMenuItem, BookInfoManager, _STRIP_H,
         local BD_s          = require("ui/bidi")
         local Screen_s      = require("device").screen
         local UI_core       = require("infra/sui_core")
+        local SUIWallpaper  = require("features/sui_wallpaper")
 
         local TITLE_FONT_S  = SUIStyle.FS_DETAIL    -- 15: cover title in size-probe context
         local AUTHOR_FONT_S = SUIStyle.FS_CAPTION   -- 12: cover author in size-probe context
         local PAD_S         = Screen_s:scaleBySize(3)
         local GAP_S         = Screen_s:scaleBySize(2)
+        -- Rounded backdrop behind the strip, inset from the cell's sides.
+        local BACKDROP_MARGIN_X = Screen_s:scaleBySize(2)
+        local BACKDROP_RADIUS   = Screen_s:scaleBySize(6)
+
+        -- Paints `tw` centred in the strip at `y`, then frees it.
+        local function _paintCentered(strip_bb, tw, y)
+            tw:paintTo(strip_bb, math.floor((strip_bb:getWidth() - tw:getSize().w) / 2), y)
+            tw:free()
+        end
 
         local function _mhs(fs, bold)
             local tw = TextWidget_s:new{ text="Ag", face=Font_s:getFace(SUIStyle.FACE_REGULAR,fs),
@@ -893,11 +904,7 @@ local function _installStripPatch(MosaicMenuItem, BookInfoManager, _STRIP_H,
                         max_width              = text_w,
                         truncate_with_ellipsis = true,
                     }
-                    local tsz = tw:getSize()
-                    tw:paintTo(strip_bb,
-                        math.floor((self.width - tsz.w) / 2),
-                        math.floor((_STRIP_H  - tsz.h) / 2))
-                    tw:free()
+                    _paintCentered(strip_bb, tw, math.floor((_STRIP_H - tw:getSize().h) / 2))
                     self._simpleui_strip_bb = strip_bb
 
                 -- Books: render title and/or author.
@@ -942,7 +949,7 @@ local function _installStripPatch(MosaicMenuItem, BookInfoManager, _STRIP_H,
 
                     local strip_bb = Blitbuffer_s.new(self.width, _STRIP_H, bb:getType())
                     strip_bb:fill(Blitbuffer_s.COLOR_WHITE)
-                    local cur_y  = PAD_S
+                    local cur_y = PAD_S
 
                     if _show_title_strip and self._simpleui_strip_data.title then
                         local tw = TextWidget_s:new{
@@ -954,9 +961,7 @@ local function _installStripPatch(MosaicMenuItem, BookInfoManager, _STRIP_H,
                             max_width              = text_w,
                             truncate_with_ellipsis = true,
                         }
-                        local tsz = tw:getSize()
-                        tw:paintTo(strip_bb, math.floor((self.width - tsz.w) / 2), cur_y)
-                        tw:free()
+                        _paintCentered(strip_bb, tw, cur_y)
                         if _show_author_strip then cur_y = cur_y + TITLE_LINE_S + GAP_S end
                     end
 
@@ -970,9 +975,7 @@ local function _installStripPatch(MosaicMenuItem, BookInfoManager, _STRIP_H,
                             max_width              = text_w,
                             truncate_with_ellipsis = true,
                         }
-                        local asz = aw:getSize()
-                        aw:paintTo(strip_bb, math.floor((self.width - asz.w) / 2), cur_y)
-                        aw:free()
+                        _paintCentered(strip_bb, aw, cur_y)
                     end
 
                     self._simpleui_strip_bb = strip_bb
@@ -981,9 +984,7 @@ local function _installStripPatch(MosaicMenuItem, BookInfoManager, _STRIP_H,
 
             -- Blit the strip directly below the cover.
             if self._simpleui_strip_bb then
-                local ok_wp, SUIWallpaper = pcall(require, "features/sui_wallpaper")
-                local wp_active = ok_wp and SUIWallpaper
-                    and SUIWallpaper.styleGetWallpaperShowInFM()
+                local wp_active = SUIWallpaper.styleGetWallpaperShowInFM()
                     and SUIWallpaper.styleGetBgWidget() ~= nil
 
                 if wp_active then
@@ -995,8 +996,12 @@ local function _installStripPatch(MosaicMenuItem, BookInfoManager, _STRIP_H,
                         self._simpleui_strip_mask_bb =
                             Blitbuffer_s.new(self.width, _STRIP_H, Blitbuffer_s.TYPE_BB8)
                     end
+                    local strip_y = y + self._simpleui_strip_top
+                    SUIWallpaper.paintBackdrop(bb, x + BACKDROP_MARGIN_X, strip_y,
+                        self.width - 2 * BACKDROP_MARGIN_X, _STRIP_H,
+                        SUIWallpaper.getCoverStripBackdropStrength(), BACKDROP_RADIUS)
                     UI_core.paintWithAlphaMask(self, bb,
-                        x, y + self._simpleui_strip_top, self.width, _STRIP_H,
+                        x, strip_y, self.width, _STRIP_H,
                         Blitbuffer_s.COLOR_BLACK,
                         _stripPaintFn, self._simpleui_strip_mask_bb)
                 else
@@ -1007,6 +1012,60 @@ local function _installStripPatch(MosaicMenuItem, BookInfoManager, _STRIP_H,
             end
         end -- MosaicMenuItem:paintTo (strip wrapper)
     end -- FileManager_strip.setupLayout
+end
+
+-- ── Native no-cover widget ───────────────────────────────────────────────
+-- Grid items build their no-cover widget from a class local to the native
+-- mosaic menu. Swapping that upvalue renders the shared generated cover
+-- (engines/sui_cover_placeholder.lua) instead. Independent of the folder
+-- cover toggle.
+
+local _placeholder_class
+
+-- Adapter exposing the constructor contract of the native class.
+local function _placeholderClass()
+    if _placeholder_class then return _placeholder_class end
+    local Placeholder = require("engines/sui_cover_placeholder")
+    local util        = require("util")
+    _placeholder_class = {
+        new = function(_, opts)
+            local w, h  = Placeholder.fitSize(opts.width, opts.height)
+            local title = opts.title or (opts.filename and (util.splitFileNameSuffix(opts.filename)))
+            local cover = Placeholder.build(w, h, title, opts.authors or nil)
+            cover.dim = opts.file_deleted
+            return cover
+        end,
+    }
+    return _placeholder_class
+end
+
+-- The unwrapped native update: the upvalue lives on the original function,
+-- not on the folder-cover wrapper.
+local function _nativeUpdate(MosaicMenuItem)
+    return MosaicMenuItem._simpleui_fc_orig_update or MosaicMenuItem.update
+end
+
+function M.installPlaceholder()
+    local MosaicMenuItem, userpatch = _getMosaicMenuItemAndPatch()
+    if not MosaicMenuItem or MosaicMenuItem._simpleui_placeholder_n then return end
+
+    local update = _nativeUpdate(MosaicMenuItem)
+    local native, idx = userpatch.getUpValue(update, "FakeCover")
+    if not native then return end
+
+    debug.setupvalue(update, idx, _placeholderClass())
+    MosaicMenuItem._simpleui_placeholder_n    = idx
+    MosaicMenuItem._simpleui_placeholder_orig = native
+end
+
+function M.uninstallPlaceholder()
+    local MosaicMenuItem = _getMosaicMenuItemAndPatch()
+    if not (MosaicMenuItem and MosaicMenuItem._simpleui_placeholder_n) then return end
+
+    debug.setupvalue(_nativeUpdate(MosaicMenuItem),
+        MosaicMenuItem._simpleui_placeholder_n, MosaicMenuItem._simpleui_placeholder_orig)
+    MosaicMenuItem._simpleui_placeholder_n    = nil
+    MosaicMenuItem._simpleui_placeholder_orig = nil
 end
 
 function M.install()
@@ -1106,7 +1165,6 @@ function M.install()
             label_pos   = M.getLabelPosition(),
             label_color = M.getLabelColor(),
             label_scale = M.getLabelScale(),
-            hide_pile   = M.getHidePile(),
             badge = {
                 hidden   = M.getBadgeHidden(),
                 scale    = M.getBadgeScale(),
@@ -1409,8 +1467,8 @@ function M.install()
                     end
                 end
                 if #covers > 0 then
-                    local border, pile, max_img_w, max_img_h = CoverWidgets.computeCellGeometry(self, M.getHidePile())
-                    local widget = CoverWidgets.buildQuadCover(self, covers, border, pile, max_img_w, max_img_h, display)
+                    local border, backing, max_img_w, max_img_h = CoverWidgets.computeCellGeometry(self, M.getHidePile())
+                    local widget = CoverWidgets.buildQuadCover(self, covers, border, backing, max_img_w, max_img_h, display)
                     if widget then
                         CoverWidgets.installWidget(self, widget)
                         return
@@ -1461,8 +1519,8 @@ function M.install()
 
             local covers = CoverFinder.collectCovers(self.menu, dir_path, 4, BookInfoManager, M.getRecursiveCover())
             if #covers > 0 then
-                local border, pile, max_img_w, max_img_h = CoverWidgets.computeCellGeometry(self, M.getHidePile())
-                local widget = CoverWidgets.buildQuadCover(self, covers, border, pile, max_img_w, max_img_h, display)
+                local border, backing, max_img_w, max_img_h = CoverWidgets.computeCellGeometry(self, M.getHidePile())
+                local widget = CoverWidgets.buildQuadCover(self, covers, border, backing, max_img_w, max_img_h, display)
                 if widget then
                     CoverWidgets.installWidget(self, widget)
                     return
@@ -1541,7 +1599,7 @@ function M.install()
         -- receives a nil table.
         display = display or _readDisplay()
         self._foldercover_processed = true
-        local border, pile, max_img_w, max_img_h = CoverWidgets.computeCellGeometry(self, M.getHidePile())
+        local border, backing, max_img_w, max_img_h = CoverWidgets.computeCellGeometry(self, M.getHidePile())
 
         local img_options = {}
         if img.file then img_options.file  = img.file end
@@ -1569,14 +1627,14 @@ function M.install()
         local image   = ImageWidget:new(img_options)
         local size    = image:getSize()
         local content = FrameContainer:new{ padding = 0, bordersize = border, image }
-        CoverWidgets.installWidget(self, CoverWidgets.assembleCoverWidget(self, content, size, border, pile, display))
+        CoverWidgets.installWidget(self, CoverWidgets.assembleCoverWidget(self, content, size, border, backing, display))
     end
 
     -- Placeholder cover for bookless folders (subfolders only or empty).
     function MosaicMenuItem:_setEmptyFolderCover(display)
         display = display or _readDisplay()
         self._foldercover_processed = true
-        local border, pile, max_img_w, max_img_h = CoverWidgets.computeCellGeometry(self, M.getHidePile())
+        local border, backing, max_img_w, max_img_h = CoverWidgets.computeCellGeometry(self, M.getHidePile())
 
         local ratio = 2 / 3
         local img_w, img_h
@@ -1654,7 +1712,7 @@ function M.install()
 
         local size    = Geom:new{ w = img_w, h = img_h }
         local content = FrameContainer:new{ padding = 0, bordersize = border, bg_canvas }
-        CoverWidgets.installWidget(self, CoverWidgets.assembleCoverWidget(self, content, size, border, pile, display))
+        CoverWidgets.installWidget(self, CoverWidgets.assembleCoverWidget(self, content, size, border, backing, display))
     end
 
     -- onFocus: apply the pre-computed underline color (no settings read in the hot path).
@@ -2239,6 +2297,7 @@ function M.uninstall()
     CoverWidgets.clearLabelMetricsCache()
     CoverWidgets.clearRibbonCache()
     CoverWidgets.clearPentagonMaskCache()
+    CoverWidgets.clearShadowCache()
 
     local ListMenuItem = _getListMenuItem()
     if ListMenuItem and ListMenuItem._simpleui_lm_patched then

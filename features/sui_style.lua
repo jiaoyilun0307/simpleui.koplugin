@@ -332,16 +332,16 @@ end
 -- Book covers can cast a drop shadow down and to the right, switched on
 -- separately for each surface (scope). The shadow lives inside the cover's
 -- own slot: the cover is drawn coverShadowOffset() px smaller on each axis,
--- so layouts keep their size.
+-- so layouts keep their size. The shadow is on until a surface is switched off.
 
 M.SHADOW_LIBRARY = "library"   -- the Library grid
 M.SHADOW_MODULES = "modules"   -- the Home Screen modules
 
 local _COVER_SHADOW_KEY_PREFIX = "simpleui_style_cover_shadow_"
-local _COVER_SHADOW_BASE       = math.max(2, Screen:scaleBySize(4))
+local _COVER_SHADOW_BASE       = math.max(2, Screen:scaleBySize(7))
 
 function M.coverShadowEnabled(scope)
-    return SUISettings:isTrue(_COVER_SHADOW_KEY_PREFIX .. scope)
+    return SUISettings:nilOrTrue(_COVER_SHADOW_KEY_PREFIX .. scope)
 end
 
 function M.setCoverShadowEnabled(scope, on)
@@ -353,6 +353,30 @@ end
 function M.coverShadowOffset(scope, scale)
     if not M.coverShadowEnabled(scope) then return 0 end
     return math.max(2, math.floor(_COVER_SHADOW_BASE * (scale or 1)))
+end
+
+-- ---------------------------------------------------------------------------
+-- Folder book stack style
+-- ---------------------------------------------------------------------------
+-- What is drawn behind folder and collection covers when the stack is shown:
+-- "default" is a pile of cards peeking out below and to the right of the
+-- cover, "classic" is a pair of vertical edge lines to its left. One setting
+-- drives every surface that draws such covers.
+
+M.FOLDER_STACK_DEFAULT = "default"
+M.FOLDER_STACK_CLASSIC = "classic"
+
+local _FOLDER_STACK_STYLE_KEY = "simpleui_style_folder_stack"
+
+function M.getFolderStackStyle()
+    if SUISettings:readSetting(_FOLDER_STACK_STYLE_KEY) == M.FOLDER_STACK_CLASSIC then
+        return M.FOLDER_STACK_CLASSIC
+    end
+    return M.FOLDER_STACK_DEFAULT
+end
+
+function M.setFolderStackStyle(style)
+    SUISettings:saveSetting(_FOLDER_STACK_STYLE_KEY, style)
 end
 
 -- ---------------------------------------------------------------------------

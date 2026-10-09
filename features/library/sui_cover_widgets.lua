@@ -1,11 +1,11 @@
 -- sui_cover_widgets.lua — Simple UI
 -- Pure rendering code for folder/book cover decoration: the progress
 -- pentagon, the "New" corner ribbon, rounded-rectangle badges (pages,
--- series index, "New"), the book pile, the folder-name label overlay,
--- the book-count circle badge, and 2×2 quad-cover assembly.
+-- series index, "New"), the book pile and classic spine, the folder-name
+-- label overlay, the book-count circle badge, and 2×2 quad-cover assembly.
 --
--- Nothing here touches FileChooser/MosaicMenuItem, and the only setting read
--- are the cover-shadow flags (through SUIStyle.coverShadowOffset) — every other
+-- Nothing here touches FileChooser/MosaicMenuItem, and the only settings read
+-- are the cover-shadow flags and the stack style (through SUIStyle) — every other
 -- value arrives as a parameter. sui_foldercovers.lua reads its settings once
 -- per update()/paintTo() cycle and passes them in. This means every function
 -- below can be exercised and reasoned about in isolation from the settings
@@ -13,8 +13,8 @@
 --
 -- Cached state kept here: the rendered-ribbon Blitbuffer cache (rotating
 -- text pixel-by-pixel is expensive, keyed by dimensions+label+colors), the
--- label line-height memo, and a reusable 8-bit mask for progress-pentagon AA
--- paints. All are cleared via the public clear*Cache() functions, which
+-- label line-height memo, the shadow coverage masks, and a reusable 8-bit mask
+-- for progress-pentagon AA paints. All are cleared via the public clear*Cache() functions, which
 -- sui_foldercovers.lua calls from M.invalidateCache().
 --
 -- Public API
@@ -36,29 +36,35 @@
 --       -- Total px a cover gives up on the right and bottom for its pile
 --       -- (layer steps plus the front cover's shadow).
 --   CoverWidgets.buildPile(cover_w, cover_h, inset)
---       -- Three shaded layers peeking out behind a cover of cover_w × cover_h.
+--       -- Two shaded layers peeking out behind a cover of cover_w × cover_h.
 --   CoverWidgets.paintShadow(bb, x, y, w, h, offset)
---       -- Drop shadow around a w × h card at (x, y), cast down and to the right.
---   CoverWidgets.backingInset(scope, hide_pile, scale)
---       -- Px a cover gives up on the right and bottom for whatever is drawn
---       -- behind it: the pile, or just the shadow when the pile is hidden.
---   CoverWidgets.buildBacking(cover_w, cover_h, inset, hide_pile)
+--       -- Soft shadow around a w × h card at (x, y), cast down and to the right.
+--   CoverWidgets.buildShadow(card_w, card_h, offset)
+--       -- Widget wrapper around paintShadow (nil when `offset` is 0).
+--   CoverWidgets.buildSpine(cover_h, inset)
+--       -- Classic spine: two vertical edge lines left of a cover.
+--   CoverWidgets.backingInset(scope, hide_stack, scale)
+--       -- { kind, left, right, bottom }: what is drawn behind a cover and the
+--       -- px it takes. The pile or the classic spine, per the stack style
+--       -- setting, or just the shadow when the stack is hidden.
+--   CoverWidgets.buildBacking(cover_w, cover_h, inset)
 --       -- The widget for that backing (nil when there is nothing to draw).
 --   CoverWidgets.buildFolderNameWidget(item, available_w, font_size, fgcolor, bgcolor)
 --   CoverWidgets.buildLabel(item, size, border, display)
 --       -- display: { label_mode, show_name, label_style, label_pos, label_color, label_scale }
 --   CoverWidgets.buildBadge(mandatory, cover_dimen, cv_scale, cell_dimen, opts)
 --       -- opts: { hidden, scale, dark, position }  ("bottom" | anything else = top)
---   CoverWidgets.computeCellGeometry(item, hide_pile)
---   CoverWidgets.assembleCoverWidget(item, content_widget, size, border, pile, display)
+--   CoverWidgets.computeCellGeometry(item, hide_stack)
+--   CoverWidgets.assembleCoverWidget(item, content_widget, size, border, backing, display)
 --   CoverWidgets.buildQuadGrid(img_list, w, h, border)
 --       -- Pure 2×2 cover collage, no pile/label/badge/assembly — reusable
 --       -- outside the library's mosaic context (e.g. module_collections.lua).
---   CoverWidgets.buildQuadCover(item, img_list, border, pile, max_img_w, max_img_h, display)
+--   CoverWidgets.buildQuadCover(item, img_list, border, backing, max_img_w, max_img_h, display)
 --       -- Wraps buildQuadGrid with assembleCoverWidget (mosaic's pile/label/badge).
 --   CoverWidgets.installWidget(item, widget)
 --   CoverWidgets.clearRibbonCache()
 --   CoverWidgets.clearLabelMetricsCache()
+--   CoverWidgets.clearShadowCache()
 --   CoverWidgets.clearPentagonMaskCache()
 
 local _  = require("infra/sui_i18n").translate
@@ -524,24 +530,25 @@ end
 -- ── Book pile ─────────────────────────────────────────────────────────────────
 
 -- The pile is a staircase of cards behind the front cover, each one offset
--- down-right by `step` and casting its own drop shadow in the same direction.
--- The shadow is `step` minus the outline, so outline and shadow strips tile
--- the staircase without gaps. Shadow and outline fade with depth, so the pile
--- recedes.
+-- down-right by `step`. The visible strip of each card is its body, shaded
+-- grey and outlined; the last card also casts the same soft shadow as a single
+-- cover (see paintShadow). The shadow is `step` minus the outline, so outline
+-- and shadow tile the staircase without gaps. Body and outline fade with
+-- depth, so the pile recedes.
 
--- Fade factors by depth. Depth 0 is the front cover's own shadow; depth 1 is
--- the layer touching it. A factor of 1 gives the full colour, 0 gives none.
--- The outline table sets the layer count.
-local _PILE_SHADOW_FADE = { [0] = 1.0, 0.58, 0.34, 0.20 }
-local _PILE_BORDER_FADE = { 0.80, 0.60, 0.44 }
+-- Fade factors by depth, where depth 1 is the layer touching the front cover.
+-- A factor of 1 gives the full colour, 0 gives none. The outline table sets the
+-- layer count.
+local _PILE_BODY_FADE   = { 1.0, 0.58 }
+local _PILE_BORDER_FADE = { 0.80, 0.44 }
 
 local _PILE_LAYERS = #_PILE_BORDER_FADE
 local _PILE_STEP   = Screen:scaleBySize(5)
 
--- Shadow blackness before fading. Night mode inverts the frame after painting,
--- so the night base is lower to keep the shadow dark on screen.
-local _PILE_SHADOW_BASE       = 0.5
-local _PILE_SHADOW_BASE_NIGHT = 0.15
+-- Body blackness before fading. Night mode inverts the frame after painting,
+-- so the night base is lower to keep the body dark on screen.
+local _PILE_BODY_BASE       = 0.5
+local _PILE_BODY_BASE_NIGHT = 0.15
 
 -- Interpolates two colours in painted space: t = 1 gives `a`, t = 0 gives `b`.
 local function blend8(a, b, t)
@@ -549,9 +556,9 @@ local function blend8(a, b, t)
     return Blitbuffer.Color8(math.floor(bv + (av - bv) * t + 0.5))
 end
 
-local function pileShadowColor(depth)
-    local base = Screen.night_mode and _PILE_SHADOW_BASE_NIGHT or _PILE_SHADOW_BASE
-    return Blitbuffer.gray(base * _PILE_SHADOW_FADE[depth])
+local function pileBodyColor(depth)
+    local base = Screen.night_mode and _PILE_BODY_BASE_NIGHT or _PILE_BODY_BASE
+    return Blitbuffer.gray(base * _PILE_BODY_FADE[depth])
 end
 
 -- The cover's own outline colour, faded towards the page colour.
@@ -572,21 +579,18 @@ function PileWidget:getSize()
     return Geom:new{ w = self.w, h = self.h }
 end
 
--- Cards are painted farthest first so nearer ones cover them, ending with the
--- front cover's shadow (depth 0); the front cover itself is added on top by
--- the caller. Each card is a shadow offset down-right, then its body, then its
--- outline. The body takes the shadow colour of the card in front, so it blends
--- into the strip that covers it.
+-- The last card's shadow is painted first, then the cards farthest first so
+-- nearer ones cover them. Each card is its body, then its outline; the front
+-- cover itself is added on top by the caller.
 function PileWidget:paintTo(bb, x, y)
-    local step, shadow = self.step, self.shadow
+    local step   = self.step
     local stroke = SUIStyle.BADGE_BORDER_SZ
-    for depth = _PILE_LAYERS, 0, -1 do
+    local last   = _PILE_LAYERS * step
+    CoverWidgets.paintShadow(bb, x + last, y + last, self.card_w, self.card_h, self.shadow)
+    for depth = _PILE_LAYERS, 1, -1 do
         local lx, ly = x + depth * step, y + depth * step
-        bb:paintRect(lx + shadow, ly + shadow, self.card_w, self.card_h, pileShadowColor(depth))
-        if depth > 0 then
-            bb:paintRect(lx, ly, self.card_w, self.card_h, pileShadowColor(depth - 1))
-            bb:paintBorder(lx, ly, self.card_w, self.card_h, stroke, pileBorderColor(depth))
-        end
+        bb:paintRect(lx, ly, self.card_w, self.card_h, pileBodyColor(depth))
+        bb:paintBorder(lx, ly, self.card_w, self.card_h, stroke, pileBorderColor(depth))
     end
 end
 
@@ -617,66 +621,118 @@ function CoverWidgets.buildPile(cover_w, cover_h, inset)
     }, PileWidget)
 end
 
+-- ── Classic spine ─────────────────────────────────────────────────────────────
+
+-- Two vertical edge lines to the left of the cover, the outer one shorter.
+-- Line heights are fractions of the cover's, outermost first, centred on it.
+local _SPINE_LINE_H  = { 0.94, 0.97 }
+local _SPINE_THICK   = Screen:scaleBySize(3)
+local _SPINE_GAP     = Screen:scaleBySize(1)
+
+local SpineWidget = {}
+SpineWidget.__index = SpineWidget
+
+function SpineWidget:getSize()
+    return Geom:new{ w = self.w, h = self.h }
+end
+
+function SpineWidget:paintTo(bb, x, y)
+    local color = SUIStyle.COLOR.gray
+    local step  = self.thick + self.gap
+    for i, frac in ipairs(_SPINE_LINE_H) do
+        local line_h = math.floor(self.h * frac)
+        bb:paintRect(x + (i - 1) * step, y + math.floor((self.h - line_h) / 2),
+            self.thick, line_h, color)
+    end
+end
+
+-- See ProgressBadgeWidget:handleEvent() above for why this is required —
+-- same crash, same fix, same reasoning.
+function SpineWidget:handleEvent()
+    return false
+end
+
+-- Backing descriptor of the classic spine: it takes room on the left only.
+-- `scale` follows the cover's own scale (1 when omitted).
+local function spineInset(scale)
+    scale = scale or 1
+    local thick = math.max(1, math.floor(_SPINE_THICK * scale))
+    local gap   = math.max(1, math.floor(_SPINE_GAP   * scale))
+    return {
+        kind = "spine", left = 2 * (thick + gap), right = 0, bottom = 0,
+        thick = thick, gap = gap,
+    }
+end
+
+-- Spine widget for a cover `cover_h` tall; `inset` is a spine descriptor.
+-- The cover is drawn to the right of the widget.
+function CoverWidgets.buildSpine(cover_h, inset)
+    return setmetatable({
+        w = inset.left, h = cover_h,
+        thick = inset.thick, gap = inset.gap,
+    }, SpineWidget)
+end
+
 -- ── Cover shadow ──────────────────────────────────────────────────────────────
 
--- How strongly the shadow shades what lies under it: the third lightest grey
--- of the pile's shadow layers (the lightest is the deepest layer).
-local _SHADOW_STRENGTH = _PILE_SHADOW_BASE * _PILE_SHADOW_FADE[_PILE_LAYERS - 2]
+-- A shadow is built from one-pixel bands that fade with their distance from
+-- the card, which approximates a blurred edge. The bands are coverage masks
+-- blended in black, which shades what is already painted instead of laying a
+-- fixed grey, so the shadow reads on any background.
+local _SHADOW_PEAK         = 0.22   -- shading of the band touching the card
+local _SHADOW_MIN_STRENGTH = 0.02   -- fainter bands are not visible: skipped
 
--- Paints the part of a drop shadow that shows around a w × h card at (x, y):
--- the card's rectangle shifted down-right by `offset`, minus the card itself.
--- The two strips never overlap. The shadow shades what is already painted
--- instead of laying a fixed grey, so it reads on any background. Night frames
--- are inverted after painting, so lightening is what darkens the shadow on
--- screen.
+-- Shading of the band `d` px away from the card (0 = touching it) in a shadow
+-- `reach` px deep: a smoothstep from the peak down to nothing.
+local function shadowBandStrength(d, reach)
+    local t = 1 - d / reach
+    return _SHADOW_PEAK * t * t * (3 - 2 * t)
+end
+
+-- Coverage masks of a shadow's right and bottom strips, memoised by card size
+-- and depth. The strips never overlap: right band `d` is the column `d` px
+-- past the card, bottom band `d` the row `d` px below it, and the corner
+-- belongs to whichever band is farther along its own axis.
+local _shadow_masks = {}
+
+function CoverWidgets.clearShadowCache()
+    for k, masks in pairs(_shadow_masks) do
+        masks.right:free()
+        masks.bottom:free()
+        _shadow_masks[k] = nil
+    end
+end
+
+local function buildShadowMasks(w, h, offset)
+    local right  = Blitbuffer.new(offset, h, Blitbuffer.TYPE_BB8)
+    local bottom = Blitbuffer.new(w, offset, Blitbuffer.TYPE_BB8)
+    right:fill(Blitbuffer.Color8(0))
+    bottom:fill(Blitbuffer.Color8(0))
+    for d = 0, offset - 1 do
+        local strength = shadowBandStrength(d, offset)
+        if strength < _SHADOW_MIN_STRENGTH then break end
+        local coverage = Blitbuffer.Color8(math.floor(strength * 255 + 0.5))
+        right:paintRect(d, 0, 1, h - offset + d, coverage)
+        bottom:paintRect(0, d, w - offset + d + 1, 1, coverage)
+    end
+    return { right = right, bottom = bottom }
+end
+
+-- Paints the part of a soft shadow that shows around a w × h card at (x, y),
+-- `offset` px deep. The shadow is the card's rectangle shifted down-right by
+-- `offset`, minus the card itself. Night frames are inverted after painting,
+-- so blending towards white is what darkens the shadow on screen.
 function CoverWidgets.paintShadow(bb, x, y, w, h, offset)
     if offset <= 0 then return end
-    local shade = Screen.night_mode and bb.lightenRect or bb.darkenRect
-    shade(bb, x + w,      y + offset, offset,     h,      _SHADOW_STRENGTH)
-    shade(bb, x + offset, y + h,      w - offset, offset, _SHADOW_STRENGTH)
-end
-
--- Parts of rect `r` that lie outside rect `c`, as a list of rects.
-local function subtractRect(r, c)
-    local rx2, ry2, cx2, cy2 = r.x + r.w, r.y + r.h, c.x + c.w, c.y + c.h
-    if c.x >= rx2 or cx2 <= r.x or c.y >= ry2 or cy2 <= r.y then return { r } end
-    local pieces = {}
-    local mid_y1, mid_y2 = math.max(r.y, c.y), math.min(ry2, cy2)
-    if c.y > r.y then pieces[#pieces + 1] = { x = r.x, y = r.y, w = r.w, h = c.y - r.y } end
-    if cy2 < ry2 then pieces[#pieces + 1] = { x = r.x, y = cy2, w = r.w, h = ry2 - cy2 } end
-    if c.x > r.x then pieces[#pieces + 1] = { x = r.x, y = mid_y1, w = c.x - r.x, h = mid_y2 - mid_y1 } end
-    if cx2 < rx2 then pieces[#pieces + 1] = { x = cx2, y = mid_y1, w = rx2 - cx2, h = mid_y2 - mid_y1 } end
-    return pieces
-end
-
--- Paints the drop shadows of several cards (rects relative to (x, y)) as one
--- shape: shading accumulates, so a pixel under two shadows is shaded once.
-function CoverWidgets.paintShadows(bb, x, y, cards, offset)
-    if offset <= 0 then return end
-    local shade = Screen.night_mode and bb.lightenRect or bb.darkenRect
-    local painted = {}
-    for _, c in ipairs(cards) do
-        local strips = {
-            { x = c.x + c.w,      y = c.y + offset, w = offset,       h = c.h },
-            { x = c.x + offset,   y = c.y + c.h,    w = c.w - offset, h = offset },
-        }
-        for _, strip in ipairs(strips) do
-            local pieces = { strip }
-            for _, done in ipairs(painted) do
-                local rest = {}
-                for _, piece in ipairs(pieces) do
-                    for _, part in ipairs(subtractRect(piece, done)) do rest[#rest + 1] = part end
-                end
-                pieces = rest
-            end
-            for _, p in ipairs(pieces) do
-                if p.w > 0 and p.h > 0 then
-                    shade(bb, x + p.x, y + p.y, p.w, p.h, _SHADOW_STRENGTH)
-                end
-            end
-            painted[#painted + 1] = strip
-        end
+    local key   = (w * 4096 + h) * 64 + offset
+    local masks = _shadow_masks[key]
+    if not masks then
+        masks = buildShadowMasks(w, h, offset)
+        _shadow_masks[key] = masks
     end
+    local color = Screen.night_mode and Blitbuffer.COLOR_WHITE or Blitbuffer.COLOR_BLACK
+    bb:colorblitFromRGB32(masks.right,  x + w,      y + offset, 0, 0, offset, h,      color)
+    bb:colorblitFromRGB32(masks.bottom, x + offset, y + h,      0, 0, w,      offset, color)
 end
 
 local ShadowWidget = {}
@@ -696,49 +752,42 @@ function ShadowWidget:handleEvent()
     return false
 end
 
-local ShadowLayerWidget = {}
-ShadowLayerWidget.__index = ShadowLayerWidget
-
-function ShadowLayerWidget:getSize()
-    return Geom:new{ w = self.w, h = self.h }
-end
-
-function ShadowLayerWidget:paintTo(bb, x, y)
-    CoverWidgets.paintShadows(bb, x, y, self.cards, self.offset)
-end
-
--- See ProgressBadgeWidget:handleEvent() above for why this is required —
--- same crash, same fix, same reasoning.
-function ShadowLayerWidget:handleEvent()
-    return false
-end
-
--- Widget of w × h casting the shadows of `cards` (rects relative to its
--- top-left corner) as one shape; nil when `offset` is 0.
-function CoverWidgets.buildShadowLayer(w, h, cards, offset)
+-- Widget casting the shadow of a card_w × card_h card, `offset` px deep; nil
+-- when `offset` is 0. The card sits at the widget's top-left corner and the
+-- shadow falls down-right.
+function CoverWidgets.buildShadow(card_w, card_h, offset)
     if offset <= 0 then return nil end
-    return setmetatable({ w = w, h = h, cards = cards, offset = offset }, ShadowLayerWidget)
+    return setmetatable({
+        w = card_w + offset, h = card_h + offset,
+        card_w = card_w,     card_h = card_h,
+        offset = offset,
+    }, ShadowWidget)
 end
 
--- Px a cover gives up on its right and bottom edges for what sits behind it:
--- the pile, or only the shadow of `scope` when the pile is hidden. `scale`
--- follows the cover's own scale (1 when omitted).
-function CoverWidgets.backingInset(scope, hide_pile, scale)
-    if hide_pile then return SUIStyle.coverShadowOffset(scope, scale) end
-    return CoverWidgets.pileInset(scale)
+-- What sits behind a cover and the room it takes, as
+-- { kind, left, right, bottom } in px: the stack in the configured style, or
+-- only the shadow of `scope` when the stack is hidden. The classic spine
+-- replaces the shadow, so it is drawn alone. `scale` follows the cover's own
+-- scale (1 when omitted).
+function CoverWidgets.backingInset(scope, hide_stack, scale)
+    if hide_stack then
+        local shadow = SUIStyle.coverShadowOffset(scope, scale)
+        return { kind = "shadow", left = 0, right = shadow, bottom = shadow }
+    end
+    if SUIStyle.getFolderStackStyle() == SUIStyle.FOLDER_STACK_CLASSIC then
+        return spineInset(scale)
+    end
+    local pile = CoverWidgets.pileInset(scale)
+    return { kind = "pile", left = 0, right = pile, bottom = pile }
 end
 
 -- Widget drawn behind a cover of cover_w × cover_h; `inset` comes from
--- backingInset(). The widget is (cover_w + inset) × (cover_h + inset) and the
--- caller draws the cover at its top-left corner.
-function CoverWidgets.buildBacking(cover_w, cover_h, inset, hide_pile)
-    if not hide_pile then return CoverWidgets.buildPile(cover_w, cover_h, inset) end
-    if inset <= 0 then return nil end
-    return setmetatable({
-        w = cover_w + inset, h = cover_h + inset,
-        card_w = cover_w,    card_h = cover_h,
-        offset = inset,
-    }, ShadowWidget)
+-- backingInset(). The widget starts at the top-left corner of the group the
+-- cover is drawn in, `inset.left` px to the left of the cover.
+function CoverWidgets.buildBacking(cover_w, cover_h, inset)
+    if inset.kind == "spine" then return CoverWidgets.buildSpine(cover_h, inset) end
+    if inset.kind == "pile"  then return CoverWidgets.buildPile(cover_w, cover_h, inset.bottom) end
+    return CoverWidgets.buildShadow(cover_w, cover_h, inset.bottom)
 end
 
 -- ── Folder-name label overlay ─────────────────────────────────────────────────
@@ -855,8 +904,8 @@ end
 -- `cell_dimen` is the full mosaic cell (used for sizing); when absent,
 -- cover_dimen is used instead (produces a smaller badge).
 -- `opts`: { hidden, scale, dark, position }  (position: "bottom" | top-default)
--- The badge is anchored to the top-left of its parent group, where the cover
--- sits, so a pile extending right and below the cover does not move it.
+-- The badge is anchored to the top-left of its parent group and sized to the
+-- cover alone; assembleCoverWidget offsets it past a backing on the left.
 function CoverWidgets.buildBadge(mandatory, cover_dimen, cv_scale, cell_dimen, opts)
     opts = opts or {}
     if opts.hidden then return nil end
@@ -929,43 +978,62 @@ end
 -- ── Shared geometry helper ────────────────────────────────────────────────────
 
 -- Computes the four values every cover-building function needs: the cover's
--- border, the backing inset (the pile, or just the shadow when the pile is
--- hidden; 0 when there is neither) and the largest cover that still leaves
--- room for both. self.height is already reduced by _STRIP_H in
+-- border, the backing inset (see backingInset; zero-sized when there is
+-- neither a stack nor a shadow) and the largest cover that still leaves room
+-- for both. self.height is already reduced by _STRIP_H in
 -- sui_foldercovers.lua's update() wrapper before this is called, so it must
 -- NOT be subtracted again.
-function CoverWidgets.computeCellGeometry(item, hide_pile)
-    local border = SUIStyle.BADGE_BORDER_SZ
-    local pile   = CoverWidgets.backingInset(SUIStyle.SHADOW_LIBRARY, hide_pile)
-    return border, pile,
-        item.width  - pile - border * 2,
-        item.height - pile - border * 2
+function CoverWidgets.computeCellGeometry(item, hide_stack)
+    local border  = SUIStyle.BADGE_BORDER_SZ
+    local backing = CoverWidgets.backingInset(SUIStyle.SHADOW_LIBRARY, hide_stack)
+    return border, backing,
+        item.width  - backing.left - backing.right - border * 2,
+        item.height - backing.bottom - border * 2
 end
 
 -- ── Cover assembly helper ─────────────────────────────────────────────────────
 
--- Wraps any pre-built content_widget with the backing (pile or shadow), overlays the folder-name
--- label and item-count badge, and centres the whole in the mosaic cell.
+-- Places `widget` at `x` inside an OverlapGroup, keeping its vertical offset.
+local function shiftRight(widget, x)
+    local offset = widget.overlap_offset
+    widget.overlap_offset = { x, offset and offset[2] or 0 }
+end
+
+-- Wraps any pre-built content_widget with the backing (pile, spine or shadow),
+-- overlays the folder-name label and item-count badge, and centres the whole
+-- in the mosaic cell. The cover, label and badge sit `backing.left` px into
+-- the group; a left-hand backing hangs out of the cover, which stays centred
+-- as long as the cell has room for both.
 -- cv_scale is derived from cover_h here so callers don't have to compute it.
 -- Must be defined before buildQuadCover, which calls it.
-function CoverWidgets.assembleCoverWidget(item, content_widget, size, border, pile, display)
+function CoverWidgets.assembleCoverWidget(item, content_widget, size, border, backing, display)
     local cover_dimen = Geom:new{ w = size.w + border * 2, h = size.h + border * 2 }
-    local group_dimen = Geom:new{ w = cover_dimen.w + pile, h = cover_dimen.h + pile }
+    local group_dimen = Geom:new{
+        w = cover_dimen.w + backing.left + backing.right,
+        h = cover_dimen.h + backing.bottom,
+    }
     local cell_dimen  = Geom:new{ w = item.width, h = item.height }
     local cv_scale    = math.max(0.1, math.floor((cover_dimen.h / _BASE_COVER_H) * 10) / 10)
 
     local overlap = OverlapGroup:new{ dimen = group_dimen }
-    local backing = CoverWidgets.buildBacking(cover_dimen.w, cover_dimen.h, pile, display.hide_pile)
-    if backing then overlap[#overlap + 1] = backing end
+    local behind  = CoverWidgets.buildBacking(cover_dimen.w, cover_dimen.h, backing)
+    if behind then overlap[#overlap + 1] = behind end
+    shiftRight(content_widget, backing.left)
     overlap[#overlap + 1] = content_widget
 
     local label = CoverWidgets.buildLabel(item, size, border, display)
-    if label then overlap[#overlap + 1] = label end
+    if label then
+        shiftRight(label, backing.left)
+        overlap[#overlap + 1] = label
+    end
     local badge = CoverWidgets.buildBadge(item.mandatory, cover_dimen, cv_scale, cell_dimen, display.badge)
-    if badge then overlap[#overlap + 1] = badge end
+    if badge then
+        shiftRight(badge, backing.left)
+        overlap[#overlap + 1] = badge
+    end
 
     overlap.overlap_offset = {
-        math.floor((item.width  - group_dimen.w) / 2),
+        math.max(0, math.floor((item.width - group_dimen.w) / 2) - math.floor(backing.left / 2)),
         math.floor((item.height - group_dimen.h) / 2),
     }
     return OverlapGroup:new{ dimen = cell_dimen, overlap }
@@ -1067,7 +1135,7 @@ end
 -- Returns the OverlapGroup widget for the 2×2 grid assembled into a mosaic
 -- cell (pile + folder-name label + item-count badge), or nil when no covers
 -- are available. Defined after assembleCoverWidget (which it calls).
-function CoverWidgets.buildQuadCover(item, img_list, border, pile, max_img_w, max_img_h, display)
+function CoverWidgets.buildQuadCover(item, img_list, border, backing, max_img_w, max_img_h, display)
     local ratio = 2 / 3
     local img_w, img_h
     if max_img_w / max_img_h > ratio then
@@ -1079,7 +1147,7 @@ function CoverWidgets.buildQuadCover(item, img_list, border, pile, max_img_w, ma
     local grid = CoverWidgets.buildQuadGrid(img_list, img_w, img_h, border)
 
     local size = Geom:new{ w = img_w, h = img_h }
-    return CoverWidgets.assembleCoverWidget(item, grid, size, border, pile, display)
+    return CoverWidgets.assembleCoverWidget(item, grid, size, border, backing, display)
 end
 
 return CoverWidgets
