@@ -689,11 +689,15 @@ end
 local function buildSingleCell(files, cover_override, coll_name, count, d)
     local front_fp = cover_override
     if front_fp and lfs.attributes(front_fp, "mode") ~= "file" then front_fp = nil end
-    if not front_fp and #files > 0 then front_fp = files[1] end
+    local front_is_file = front_fp ~= nil
+    if not front_fp and #files > 0 then
+        front_fp = files[1]
+        front_is_file = lfs.attributes(front_fp, "mode") == "file"
+    end
 
     -- Main cover (or placeholder).
     local cover
-    if front_fp and lfs.attributes(front_fp, "mode") == "file" then
+    if front_is_file then
         local raw = getSingleBookCover(front_fp, d.img_w, d.img_h)
         if raw then
             cover = FrameContainer:new{

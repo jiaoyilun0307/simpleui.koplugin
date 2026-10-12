@@ -10,6 +10,7 @@ local Blitbuffer        = require("ffi/blitbuffer")
 local DataStorage       = require("datastorage")
 local SUISettings       = require("infra/sui_store")
 local SUICoverCache     = require("infra/sui_cover_cache")
+local RasterCache       = require("infra/sui_raster_cache")
 local logger            = require("logger")
 local _ = require("infra/sui_i18n").translate
 local T = require("ffi/util").template
@@ -1888,20 +1889,43 @@ M._cover_extract_pending = {}
 M._cover_extract_specs   = {}
 
 local _BookInfoManager = nil
+local _bbBytes = RasterCache.bbBytes
 
--- Makes the book info store drop this module's cached cover state for a book
--- whenever it forgets that book (cover or metadata changes, manual refresh).
--- Wrapped from the store's original method, so repeated calls never stack.
-local function _hookBookInfoDeletion(bim)
-    local orig = bim._sui_orig_deleteBookInfo or bim.deleteBookInfo
-    if type(orig) ~= "function" then return bim end
-    bim._sui_orig_deleteBookInfo = orig
-    bim.deleteBookInfo = function(self, filepath)
-        if filepath then M.dropCoverCaches(filepath) end
-        return orig(self, filepath)
+-- Listeners told when a book's record in the book info store changes:
+-- fn(filepath, method). Records written by background extraction happen in a
+-- separate process and are not reported.
+local _bookinfo_listeners = {}
+
+function M.onBookInfoChanged(fn)
+    _bookinfo_listeners[#_bookinfo_listeners + 1] = fn
+end
+
+local _BOOKINFO_MUTATORS = { "deleteBookInfo", "setBookInfoProperties", "extractBookInfo" }
+
+-- Wraps the store's methods that change a book's record so that listeners
+-- hear about it before the change is applied. Wrapped from the original
+-- methods, so repeated calls never stack.
+local function _hookBookInfoChanges(bim)
+    for _, name in ipairs(_BOOKINFO_MUTATORS) do
+        local orig = bim["_sui_orig_" .. name] or bim[name]
+        if type(orig) == "function" then
+            bim["_sui_orig_" .. name] = orig
+            bim[name] = function(self, filepath, ...)
+                if filepath then
+                    for _, fn in ipairs(_bookinfo_listeners) do fn(filepath, name) end
+                end
+                return orig(self, filepath, ...)
+            end
+        end
     end
     return bim
 end
+
+-- The store forgetting a book (cover or metadata changes, manual refresh)
+-- invalidates the cover state cached here.
+M.onBookInfoChanged(function(filepath, method)
+    if method == "deleteBookInfo" then M.dropCoverCaches(filepath) end
+end)
 
 function M.getBookInfoManager()
     if _BookInfoManager then return _BookInfoManager end
@@ -1910,7 +1934,7 @@ function M.getBookInfoManager()
         ok, bim = pcall(require, "plugins/coverbrowser.koplugin/bookinfomanager")
     end
     if ok and bim and type(bim) == "table" and bim.getBookInfo then
-        _BookInfoManager = _hookBookInfoDeletion(bim)
+        _BookInfoManager = _hookBookInfoChanges(bim)
         return _BookInfoManager
     end
     return nil
@@ -1939,23 +1963,6 @@ local function _lfsMode(fp)
         _lfs_cover = l
     end
     return _lfs_cover.attributes(fp, "mode")
-end
-
--- Resident byte size of a cached cover bb. stride * height is the true RAM
--- footprint of the underlying C allocation (including row padding), and it
--- scales correctly with bit depth (1 B/px grayscale e-ink vs 4 B/px RGB32)
--- without this cache needing to know the device/panel type.
-local function _bbBytes(bb)
-    if not bb then return 0 end
-    local ok, n = pcall(function()
-        local h = (bb.getHeight and bb:getHeight()) or tonumber(bb.h) or 0
-        local stride = tonumber(bb.stride)
-        if stride and h > 0 then return stride * h end
-        local w   = (bb.getWidth and bb:getWidth()) or 0
-        local bpp = (bb.getBpp and bb:getBpp()) or 8
-        return w * h * math.ceil(bpp / 8)
-    end)
-    return (ok and n) or 0
 end
 
 -- isCoverMissing(filepath) is queried from both cover APIs below on every
@@ -2221,10 +2228,66 @@ local function _coverTooSmall(bim, bookinfo, w, h)
     }) and true or false
 end
 
--- Drop stretch + ref entries so a later put after re-extract can install the
+-- Cropped slot cache: the result of cropping a book's reference cover to one
+-- slot shape (width, height, alignment). Slots are small, so a few MiB hold
+-- every visible peek and Quad quadrant. Entries are shared with live
+-- ImageWidgets (image_disposable = false), so evicting only drops the
+-- reference and never frees the buffer.
+local _CROP_BYTE_BUDGET = 4 * 1024 * 1024
+local _crop_cache = {}   -- filepath -> { [slot_key] = { bb, bytes, tick } }
+local _crop_bytes = 0
+local _crop_tick  = 0
+
+local function _cropSlotKey(w, h, align)
+    return w .. "x" .. h .. (align or "")
+end
+
+local function _cropGet(filepath, slot_key)
+    local entry = _crop_cache[filepath] and _crop_cache[filepath][slot_key]
+    if not entry then return nil end
+    _crop_tick = _crop_tick + 1
+    entry.tick = _crop_tick
+    return entry.bb
+end
+
+local function _cropEvictOverBudget(keep)
+    while _crop_bytes > _CROP_BYTE_BUDGET do
+        local oldest, oldest_fp, oldest_key
+        for fp, slots in pairs(_crop_cache) do
+            for key, entry in pairs(slots) do
+                if entry ~= keep and (not oldest or entry.tick < oldest.tick) then
+                    oldest, oldest_fp, oldest_key = entry, fp, key
+                end
+            end
+        end
+        if not oldest then return end
+        _crop_bytes = _crop_bytes - oldest.bytes
+        _crop_cache[oldest_fp][oldest_key] = nil
+        if next(_crop_cache[oldest_fp]) == nil then _crop_cache[oldest_fp] = nil end
+    end
+end
+
+local function _cropPut(filepath, slot_key, bb)
+    _crop_tick = _crop_tick + 1
+    local entry = { bb = bb, bytes = _bbBytes(bb), tick = _crop_tick }
+    _crop_cache[filepath] = _crop_cache[filepath] or {}
+    _crop_cache[filepath][slot_key] = entry
+    _crop_bytes = _crop_bytes + entry.bytes
+    _cropEvictOverBudget(entry)
+end
+
+local function _cropDrop(filepath)
+    local slots = _crop_cache[filepath]
+    if not slots then return end
+    for _, entry in pairs(slots) do _crop_bytes = _crop_bytes - entry.bytes end
+    _crop_cache[filepath] = nil
+end
+
+-- Drop stretch, crop and ref entries so a later put after re-extract can install the
 -- higher-quality bb (prefer-larger alone keeps same pixel-count upscales).
 local function _dropLocalCoverCaches(filepath)
     SUICoverCache:drop(filepath)
+    _cropDrop(filepath)
     local entry = _bim_ref_cache[filepath]
     if not entry then return end
     _removeRefOrderKey(filepath)
@@ -2353,14 +2416,22 @@ function M.getCroppedCoverBB(filepath, w, h, align)
     end
 
     M._cover_extract_pending[filepath] = nil
-    -- Shared uncropped ref; crop fresh so callers can differ on align.
+    local slot_key = _cropSlotKey(w, h, align)
+    local cropped = _cropGet(filepath, slot_key)
+    if cropped then return cropped end
+
+    -- Shared uncropped ref; each slot shape is cropped from it once.
     local ref_bb = _cachedRefCoverBB(filepath)
     if not ref_bb then
         local raw_bb = _loadCoverBB(bim, filepath)
         if not raw_bb then return _noCover(filepath) end
         ref_bb = _getRefCoverBB(filepath, raw_bb)
     end
-    return _scaleBBToSlot(ref_bb, w, h, align)
+    cropped = _scaleBBToSlot(ref_bb, w, h, align)
+    -- _scaleBBToSlot hands back its source when it cannot scale; that buffer
+    -- belongs to the reference cache and must not be cached here.
+    if cropped and cropped ~= ref_bb then _cropPut(filepath, slot_key, cropped) end
+    return cropped
 end
 
 function M.clearCoverCache()
@@ -2368,6 +2439,7 @@ function M.clearCoverCache()
     -- clear()'s own contract is already "drop references, don't free()"
     -- (see that module), so no deferred-sweep coordination is needed here.
     SUICoverCache:clear()
+    _crop_cache, _crop_bytes = {}, 0
 
     -- No-cover probes hold no bb payload (just filepath markers) — nothing
     -- to free, reset synchronously.
@@ -2799,6 +2871,7 @@ function M.applyFirstRunDefaults()
     def("simpleui_fc_cover_mode",       "2_3")
     def("simpleui_fc_subfolder_cover",  true)
     def("simpleui_browsemeta_enabled",  true)
+    def("simpleui_browsemeta_show_empty", false)
 
     -- Titlebar: search visible, browse visible left of menu
     def("simpleui_tb_item_fm_search", true)

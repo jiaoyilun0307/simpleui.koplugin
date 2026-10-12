@@ -79,6 +79,8 @@
 -- than the target slot.
 
 local logger = require("logger")
+local RasterCache = require("infra/sui_raster_cache")
+local _bbBytes = RasterCache.bbBytes   -- resident bytes; this cache is bounded by bytes, not entry count
 
 -- Per-cover cache logging is verbose (one line per PUT/EVICT) and, because
 -- Lua evaluates the string.format() argument before logger.dbg can discard
@@ -86,27 +88,6 @@ local logger = require("logger")
 -- debug logging off. Gate it behind a constant so production pays nothing;
 -- flip to true when diagnosing cache churn.
 local _PERF_LOG = false
-
--- Resident byte size of a cached cover bb. `stride` is the bytes-per-row of
--- the underlying C allocation, so `stride * h` is the true RAM footprint
--- INCLUDING any row padding — and it scales correctly with both cover
--- dimensions and bit depth (1 byte/px on grayscale e-ink vs 4 bytes/px
--- RGB32 on a colour panel) without the cache needing to know the device
--- type. This is why the cache is bounded by BYTES, not entry count: "40
--- covers" is a few MiB of small grayscale thumbnails or tens of MiB of
--- large colour hero covers — same count, very different RAM.
-local function _bbBytes(bb)
-    if not bb then return 0 end
-    local ok, n = pcall(function()
-        local h = (bb.getHeight and bb:getHeight()) or tonumber(bb.h) or 0
-        local stride = tonumber(bb.stride)
-        if stride and h > 0 then return stride * h end
-        local w   = (bb.getWidth and bb:getWidth()) or 0
-        local bpp = (bb.getBpp and bb:getBpp()) or 8
-        return w * h * math.ceil(bpp / 8)
-    end)
-    return (ok and n) or 0
-end
 
 local SUICoverCache = {
     -- Bounded by RAM, in BYTES — see _bbBytes above. ~20 MiB default:

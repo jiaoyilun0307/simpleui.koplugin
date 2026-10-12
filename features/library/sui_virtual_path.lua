@@ -40,6 +40,7 @@
 --   VirtualPath.displayValue(value)             -- for titles/breadcrumbs
 
 local util        = require("util")
+local _           = require("infra/sui_i18n").translate
 local FilterState  = require("features/library/sui_filter_state")
 
 local VirtualPath = {}
@@ -70,7 +71,7 @@ local function decodeValue(fragment)
 end
 
 function VirtualPath.displayValue(value)
-    if value == false or value == nil then return "(none)" end
+    if value == false or value == nil then return _("Uncategorized") end
     return tostring(value)
 end
 

@@ -11,11 +11,10 @@
 -- below can be exercised and reasoned about in isolation from the settings
 -- system and the monkeypatch machinery.
 --
--- Cached state kept here: the rendered-ribbon Blitbuffer cache (rotating
--- text pixel-by-pixel is expensive, keyed by dimensions+label+colors), the
--- label line-height memo, the shadow coverage masks, and a reusable 8-bit mask
--- for progress-pentagon AA paints. All are cleared via the public clear*Cache() functions, which
--- sui_foldercovers.lua calls from M.invalidateCache().
+-- Cached state kept here: the raster cache (AA pentagon, checkmark, rotated
+-- ribbon and shadow strips, built once per shape and blitted on every paint)
+-- and the label line-height memo. Both are cleared via the public clear*Cache()
+-- functions, which sui_foldercovers.lua calls from M.invalidateCache().
 --
 -- Public API
 -- ----------
@@ -62,10 +61,7 @@
 --   CoverWidgets.buildQuadCover(item, img_list, border, backing, max_img_w, max_img_h, display)
 --       -- Wraps buildQuadGrid with assembleCoverWidget (mosaic's pile/label/badge).
 --   CoverWidgets.installWidget(item, widget)
---   CoverWidgets.clearRibbonCache()
 --   CoverWidgets.clearLabelMetricsCache()
---   CoverWidgets.clearShadowCache()
---   CoverWidgets.clearPentagonMaskCache()
 
 local _  = require("infra/sui_i18n").translate
 local BD = require("ui/bidi")
@@ -91,12 +87,9 @@ local VerticalGroup   = require("ui/widget/verticalgroup")
 local VerticalSpan    = require("ui/widget/verticalspan")
 local SUIStyle        = require("features/sui_style")
 local AAPaint         = require("infra/sui_aa_paint")
+local RasterCache     = require("infra/sui_raster_cache")
 
 local CoverWidgets = {}
-
--- Scratch 8-bit mask reused across progress-badge paints (border, fill, check).
--- Resized when a larger badge appears; freed by clearPentagonMaskCache().
-local _pentagon_mask_bb
 
 -- ---------------------------------------------------------------------------
 -- Shared geometry constants
@@ -121,59 +114,72 @@ local _LABEL_GAP_FRAC   = 0.07
 -- Shape: downward-pointing pentagon (rectangle body + triangular tip).
 -- States: "complete" → checkmark; percent_finished set → "42%"; otherwise bare.
 --
--- Edges are coverage-AA'd via infra/sui_aa_paint into a scratch 8-bit mask,
--- then composited with colorblitFromRGB32. Uncovered mask pixels stay
--- transparent, so cover art shows through the triangular tip.
+-- Edges are coverage-AA'd via infra/sui_aa_paint into an 8-bit mask, built once
+-- per size (see the raster cache) and composited with colorblitFromRGB32.
+-- Uncovered mask pixels stay transparent, so cover art shows through the
+-- triangular tip.
 
-local function _ensurePentagonMask(w, h)
-    if _pentagon_mask_bb
-            and _pentagon_mask_bb:getWidth() >= w
-            and _pentagon_mask_bb:getHeight() >= h then
-        return _pentagon_mask_bb
-    end
-    if _pentagon_mask_bb then _pentagon_mask_bb:free() end
-    _pentagon_mask_bb = Blitbuffer.new(w, h, Blitbuffer.TYPE_BB8)
-    return _pentagon_mask_bb
-end
-
-function CoverWidgets.clearPentagonMaskCache()
-    if _pentagon_mask_bb then
-        _pentagon_mask_bb:free()
-        _pentagon_mask_bb = nil
-    end
+local function buildPentagonMask(w, h)
+    return { bb = AAPaint.buildMask(w, h, function(mask)
+        AAPaint.paintDownPentagonFill(mask, 0, 0, w, h, 0, 0, w - 1, h - 1)
+    end) }
 end
 
 -- Paints a filled AA pentagon of size (bw × bh) in `color` at (bx, by) on `bb`.
 local function pentagonPaintRect(bb, bx, by, bw, bh, color)
     if bw <= 0 or bh <= 0 then return end
-    local mask = _ensurePentagonMask(bw, bh)
-    mask:fill(SUIStyle.COLOR.surface)
-    AAPaint.paintDownPentagonFill(mask, 0, 0, bw, bh, 0, 0, bw - 1, bh - 1)
-    mask:invertRect(0, 0, bw, bh)
+    local mask = RasterCache.get("pentagon", bw * 4096 + bh, buildPentagonMask, bw, bh).bb
     bb:colorblitFromRGB32(mask, bx, by, 0, 0, bw, bh, color)
 end
 
--- AA checkmark via capsule strokes (same primitive as the analogue clock hands).
-local function pentagonPaintCheck(bb, bx, by, bw, bh, color)
-    local tk = math.max(2, math.floor(math.min(bw, bh) / 8))
-    local lx0 = bx + bw * 0.08; local ly0 = by + bh * 0.62
-    local lx1 = bx + bw * 0.30; local ly1 = by + bh * 0.82
-    local rx1 = bx + bw * 0.82; local ry1 = by + bh * 0.18
-    local pad = math.ceil(tk / 2) + 1
+-- AA checkmark of a sq × sq box via capsule strokes (same primitive as the
+-- analogue clock hands). The mask overhangs the box by the stroke caps, so the
+-- entry also holds its offset (dx, dy) from the box's top-left corner.
+local function buildCheckMask(sq)
+    local tk = math.max(2, math.floor(sq / 8))
+    local lx0, ly0 = sq * 0.08, sq * 0.62
+    local lx1, ly1 = sq * 0.30, sq * 0.82
+    local rx1, ry1 = sq * 0.82, sq * 0.18
+    local pad  = math.ceil(tk / 2) + 1
     local minx = math.floor(math.min(lx0, lx1, rx1) - pad)
     local maxx = math.ceil (math.max(lx0, lx1, rx1) + pad)
     local miny = math.floor(math.min(ly0, ly1, ry1) - pad)
     local maxy = math.ceil (math.max(ly0, ly1, ry1) + pad)
-    local mw = maxx - minx + 1
-    local mh = maxy - miny + 1
-    if mw <= 0 or mh <= 0 then return end
-    local mask = _ensurePentagonMask(mw, mh)
-    mask:fill(SUIStyle.COLOR.surface)
-    local x1c, y1c = mw - 1, mh - 1
-    AAPaint.paintCapsule(mask, lx0 - minx, ly0 - miny, lx1 - minx, ly1 - miny, tk, 0, 0, x1c, y1c)
-    AAPaint.paintCapsule(mask, lx1 - minx, ly1 - miny, rx1 - minx, ry1 - miny, tk, 0, 0, x1c, y1c)
-    mask:invertRect(0, 0, mw, mh)
-    bb:colorblitFromRGB32(mask, minx, miny, 0, 0, mw, mh, color)
+    local mw, mh = maxx - minx + 1, maxy - miny + 1
+    local mask = AAPaint.buildMask(mw, mh, function(bb)
+        AAPaint.paintCapsule(bb, lx0 - minx, ly0 - miny, lx1 - minx, ly1 - miny, tk, 0, 0, mw - 1, mh - 1)
+        AAPaint.paintCapsule(bb, lx1 - minx, ly1 - miny, rx1 - minx, ry1 - miny, tk, 0, 0, mw - 1, mh - 1)
+    end)
+    return { bb = mask, dx = minx, dy = miny }
+end
+
+-- Paints the checkmark of the sq × sq box at (bx, by) in `color` on `bb`.
+local function pentagonPaintCheck(bb, bx, by, sq, color)
+    if sq <= 0 then return end
+    local check = RasterCache.get("check", sq, buildCheckMask, sq)
+    local mask  = check.bb
+    bb:colorblitFromRGB32(mask, bx + check.dx, by + check.dy,
+        0, 0, mask:getWidth(), mask:getHeight(), color)
+end
+
+-- Largest font size, at most `start_sz` and at least 7, at which `text` fits
+-- in `max_w`. Measured with RenderText (TextWidget:getSize can under-report
+-- bold widths); the entry is cached per (text, face, size, bold, width).
+local function fitFontSize(text, face_name, start_sz, bold, max_w)
+    local font_sz = math.max(7, start_sz)
+    -- TextWidget bold uses FreeType embolden, which widens glyphs beyond the
+    -- regular-face advance reported by sizeUtf8Text, so the measured width is
+    -- scaled up to account for it.
+    local bold_scale = bold and 1.10 or 1.0
+    local screen_w = require("device").screen:getWidth()
+    while font_sz > 7 do
+        local face = Font:getFace(face_name, font_sz)
+        -- sizeUtf8Text(x, width, face, text, kerning, bold)
+        local measured = RenderText:sizeUtf8Text(0, screen_w, face, text, true, bold)
+        if (measured and measured.x or 0) * bold_scale <= max_w then break end
+        font_sz = font_sz - 1
+    end
+    return { size = font_sz }
 end
 
 -- Returns a descriptor table for the progress badge, or nil when too small.
@@ -186,33 +192,15 @@ function CoverWidgets.buildProgressBadgeDesc(eff_size, status, percent_finished,
     local text_color  = dark and SUIStyle.COLOR.surface or SUIStyle.COLOR.text_primary
     local text_widget = nil
     -- Cap label width at 95% of the banner body so "100%" and wide icons
-    -- stay inside the pentagon on small covers. Measure with RenderText
-    -- (TextWidget:getSize can under-report bold widths) and shrink the
-    -- font until the glyph advance fits.
+    -- stay inside the pentagon on small covers.
     local max_text_w  = math.max(1, math.floor(bw * 0.95))
 
     local function fitTextWidget(text, face_name, start_sz, bold)
-        local font_sz = math.max(7, start_sz)
-        -- TextWidget bold uses FreeType embolden, which widens glyphs beyond
-        -- the regular-face advance reported by sizeUtf8Text. Scale the
-        -- measured width up so the fit accounts for that.
-        local bold_scale = bold and 1.10 or 1.0
-        local Screen = require("device").screen
-        while font_sz > 7 do
-            local face = Font:getFace(face_name, font_sz)
-            -- sizeUtf8Text(x, width, face, text, kerning, bold) — 6 args.
-            local measured = RenderText:sizeUtf8Text(
-                0, Screen:getWidth(), face, text, true, bold
-            )
-            local w = measured and measured.x or 0
-            if w * bold_scale <= max_text_w then
-                break
-            end
-            font_sz = font_sz - 1
-        end
+        local key = string.format("%s|%d|%s|%d|%s", face_name, start_sz, tostring(bold), max_text_w, text)
+        local fit = RasterCache.get("badge_font", key, fitFontSize, text, face_name, start_sz, bold, max_text_w)
         return TextWidget:new{
             text    = text,
-            face    = Font:getFace(face_name, font_sz),
+            face    = Font:getFace(face_name, fit.size),
             bold    = bold,
             fgcolor = text_color,
             padding = 0,
@@ -266,7 +254,7 @@ function CoverWidgets.drawProgressBadge(bb, ox, oy, desc)
         local sq   = math.min(icon_w, icon_h)
         local sq_x = icon_x + math.floor((icon_w - sq) / 2)
         local sq_y = oy + fr + math.floor((rect_h - sq) / 2) + text_y_offset
-        pentagonPaintCheck(bb, sq_x, sq_y, sq, sq, text_color)
+        pentagonPaintCheck(bb, sq_x, sq_y, sq, text_color)
     elseif desc.status == "abandoned" then
         if desc.text_widget then
             local aw_sz = desc.text_widget:getSize()
@@ -328,101 +316,104 @@ function CoverWidgets.buildProgressBadgeWidget(desc)
 end
 
 -- ── Corner ribbon ("New" style) ───────────────────────────────────────────
--- Paints a diagonal band across the top-right corner of the cover Blitbuffer
--- at 45°, with the label text rotated inside it.
+-- A diagonal band across the cover's top-right corner at 45°, with the label
+-- rotated inside it.
 --
--- Strategy: build a temp Blitbuffer (tw × band_thick) in axis-aligned space,
--- render border + fill + text into it once, then use a destination-driven
--- inverse-map loop to blit each screen pixel from the rotated source.
--- The result is cached by (dimensions, label, colors) so the per-pixel loop
--- only runs once per unique configuration, not once per cover.
+-- The band is rendered upright once, then rotated into a sprite: a pixel copy
+-- of the part of the ribbon that lies inside the cover's top-right corner,
+-- found by a destination-driven inverse-map. The sprite is cached per
+-- (size, label, colours, buffer type), so painting a ribbon is one blit per
+-- row, clipped to the cover.
 
-local _ribbon_bb_cache = {}
+local _COS_45 = 0.70711  -- cos 45° = sin 45°
 
-function CoverWidgets.clearRibbonCache()
-    for k, buf in pairs(_ribbon_bb_cache) do
-        if buf and buf.free then buf:free() end
-        _ribbon_bb_cache[k] = nil
+-- Upright band of tw × th px: bordered long edges, filled interior, centred label.
+local function renderRibbonBand(tw, th, bb_type, label, font_sz, dark)
+    local bg  = dark and SUIStyle.COLOR.text_primary or SUIStyle.COLOR.surface
+    local fg  = dark and SUIStyle.COLOR.surface or SUIStyle.COLOR.text_primary
+    local brd = SUIStyle.BADGE_BORDER_CLR
+    local bw  = SUIStyle.BADGE_BORDER_SZ
+
+    local band = Blitbuffer.new(tw, th, bb_type)
+    band:paintRect(0, 0, tw, th, brd)
+    if bw * 2 < th then
+        band:paintRect(0, bw, tw, th - bw * 2, bg)
     end
+
+    -- Step the font down 1pt at a time until the label fits, min 6pt.
+    local inner_h = math.max(1, th - bw * 2)
+    local max_w   = math.floor(tw * 0.82)
+    local lbl, lsz
+    local fs = font_sz
+    repeat
+        if lbl then lbl:free() end
+        lbl = TextWidget:new{
+            text    = label,
+            face    = Font:getFace(SUIStyle.FACE_REGULAR, fs),
+            bold    = true,
+            fgcolor = fg,
+            padding = 0,
+        }
+        lsz = lbl:getSize()
+        if lsz.w <= max_w and lsz.h <= inner_h then break end
+        fs = fs - 1
+    until fs < 6
+    lbl:paintTo(band, math.max(0, math.floor((tw - lsz.w) / 2)),
+                      math.max(0, math.floor((th - lsz.h) / 2)))
+    lbl:free()
+    return band
+end
+
+-- Entry: { bb = sprite, w, h, first, last }. Sprite column i is i - w px from
+-- the cover's right edge, row j is j px below its top edge. first[j] and
+-- last[j] bound the ribbon's pixels in row j (nil when the row has none).
+local function buildRibbonSprite(bb_type, span, band_thick, label, font_sz, dark)
+    -- The ends protrude past both cover edges; cover clipping hides the cuts.
+    local tw = math.ceil((span + band_thick * 2) * 1.41422)
+    local th = band_thick
+    local band = renderRibbonBand(tw, th, bb_type, label, font_sz, dark)
+
+    local reach    = math.floor(span / 2)  -- band centre's distance from the corner
+    local half_box = math.ceil((tw + th) * _COS_45 / 2) + 1
+    local w, h     = reach + half_box, reach + half_box + 1
+    local sprite   = Blitbuffer.new(w, h, bb_type)
+    local first, last = {}, {}
+    local tw_half, th_half = tw / 2, th / 2
+    for j = 0, h - 1 do
+        local dy_rel = j - reach
+        for i = 0, w - 1 do
+            local dx_rel = i - half_box
+            -- Inverse of the +45° rotation (top-right "\" band).
+            local sx = math.floor(tw_half + (dx_rel + dy_rel) * _COS_45)
+            local sy = math.floor(th_half + (dy_rel - dx_rel) * _COS_45)
+            if sx >= 0 and sx < tw and sy >= 0 and sy < th then
+                sprite:setPixel(i, j, band:getPixel(sx, sy))
+                first[j] = first[j] or i
+                last[j]  = i
+            end
+        end
+    end
+    band:free()
+    return { bb = sprite, w = w, h = h, first = first, last = last }
 end
 
 function CoverWidgets.paintCornerRibbon(bb, cover_left, cover_right, cover_top, cover_h,
                                         span, band_thick, label, font_sz, dark)
-    local C = 0.70711  -- cos 45° = sin 45°
+    if span <= 0 or band_thick <= 0 then return end
+    local key = string.format("%d|%d|%d|%s|%d|%d|%s|%s", bb:getType(), span, band_thick, label,
+        font_sz, dark and 1 or 0, tostring(SUIStyle.BADGE_BORDER_SZ), tostring(SUIStyle.BADGE_BORDER_CLR))
+    local ribbon = RasterCache.get("ribbon", key, buildRibbonSprite,
+        bb:getType(), span, band_thick, label, font_sz, dark)
 
-    -- Buffer width: (span + 2*band) * √2 so the ribbon ends protrude past both
-    -- cover edges; the cover-bounds clipping hides the end-cuts cleanly.
-    local tw = math.ceil((span + band_thick * 2) * 1.41422)
-    local th = band_thick
-    if tw <= 0 or th <= 0 then return end
-
-    local bg  = dark and SUIStyle.COLOR.text_primary or SUIStyle.COLOR.surface
-    local fg  = dark and SUIStyle.COLOR.surface or SUIStyle.COLOR.text_primary
-    local brd = SUIStyle.BADGE_BORDER_CLR
-
-    local cache_key = string.format("%d|%d|%d|%s|%d|%d|%s|%s",
-        tw, th, bb:getType(), label, font_sz, dark and 1 or 0, tostring(SUIStyle.BADGE_BORDER_SZ), tostring(brd))
-    local tmp = _ribbon_bb_cache[cache_key]
-
-    if not tmp then
-        tmp = Blitbuffer.new(tw, th, bb:getType())
-        if not tmp then return end
-
-        -- 1-px border on long edges, bg interior.
-        local bw = SUIStyle.BADGE_BORDER_SZ
-        tmp:paintRect(0, 0, tw, th, brd)
-        if bw * 2 < th then
-            tmp:paintRect(0, bw, tw, th - bw * 2, bg)
-        end
-
-        -- Render label; step font down 1pt at a time until it fits, min 6pt.
-        local inner_h = math.max(1, th - bw * 2)
-        local max_w   = math.floor(tw * 0.82)
-        local lbl, lsz
-        local fs = font_sz
-        repeat
-            if lbl and lbl.free then lbl:free() end
-            lbl = TextWidget:new{
-                text    = label,
-                face    = Font:getFace(SUIStyle.FACE_REGULAR, fs),
-                bold    = true,
-                fgcolor = fg,
-                padding = 0,
-            }
-            lsz = lbl:getSize()
-            if lsz.w <= max_w and lsz.h <= inner_h then break end
-            fs = fs - 1
-        until fs < 6
-        local lx = math.max(0, math.floor((tw - lsz.w) / 2))
-        local ly = math.max(0, math.floor((th - lsz.h) / 2))
-        lbl:paintTo(tmp, lx, ly)
-        if lbl.free then lbl:free() end
-
-        _ribbon_bb_cache[cache_key] = tmp
-    end
-
-    -- Destination-driven inverse-map: for each screen pixel in the ribbon's
-    -- bounding box, reverse-rotate 45° to find the source pixel in tmp.
-    local cx       = cover_right - math.floor(span / 2)
-    local cy       = cover_top   + math.floor(span / 2)
-    local half_box = math.ceil((tw + th) * C / 2) + 1
-    local bb_w     = bb:getWidth()
-    local bb_h     = bb:getHeight()
-    local tw_half  = tw / 2
-    local th_half  = th / 2
-    for dy = cy - half_box, cy + half_box do
-        if dy >= cover_top and dy < cover_top + cover_h and dy >= 0 and dy < bb_h then
-            local dy_rel = dy - cy
-            for dx = cx - half_box, cx + half_box do
-                if dx >= cover_left and dx < cover_right and dx >= 0 and dx < bb_w then
-                    local dx_rel = dx - cx
-                    -- Inverse of +45° rotation (top-right "\" band).
-                    local sx = math.floor(tw_half + (dx_rel + dy_rel) * C)
-                    local sy = math.floor(th_half + (dy_rel - dx_rel) * C)
-                    if sx >= 0 and sx < tw and sy >= 0 and sy < th then
-                        bb:setPixel(dx, dy, tmp:getPixel(sx, sy))
-                    end
-                end
+    local sprite_x = cover_right - ribbon.w
+    local min_col  = math.max(0, cover_left - sprite_x)
+    for j = 0, math.min(ribbon.h, cover_h) - 1 do
+        local x0 = ribbon.first[j]
+        if x0 then
+            x0 = math.max(x0, min_col)
+            local x1 = ribbon.last[j]
+            if x1 >= x0 then
+                bb:blitFrom(ribbon.bb, sprite_x + x0, cover_top + j, x0, j, x1 - x0 + 1, 1)
             end
         end
     end
@@ -689,20 +680,10 @@ local function shadowBandStrength(d, reach)
     return _SHADOW_PEAK * t * t * (3 - 2 * t)
 end
 
--- Coverage masks of a shadow's right and bottom strips, memoised by card size
+-- Coverage masks of a shadow's right and bottom strips, cached by card size
 -- and depth. The strips never overlap: right band `d` is the column `d` px
 -- past the card, bottom band `d` the row `d` px below it, and the corner
 -- belongs to whichever band is farther along its own axis.
-local _shadow_masks = {}
-
-function CoverWidgets.clearShadowCache()
-    for k, masks in pairs(_shadow_masks) do
-        masks.right:free()
-        masks.bottom:free()
-        _shadow_masks[k] = nil
-    end
-end
-
 local function buildShadowMasks(w, h, offset)
     local right  = Blitbuffer.new(offset, h, Blitbuffer.TYPE_BB8)
     local bottom = Blitbuffer.new(w, offset, Blitbuffer.TYPE_BB8)
@@ -724,12 +705,7 @@ end
 -- so blending towards white is what darkens the shadow on screen.
 function CoverWidgets.paintShadow(bb, x, y, w, h, offset)
     if offset <= 0 then return end
-    local key   = (w * 4096 + h) * 64 + offset
-    local masks = _shadow_masks[key]
-    if not masks then
-        masks = buildShadowMasks(w, h, offset)
-        _shadow_masks[key] = masks
-    end
+    local masks = RasterCache.get("shadow", (w * 4096 + h) * 64 + offset, buildShadowMasks, w, h, offset)
     local color = Screen.night_mode and Blitbuffer.COLOR_WHITE or Blitbuffer.COLOR_BLACK
     bb:colorblitFromRGB32(masks.right,  x + w,      y + offset, 0, 0, offset, h,      color)
     bb:colorblitFromRGB32(masks.bottom, x + offset, y + h,      0, 0, w,      offset, color)

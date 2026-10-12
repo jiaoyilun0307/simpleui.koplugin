@@ -257,8 +257,8 @@ end
 --             below home_dir; hide at home_dir and outside home.
 --
 -- Uses realpath so Android /sdcard symlinks normalise consistently.
--- DOES NOT handle series-view (path unchanged from parent) — caller checks
--- fc.item_table._sg_is_series_view separately.
+-- Does not handle a series group (its path is that of its parent folder):
+-- callers check _seriesViewOf separately.
 
 local function _isSubFolder(path)
     if not path then return false end
@@ -290,12 +290,20 @@ local function _isSubFolder(path)
     end
 end
 
+-- Series group listed by the file chooser in place of a folder, or nil. It
+-- keeps the path of the folder it was opened from, so the path alone cannot
+-- tell it apart from that folder.
+local function _seriesViewOf(fc)
+    local it = fc.item_table
+    return it and it._sg_is_series_view and it or nil
+end
+
 -- M.isAtRoot: exported so sui_patches can use the same criterion without
 -- duplicating the logic or depending on the _simpleui_has_go_up flag.
 local function _isAtRoot(fc)
     if not fc then return true end
-    -- Series view always has a parent even if the path is the home root.
-    if fc.item_table and fc.item_table._sg_is_series_view then return false end
+    -- A series group always has a parent, even when opened from the home root.
+    if _seriesViewOf(fc) then return false end
     return not _isSubFolder(fc.path)
 end
 function M.isAtRoot(fc) return _isAtRoot(fc) end
@@ -531,36 +539,6 @@ local function _placeMenuButton(btn, slot_w, x)
     btn.overlap_offset = { x + inset, 0 }
 end
 
--- ---------------------------------------------------------------------------
--- _resolveIsSub: single authoritative is_sub resolver.
--- Replaces the go-up item scan with a path-based approach, handling
--- SimpleUI's virtual folder and series-view cases:
---
---   1. Series view (_sg_is_series_view): the path does NOT change when the
---      user drills into a series group — fc.path stays the parent's path.
---      We check the flag first because _isSubFolder would return false for a
---      series opened from the home root, hiding the back button incorrectly.
---
---   2. BrowseMeta virtual paths: the VROOT marker (U+E257) sits after the
---      base_dir segment, so _isSubFolder's prefix test against home_dir still
---      works correctly without special-casing.
---
---   3. Normal filesystem: _isSubFolder compares realpath-normalised strings,
---      handling Android /sdcard symlinks consistently.
---
--- ---------------------------------------------------------------------------
-
-local function _resolveIsSub(fc_self)
-    -- Series view: path is unchanged from parent, so path comparison is blind.
-    -- The flag is set by sui_foldercovers when it calls switchItemTable.
-    if fc_self.item_table and fc_self.item_table._sg_is_series_view then
-        return true
-    end
-    -- Path-based test: handles normal folders, locked-home, and virtual paths.
-    return _isSubFolder(fc_self.path)
-end
-
-
 local function _hideOffset(sw)
     return sw * 2
 end
@@ -697,7 +675,7 @@ local function _refreshBackState(fm_self)
     local fc      = fm_self.file_chooser
     local refresh = fm_self._simpleui_force_refresh_layout
     if not (refresh and fc) then return end
-    refresh(fc, _resolveIsSub(fc), fc.page or 1)
+    refresh(fc, fc.page or 1)
     fm_self._simpleui_force_refresh_layout = nil
 end
 
@@ -713,8 +691,11 @@ end
 --   root + page 1 : hidden
 --   root + page>1 : visible; tap = previous page, hold = first page
 --   subfolder     : visible; tap = previous page past page 1, else folder up
--- `on_state(fc, is_sub, page, path, visible)` lets each title-bar style react
--- to the evaluated state (neighbour layout, tab strip content, …).
+-- `on_state(fc, view, visible)` lets each title-bar style react to the
+-- evaluated state (neighbour layout, tab strip content, …). `view` describes
+-- what the file chooser displays:
+--   path   : path of the view
+--   series : the series group on display, nil for a listing of a folder
 -- State is re-evaluated on genItemTable, onFolderUp and onGotoPage.
 
 local function _installBackController(fm_self, back_icon, shown_x, on_state)
@@ -725,9 +706,10 @@ local function _installBackController(fm_self, back_icon, shown_x, on_state)
     local paginates = not M.isTabsStyle()
 
     -- `page` is always passed explicitly to avoid stale cur_page reads.
-    local function applyState(fc_self, is_sub, page, path)
+    local function applyState(fc_self, page, path, series)
         local btn = fm_self._titlebar_up_btn
         if not btn then return end
+        local is_sub     = series ~= nil or _isSubFolder(path)
         local pages_back = paginates and page > 1
         local visible    = is_sub or pages_back
 
@@ -747,7 +729,7 @@ local function _installBackController(fm_self, back_icon, shown_x, on_state)
             end
         end
 
-        if on_state then on_state(fc_self, is_sub, page, path or fc_self.path, visible) end
+        if on_state then on_state(fc_self, { path = path, series = series }, visible) end
 
         local tb = fm_self.title_bar
         if tb then
@@ -755,7 +737,12 @@ local function _installBackController(fm_self, back_icon, shown_x, on_state)
         end
     end
 
-    fm_self._simpleui_force_refresh_layout = applyState
+    -- Applies the state of whatever the file chooser currently displays.
+    local function refreshState(fc_self, page)
+        applyState(fc_self, page, fc_self.path, _seriesViewOf(fc_self))
+    end
+
+    fm_self._simpleui_force_refresh_layout = refreshState
 
     fm_self._titlebar_orig_fc_genItemTable = fc.genItemTable
     fc._simpleui_gen_listeners = {}
@@ -779,14 +766,10 @@ local function _installBackController(fm_self, back_icon, shown_x, on_state)
         if fc_self._dummy then return filtered end
 
         -- The path argument is the destination of this call; fc_self.path may
-        -- still hold the previous one on the initial load.
-        local effective_path = path or fc_self.path
-        local is_sub = _isSubFolder(effective_path)
-        -- Series view keeps the parent's path, so the flag decides.
-        if fc_self.item_table and fc_self.item_table._sg_is_series_view then
-            is_sub = true
-        end
-        applyState(fc_self, is_sub, 1, effective_path)
+        -- still hold the previous one on the initial load. The list built here
+        -- is a folder listing: `fc_self.item_table` is the outgoing one, so a
+        -- series group still on display is being replaced, not shown.
+        applyState(fc_self, 1, path or fc_self.path, nil)
 
         -- Other registered listeners (e.g. browse icon refresh).
         for _, listener in ipairs(fc_self._simpleui_gen_listeners or {}) do
@@ -836,7 +819,7 @@ local function _installBackController(fm_self, back_icon, shown_x, on_state)
                     fc_self._sui_author_dialog_origin = nil
                     BM.exitToNormal(fc_self, fm_self)
                     fc_self:changeToPath(origin.path, origin.file)
-                    applyState(fc_self, _resolveIsSub(fc_self), 1)
+                    refreshState(fc_self, 1)
                     return true
                 end
             end
@@ -846,13 +829,13 @@ local function _installBackController(fm_self, back_icon, shown_x, on_state)
                 local ok_pl, level = pcall(BM.getPathLevel, path)
                 if ok_pl and level == "dim_list" then
                     BM.exitToNormal(fc_self, fm_self)
-                    applyState(fc_self, _resolveIsSub(fc_self), 1)
+                    refreshState(fc_self, 1)
                     return true
                 end
             end
         end
         local ok, result = xpcall(FileChooser_cls.onFolderUp, debug.traceback, fc_self, ...)
-        applyState(fc_self, _resolveIsSub(fc_self), 1)
+        refreshState(fc_self, 1)
         if not ok then error(result, 0) end
         return result
     end
@@ -871,7 +854,7 @@ local function _installBackController(fm_self, back_icon, shown_x, on_state)
             local ok, result = xpcall(orig_onGotoPage, debug.traceback, fc_self, page, ...)
             -- Cleared before any error() so a failure never leaves it stuck.
             fc_self._simpleui_in_goto = nil
-            applyState(fc_self, _resolveIsSub(fc_self), page)
+            refreshState(fc_self, page)
             if not ok then error(result, 0) end
             return result
         end
@@ -950,7 +933,7 @@ local function _applyClassic(fm_self, tb)
 
         -- While the back button is hidden, left neighbours close the gap.
         local up_slot = s_up.slot
-        _installBackController(fm_self, back_icon, up_x, function(_, _, _, _, visible_now)
+        _installBackController(fm_self, back_icon, up_x, function(_, _, visible_now)
             for _, entry in ipairs(leftSideBtns()) do
                 local dslot = (not visible_now and entry.slot > up_slot)
                               and entry.slot - 1 or entry.slot
@@ -1196,36 +1179,36 @@ local function _stripItems(search_w)
     return items, has_search
 end
 
--- True when `path` is a top-level view of the library, where the tabs apply:
--- the home folder, or the Authors/Series/Tags lists. Folders below it, the
--- books of one author/series/tag and a series group are inner views.
-local function _isLibraryRoot(fc, path)
-    if fc.item_table and fc.item_table._sg_is_series_view then return false end
+-- True when `view` (see _installBackController) is a top-level view of the
+-- library, where the tabs apply: the home folder, or the Authors/Series/Tags
+-- lists. Folders below it, the books of one author/series/tag and a series
+-- group are inner views.
+local function _isLibraryRoot(view)
+    if view.series then return false end
     local BM = _BrowseMeta()
     if BM then
-        local ok, level = pcall(BM.getPathLevel, path)
+        local ok, level = pcall(BM.getPathLevel, view.path)
         if ok and level then return level ~= "file_list" end
     end
     local home = _normHome()
-    return home == nil or _normPath(path) == home
+    return home == nil or _normPath(view.path) == home
 end
 
--- True when the view is a folder of the filesystem. The Authors, Series and
+-- True when `view` is a folder of the filesystem. The Authors, Series and
 -- Tags views, their lists and the series groups are virtual.
-local function _isFilesystemView(fc, path)
-    if fc.item_table and fc.item_table._sg_is_series_view then return false end
+local function _isFilesystemView(view)
+    if view.series then return false end
     local BM = _BrowseMeta()
-    return not BM or BM.getPathMode(path) == "normal"
+    return not BM or BM.getPathMode(view.path) == "normal"
 end
 
 -- Name shown in place of the tabs on an inner view.
-local function _innerViewLabel(fc, path)
-    local it = fc.item_table
-    if it and it._sg_is_series_view then return it._sg_series_name or "" end
+local function _innerViewLabel(view)
+    if view.series then return view.series._sg_series_name or "" end
     local BM = _BrowseMeta()
-    local virtual = BM and BM.getPathLabel(path)
+    local virtual = BM and BM.getPathLabel(view.path)
     if virtual then return virtual end
-    return path:match("([^/]+)/*$") or path
+    return view.path:match("([^/]+)/*$") or view.path
 end
 
 local function _applyTabs(fm_self, tb)
@@ -1299,15 +1282,15 @@ local function _applyTabs(fm_self, tb)
     fm_self._titlebar_tab_strip = strip
 
     -- Library root: tabs with the current mode highlighted. Inner view: its name.
-    _installBackController(fm_self, back_icon, up_x, function(fc, _, _, path, back_visible)
+    _installBackController(fm_self, back_icon, up_x, function(_, view, back_visible)
         local x = back_visible and strip_x_back or strip_x_flush
         strip:setSpan(x, menu_x - x)
-        setMenuVisible(_isFilesystemView(fc, path))
-        if _isLibraryRoot(fc, path) then
+        setMenuVisible(_isFilesystemView(view))
+        if _isLibraryRoot(view) then
             local BM = _BrowseMeta()
-            strip:setActive(BM and BM.getPathMode(path) or "normal")
+            strip:setActive(BM and BM.getPathMode(view.path) or "normal")
         else
-            strip:setLabel(_innerViewLabel(fc, path))
+            strip:setLabel(_innerViewLabel(view))
         end
         -- The search button sits in its cell; hidden with a label.
         if search_btn then

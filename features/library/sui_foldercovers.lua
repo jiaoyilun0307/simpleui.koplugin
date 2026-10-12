@@ -34,6 +34,7 @@ local TextWidget      = require("ui/widget/textwidget")
 
 local CoverFinder    = require("features/library/sui_cover_finder")
 local CoverWidgets   = require("features/library/sui_cover_widgets")
+local RasterCache    = require("infra/sui_raster_cache")
 local CoverOverrides = require("features/library/sui_cover_overrides")
 local GroupActions   = require("features/library/sui_group_actions")
 
@@ -438,10 +439,7 @@ end
 
 function M.invalidateCache()
     _itc = nil
-    -- Ribbon / pentagon / shadow buffers live in sui_cover_widgets.lua.
-    CoverWidgets.clearRibbonCache()
-    CoverWidgets.clearPentagonMaskCache()
-    CoverWidgets.clearShadowCache()
+    RasterCache.clear()
 end
 
 -- Public wrapper for the FileChooser item-table cache invalidation.
@@ -1209,6 +1207,8 @@ function M.install()
     local original_update = MosaicMenuItem.update
 
     function MosaicMenuItem:update(...)
+        -- Settings paintTo() needs are read here, once per update, not per paint.
+        self._fc_progress_mode = M.getProgressMode()
         -- Invalidate the strip cache on every cover reload.
         self._simpleui_strip_data = nil
         if self._simpleui_strip_bb then
@@ -1262,61 +1262,26 @@ function M.install()
 
         -- Pre-compute badge data for books so paintTo() makes zero settings reads.
         if not self.is_directory and not self.file_deleted and self.filepath then
-            -- Fallback: BIM's SQLite cache can have NULL for percent_finished even when
-            -- the sidecar (.lua) has the real value — this happens when the book was
-            -- scanned into the library before it was read, or when the BIM DB is stale.
-            -- been_opened in BIM can also be NULL for books read before BIM started
-            -- tracking that field. So we use DS.open() + source_candidate as the
-            -- authoritative check: source_candidate is non-nil iff a sidecar exists.
-            -- DS.open() on a book with no sidecar is a cheap stat-miss; it does NOT
-            -- create or write any file (only ds:flush() / dirty close would do that).
-            if self.percent_finished == nil and self.filepath then
-                pcall(function()
-                    local DS = require("docsettings")
-                    local ok_ds, ds = pcall(DS.open, DS, self.filepath)
-                    if ok_ds and ds then
-                        if ds.source_candidate then
-                            -- Sidecar confirmed to exist: book has been opened.
-                            -- Sync been_opened so has_progress and "New" badge are correct.
-                            self.been_opened = true
-                            local pf = ds:readSetting("percent_finished")
-                            if pf ~= nil then
-                                self.percent_finished = pf
-                            end
-                            if self.status == nil then
-                                local summary = ds:readSetting("summary")
-                                if type(summary) == "table" and summary.status then
-                                    self.status = summary.status
-                                end
-                            end
-                        end
-                        pcall(function() ds:close() end)
-                    end
-                end)
-            end
-
-            self._fc_pages        = nil
-            self._fc_series_index = nil
+            -- BIM can lack progress for a book (not scanned yet, stale DB). The book
+            -- list cache reads each sidecar once and keeps its progress, status
+            -- and page count, so it fills the gaps without touching the disk.
             local bi = self.menu and self.menu.getBookInfo
                        and self.menu.getBookInfo(self.filepath)
-            if bi then
-                if bi.pages then self._fc_pages = bi.pages end
-                if bi.series and bi.series_index then
-                    self._fc_series_index = bi.series_index
-                end
+            if bi and bi.been_opened and self.percent_finished == nil then
+                self.been_opened      = true
+                self.percent_finished = bi.percent_finished
+                self.status           = self.status or bi.status
             end
-            -- Last-resort fallback: BIM has no rendered/stable count for this
-            -- book (typically an unopened EPUB) — try the "p(<n>)" filename
-            -- token before giving up on the badge entirely.
-            if not self._fc_pages then
-                self._fc_pages = _pageCountFromFilename(self.filepath)
-            end
+
+            -- Page count from the book list cache; without one (typically an
+            -- unopened EPUB) the "p(<n>)" filename token is the last resort.
+            self._fc_pages = bi and bi.pages or _pageCountFromFilename(self.filepath)
 
             self._fc_underline_color  = M.getHideUnderline()
                 and SUIStyle.COLOR.surface or SUIStyle.COLOR.text_primary
             self._fc_overlay_pages    = M.getOverlayPages()
             self._fc_overlay_series   = M.getOverlaySeries()
-            self._fc_overlay_progress = M.getProgressMode() == "banner"
+            self._fc_overlay_progress = self._fc_progress_mode == "banner"
             -- _fc_overlay_new is set per-book below by the new-mode block.
 
             if self._fc_progress_bb and self._fc_progress_bb.text_widget then
@@ -1332,6 +1297,9 @@ function M.install()
             self._fc_new_widget    = nil
 
             local badge_scale = M.getBadgeScale()
+            self._fc_badge_scale = badge_scale
+            self._fc_fade = self.status == "complete" and M.getFadeFinished()
+                and M.getFadeAmount() or nil
 
             if self._fc_overlay_pages and self.status ~= "complete" and self._fc_pages then
                 local cell_min = math.min(self.width or 40, self.height or 40)
@@ -1340,11 +1308,14 @@ function M.install()
                     self._fc_pages .. _(" p."), false, cell_min, dark, false, badge_scale)
             end
 
-            if self._fc_overlay_series and self._fc_series_index then
-                local cell_min = math.min(self.width or 40, self.height or 40)
-                local dark = M.getBadgeColorSeries() == "dark"
-                self._fc_series_widget = CoverWidgets.buildRectBadgeWidget(
-                    "#" .. self._fc_series_index, false, cell_min, dark, false, badge_scale)
+            if self._fc_overlay_series then
+                local bookinfo = BookInfoManager:getBookInfo(self.filepath, false)
+                if bookinfo and bookinfo.series and bookinfo.series_index then
+                    local cell_min = math.min(self.width or 40, self.height or 40)
+                    local dark = M.getBadgeColorSeries() == "dark"
+                    self._fc_series_widget = CoverWidgets.buildRectBadgeWidget(
+                        "#" .. bookinfo.series_index, false, cell_min, dark, false, badge_scale)
+                end
             end
 
             -- Progress pentagon: only for books that have been opened.
@@ -1374,11 +1345,11 @@ function M.install()
                 local is_unread = (self.percent_finished == nil)
                     and (self.status ~= "complete") and (self.status ~= "abandoned")
                 if is_unread then
+                    self._fc_new_dark = M.getBadgeColorNew() == "dark"
                     if _new_mode == "badge" then
                         local cell_min = math.min(self.width or 40, self.height or 40)
-                        local dark = M.getBadgeColorNew() == "dark"
-                        self._fc_new_widget =
-                            CoverWidgets.buildRectBadgeWidget(_("New"), true, cell_min, dark, true, badge_scale)
+                        self._fc_new_widget = CoverWidgets.buildRectBadgeWidget(
+                            _("New"), true, cell_min, self._fc_new_dark, true, badge_scale)
                     end
                     -- ribbon mode: no widget pre-built; painted directly in paintTo.
                     self._fc_overlay_new = true
@@ -1738,7 +1709,7 @@ function M.install()
         --   shortcut_icon   → collection star (banner only; redrawn at bottom-right below)
         -- Fields are temporarily nil'd before orig_paintTo and restored after.
         local _saved_hint, _saved_icon, _saved_menu_name, _saved_been_opened
-        local _progress_mode = M.getProgressMode()
+        local _progress_mode = self._fc_progress_mode
         if (_progress_mode == "banner" or _progress_mode == "none") and not self.is_directory then
             _saved_hint = self.do_hint_opened; self.do_hint_opened = false
 
@@ -1859,16 +1830,6 @@ function M.install()
         -- Series index badge (top-left).
         if self._fc_overlay_series then
             local wg = self._fc_series_widget
-            if not wg and self.filepath then
-                local bi = BookInfoManager:getBookInfo(self.filepath, false)
-                if bi and bi.series and bi.series_index then
-                    local cell_min = math.min(self.width or fw, self.height or fh)
-                    local dark = M.getBadgeColorSeries() == "dark"
-                    local new_wg = CoverWidgets.buildRectBadgeWidget(
-                        "#" .. bi.series_index, false, cell_min, dark, false, M.getBadgeScale())
-                    if new_wg then self._fc_series_widget = new_wg; wg = new_wg end
-                end
-            end
             if wg then
                 local badge_x
                 if BD.mirroredUILayout() then
@@ -1904,7 +1865,6 @@ function M.install()
             local has_progress_badge = self._fc_overlay_progress and self._fc_progress_bb
             if not has_progress_badge then
                 local mode = self._fc_new_mode or "badge"
-                local dark = M.getBadgeColorNew() == "dark"
 
                 if mode == "badge" then
                     -- Rounded-rectangle widget, pre-built in update().
@@ -1921,9 +1881,8 @@ function M.install()
 
                 elseif mode == "ribbon" then
                     -- Diagonal corner ribbon, painted directly onto bb.
-                    local badge_scale = M.getBadgeScale()
                     local cell_min   = math.min(fw, fh)
-                    local eff_size   = math.max(8, math.floor(cell_min * 0.1694 * badge_scale))
+                    local eff_size   = math.max(8, math.floor(cell_min * 0.1694 * self._fc_badge_scale))
                     local span       = math.floor(eff_size * 2.5)
                     local band_thick = math.floor(span * 0.40)
                     local font_sz    = math.max(7, math.floor(eff_size * 0.26))
@@ -1937,7 +1896,7 @@ function M.install()
                     end
                     CoverWidgets.paintCornerRibbon(bb,
                         cover_left, cover_right, fy, fh,
-                        span, band_thick, _("New"), font_sz, dark)
+                        span, band_thick, _("New"), font_sz, self._fc_new_dark)
                     -- Repaint cover border over ribbon so it isn't obscured.
                 local brd = SUIStyle.BADGE_BORDER_SZ
                     if brd > 0 then
@@ -1951,7 +1910,7 @@ function M.install()
 
         -- Fade overlay for finished books.
         -- Applied last so it dims everything already painted (cover + badges).
-        if M.getFadeFinished() and self.status == "complete" and not self.is_directory then
+        if self._fc_fade and not self.is_directory then
             local tgt = self._cover_frame or (self[1] and self[1][1] and self[1][1][1])
             if tgt and tgt.dimen then
                 local tw2 = tgt.dimen.w
@@ -1964,7 +1923,7 @@ function M.install()
                     fx2 = x + _round((self.width  - tw2) / 2)
                     fy2 = y + _round((self.height - th2) / 2)
                 end
-                bb:lightenRect(fx2, fy2, tw2, th2, M.getFadeAmount())
+                bb:lightenRect(fx2, fy2, tw2, th2, self._fc_fade)
             end
         end
 
@@ -2295,9 +2254,7 @@ function M.uninstall()
 
     CoverFinder.clearCache()
     CoverWidgets.clearLabelMetricsCache()
-    CoverWidgets.clearRibbonCache()
-    CoverWidgets.clearPentagonMaskCache()
-    CoverWidgets.clearShadowCache()
+    RasterCache.clear()
 
     local ListMenuItem = _getListMenuItem()
     if ListMenuItem and ListMenuItem._simpleui_lm_patched then

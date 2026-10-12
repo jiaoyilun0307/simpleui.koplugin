@@ -47,109 +47,12 @@ local StatsWindows = {}
 
 local function _getYearStr() return os.date("%Y") end
 
--- Returns a list of {title, authors} for books marked "complete" this calendar year.
--- Reuses the sidecar cache warmed by module_stats_provider / module_books_shared,
--- so in the common case no extra DS.open() calls are needed.
-local function _getFinishedBooksThisYear()
-    local year_str = _getYearStr()
-    local books    = {}
-
-    local ok_rh, ReadHistory = pcall(require, "readhistory")
-    if not ok_rh or not ReadHistory or not ReadHistory.hist then return books end
-
-    local ok_ds, DocSettings = pcall(require, "docsettings")
-    if not ok_ds then return books end
-
-    local ok_lfs, lfs = pcall(require, "libs/libkoreader-lfs")
-    if not ok_lfs then return books end
-
-    -- Borrow the shared sidecar cache from module_books_shared when available.
-    local SH = package.loaded["modules/module_books_shared"]
-
-    -- Mirrors _modifiedInYear from module_stats_provider — same logic, no dependency.
-    -- Only summary.date_finished or a STRING summary.modified is accepted as a
-    -- completion-year signal.  A numeric modified (KOReader unix timestamp) is
-    -- rewritten on every reader session close and must NOT be used as a
-    -- "completed this year" indicator — see module_stats_provider.lua for rationale.
-    local function modifiedInYear(summary)
-        local mod
-        if summary then
-            if summary.date_finished ~= nil then
-                mod = summary.date_finished
-            elseif type(summary.modified) == "string" then
-                mod = summary.modified
-            end
-        end
-        if mod == nil then return false end
-        if type(mod) == "string" then
-            return #mod >= 4 and mod:sub(1, 4) == year_str
-        end
-        return false
-    end
-
-    for _, entry in ipairs(ReadHistory.hist) do
-        local fp = entry and entry.file
-        if fp and lfs.attributes(fp, "mode") == "file" then
-            local summary, title, authors, md5_checksum
-
-            -- Fast path: hit the shared sidecar cache.
-            if SH and SH._cacheGet then
-                local cached = SH._cacheGet(fp)
-                if cached then
-                    summary      = cached.summary
-                    title        = cached.title
-                    authors      = cached.authors
-                    md5_checksum = cached.partial_md5_checksum
-                end
-            end
-
-            -- Slow path: open the sidecar directly (first run or after invalidation).
-            if summary == nil then
-                local ok_open, ds = pcall(function() return DocSettings:open(fp) end)
-                if ok_open and ds then
-                    summary         = ds:readSetting("summary")
-                    local doc_props = ds:readSetting("doc_props")
-                    if doc_props then
-                        title   = doc_props.title
-                        authors = doc_props.authors
-                    end
-                    md5_checksum = ds:readSetting("partial_md5_checksum")
-                    -- Warm the shared cache so subsequent calls are free.
-                    if SH and SH._cachePut and ds.source_candidate then
-                        local stats = ds:readSetting("stats")
-                        SH._cachePut(fp, ds.source_candidate, {
-                            percent              = ds:readSetting("percent_finished") or 0,
-                            title                = title,
-                            authors              = authors,
-                            doc_pages            = ds:readSetting("doc_pages"),
-                            partial_md5_checksum = ds:readSetting("partial_md5_checksum"),
-                            stat_pages           = stats and stats.pages,
-                            stat_total_time      = stats and stats.total_time_in_sec,
-                            summary              = summary,
-                        })
-                    end
-                    pcall(function() ds:close() end)
-                end
-            end
-
-            if type(summary) == "table"
-               and summary.status == "complete"
-               and modifiedInYear(summary) then
-                table.insert(books, {
-                    title         = title   or entry.text or fp,
-                    authors       = authors or "",
-                    filepath      = fp,
-                    date_finished = (type(summary.date_finished) == "string" and summary.date_finished)
-                                    or (type(summary.modified)   == "string" and summary.modified)
-                                    or nil,
-                    date_started  = (type(summary.date_started) == "string" and summary.date_started) or nil,
-                    md5           = md5_checksum,
-                    exclude_from_goals = summary.exclude_from_goals,
-                })
-            end
-        end
-    end
-    return books
+-- Finished books for the given scope: "year" (current calendar year) or "all".
+-- Entries come from the stats provider's shared scan, so the list always
+-- matches the counts shown on the homescreen.
+local function _getFinishedBooks(scope)
+    local SP = require("modules/module_stats_provider")
+    return SP.getFinishedBooks(scope == "year" and tonumber(_getYearStr()) or nil)
 end
 
 -- Fetches all statistics for a book from statistics.sqlite3.
@@ -345,11 +248,11 @@ local function _getStartDatesForBooks(books)
 
     for _, book in ipairs(books) do
         local fp = book.filepath
-        if type(book.date_started) == "string" then
+        if fp and type(book.date_started) == "string" then
             -- Sidecar value takes priority; store as string so _fmtDateRange
             -- can handle it (it accepts both unix timestamps and YYYY-MM-DD).
             start_dates[fp] = book.date_started
-        else
+        elseif fp then
             table.insert(needs_db, book)
             local md5 = book.md5 or util.partialMD5(fp)
             if md5 then
@@ -774,23 +677,29 @@ local function _openBookFromStats(filepath)
     })
 end
 
-function StatsWindows.showFinishedBooksDialog(initial_page)
+--- Lists finished books. `scope` is "year" (default) or "all".
+function StatsWindows.showFinishedBooksDialog(initial_page, scope)
     _lazyLoad()
     local SUIWindow = require("engines/sui_window")
-    local year_str  = _getYearStr()
+    scope = scope or "year"
+    local year_str = _getYearStr()
 
-    local books = _getFinishedBooksThisYear()
+    local books = _getFinishedBooks(scope)
 
     if #books == 0 then
-        UI.Notify.toast(string.format(_("No books finished in %s"), year_str))
+        UI.Notify.toast(scope == "year"
+            and string.format(_("No books finished in %s"), year_str)
+            or _("No books finished"))
         return
     end
 
     local start_dates     = _getStartDatesForBooks(books)
     local book_date_range = {}
     for _, book in ipairs(books) do
-        local fo = start_dates[book.filepath]
-        book_date_range[book.filepath] = _fmtDateRange(fo, book.date_finished)
+        -- Preserved books have no file to read dates from; show the year only.
+        book_date_range[book.key] = book.filepath
+            and _fmtDateRange(start_dates[book.filepath], book.date_finished)
+            or (book.year and tostring(book.year))
     end
 
     local face_stat_title  = Font:getFace(SUIStyle.FACE_REGULAR, SZ(SUIStyle.FS_SUBTITLE))
@@ -832,7 +741,7 @@ function StatsWindows.showFinishedBooksDialog(initial_page)
         local inner_w = ctx.inner_w
         local rows = {}
         for i, book in ipairs(books) do
-            local date_range = book_date_range[book.filepath] or "\xe2\x80\x93"
+            local date_range = book_date_range[book.key] or "\xe2\x80\x93"
             local sub_text
             if book.authors and book.authors ~= "" then
                 if book.exclude_from_goals then
@@ -851,7 +760,7 @@ function StatsWindows.showFinishedBooksDialog(initial_page)
                 subtitle     = sub_text,
                 right_value  = date_range,
                 dim_only     = book.exclude_from_goals,
-                show_chevron = true,
+                show_chevron = book.filepath ~= nil,
                 separator    = true,
                 on_tap       = book.filepath and function()
                     local d, err = _fetchBookStatsData(book)
@@ -1276,15 +1185,13 @@ function StatsWindows.showFinishedBooksDialog(initial_page)
     end
 
     local function titleFn(ctx)
-        local count = 0
-        for _, book in ipairs(books) do
-            if not book.exclude_from_goals then
-                count = count + 1
-            end
+        local count = require("modules/module_stats_provider").countFinished(books)
+        if scope == "year" then
+            return string.format(
+                N_("%d book read in %s", "%d books read in %s", count),
+                count, year_str)
         end
-        return string.format(
-            N_("%d book read in %s", "%d books read in %s", count),
-            count, year_str)
+        return string.format(N_("%d book read", "%d books read", count), count)
     end
 
     local win = SUIWindow:new{

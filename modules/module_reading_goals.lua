@@ -1,7 +1,6 @@
 -- Reading Goals module: annual / monthly / daily progress with tap-to-set dialogs.
 -- Layouts: Default (bar + detail), Compact (single inline row), Rings (circular progress).
 
-local Blitbuffer      = require("ffi/blitbuffer")
 local CenterContainer = require("ui/widget/container/centercontainer")
 local Device          = require("device")
 local Font            = require("ui/font")
@@ -429,8 +428,7 @@ end
 -- Rings layout: one card per active goal with a progress ring.
 -- Sizing is relative to screen width: each card ≤ 25%, gap = 5% between cards.
 -- Content only — no frame, no solid background (wallpaper shows through).
--- Ring drawing uses AAPaint.paintRingProgress + UI.paintWithAlphaMask
--- (same pipeline as the analogue clock face).
+-- Rings are blitted from cached coverage masks (AAPaint.ringMask).
 -- ---------------------------------------------------------------------------
 
 -- Ring stroke as a fraction of outer radius — higher = smaller centre hole.
@@ -526,49 +524,20 @@ local function _buildRingWidget(diameter, fraction, thickness, fg_color)
 
     function widget:paintTo(bb, x, y)
         self.dimen.x, self.dimen.y = x, y
-        local d = self.dimen.w
+        local d, t, frac = self.dimen.w, self._thick, self._fraction
         if d <= 0 then return end
-        if not self._tmp_bb or self._tmp_bb:getWidth() ~= d or self._tmp_bb:getHeight() ~= d then
-            if self._tmp_bb then self._tmp_bb:free() end
-            self._tmp_bb = Blitbuffer.new(d, d, Blitbuffer.TYPE_BB8)
-        end
-        local frac = self._fraction or 0
-        local t = self._thick
-        local r = d / 2 - 0.5
-        local cx, cy = d / 2, d / 2
 
         if self._style == "transparent" then
-            -- Legacy: progress + translucent track in one alpha-mask pass.
-            local paint_fn = function(_w, tmp_bb)
-                AAPaint.paintRingProgress(tmp_bb, cx, cy, r, t, frac, 0, 0, d - 1, d - 1)
-            end
-            UI.paintWithAlphaMask(widget, bb, x, y, d, d, self._fg, paint_fn, self._tmp_bb)
+            -- Progress and translucent track in one single-colour mask.
+            bb:colorblitFromRGB32(AAPaint.ringMask(d, t, frac), x, y, 0, 0, d, d, self._fg)
             return
         end
 
         -- Flat: opaque track (COLOR.track) then progress arc (COLOR.gray),
-        -- same pair UI.progressBar uses for style "flat".
-        local track_c = SUIStyle.COLOR.track
-        local fill_c  = SUIStyle.COLOR.gray
-        -- Full ring track (fraction 0, track_cov 1 → solid stroke).
-        local paint_track = function(_w, tmp_bb)
-            AAPaint.paintRingProgress(tmp_bb, cx, cy, r, t, 0, 0, 0, d - 1, d - 1, 1.0)
-        end
-        UI.paintWithAlphaMask(widget, bb, x, y, d, d, track_c, paint_track, self._tmp_bb)
+        -- the same pair UI.progressBar uses for style "flat".
+        bb:colorblitFromRGB32(AAPaint.ringMask(d, t, 0, 1), x, y, 0, 0, d, d, SUIStyle.COLOR.track)
         if frac > 0 then
-            -- Progress only (track_cov 0).
-            local paint_fill = function(_w, tmp_bb)
-                AAPaint.paintRingProgress(tmp_bb, cx, cy, r, t, frac, 0, 0, d - 1, d - 1, 0)
-            end
-            UI.paintWithAlphaMask(widget, bb, x, y, d, d, fill_c, paint_fill, self._tmp_bb)
-        end
-    end
-
-    function widget:onCloseWidget() self:free() end
-    function widget:free()
-        if self._tmp_bb then
-            self._tmp_bb:free()
-            self._tmp_bb = nil
+            bb:colorblitFromRGB32(AAPaint.ringMask(d, t, frac, 0), x, y, 0, 0, d, d, SUIStyle.COLOR.gray)
         end
     end
 

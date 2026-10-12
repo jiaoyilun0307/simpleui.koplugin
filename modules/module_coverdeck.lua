@@ -770,8 +770,19 @@ function M.build(w, ctx)
     -- full 3:2 cover, not a whole cover squashed into a narrow box — so
     -- the centre uses the stretch-only path (SH.getBookCover) and the
     -- side/far slots use the crop-to-fill path (SH.getCroppedBookCover).
+    -- Book data is resolved once per book per build: the centre book is read
+    -- by buildCover and again for the text block below.
+    local book_data = {}
+    local function bookData(fp)
+        local bd = book_data[fp]
+        if not bd then
+            bd = SH.getBookData(fp, ctx.prefetched and ctx.prefetched[fp])
+            book_data[fp] = bd
+        end
+        return bd
+    end
     local function buildCover(fp, cw, ch)
-        local bd    = SH.getBookData(fp, ctx.prefetched and ctx.prefetched[fp])
+        local bd    = bookData(fp)
         local cover = SH.getBookCover(fp, cw, ch, true) or SH.coverPlaceholder(bd.title, bd.authors, cw, ch, true)
         if show_progress_badge then
             cover = applyProgressBadge(cover, bd, cw, ch, pfx)
@@ -779,7 +790,7 @@ function M.build(w, ctx)
         return cover
     end
     local function buildCroppedCover(fp, cw, ch, align)
-        local bd    = SH.getBookData(fp, ctx.prefetched and ctx.prefetched[fp])
+        local bd    = bookData(fp)
         local cover = SH.getCroppedBookCover(fp, cw, ch, align, true) or SH.coverPlaceholder(bd.title, bd.authors, cw, ch, true, align)
         -- Right-hand peeks show the cover's right edge — where the progress
         -- badge sits — so paint it there too when enabled (optional setting).
@@ -933,7 +944,7 @@ function M.build(w, ctx)
     end
 
     -- Book data for centre cover
-    local bd        = SH.getBookData(fps[curIdx], ctx.prefetched and ctx.prefetched[fps[curIdx]])
+    local bd        = bookData(fps[curIdx])
     local styles    = Config.resolveTextStyles(ctx, M.id, M.text_elems)
     local title_fs, author_fs, info_fs = fontSizes(scale, lbl_scale, styles)
     local bar_h     = math.max(1, math.floor(Screen:scaleBySize(8) * scale))

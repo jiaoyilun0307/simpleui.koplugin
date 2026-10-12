@@ -416,11 +416,7 @@ function SeriesGrouping.install()
     FileChooser.onFolderUp = function(fc)
         if fc.item_table and fc.item_table._sg_is_series_view then
             local parent = fc.item_table._sg_parent_path
-            if parent then
-                -- Clear the series view flag IMMEDIATELY so _resolveIsSub will work correctly
-                fc.item_table._sg_is_series_view = false
-                fc:changeToPath(parent)
-            end
+            if parent then fc:changeToPath(parent) end
             return true
         end
         return _sg_orig_onFolderUp(fc)

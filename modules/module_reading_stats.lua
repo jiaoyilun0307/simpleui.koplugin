@@ -381,7 +381,7 @@ local function _openStatDetail(stat_ids, idx, n)
     if sid == "total_books" then
         local ok, SW = pcall(require, "screens/sui_stats_windows")
         if ok and SW and SW.showFinishedBooksDialog then
-            SW.showFinishedBooksDialog()
+            SW.showFinishedBooksDialog(nil, "all")
             return true
         end
     elseif sid == "streak" then

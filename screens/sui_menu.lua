@@ -3137,6 +3137,30 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
                     end
                 end,
             },
+            -- ── Show Uncategorized Items ──────────────────────────────────────
+            {
+                text           = _("Show Uncategorized Items"),
+                help_text      = _("Lists books without an author, series or tag as a separate group in the Authors, Series and Tags views."),
+                keep_menu_open = true,
+                enabled_func   = function()
+                    local ok_bm, BM = pcall(require, "features/library/sui_library_browse")
+                    return ok_bm and BM and BM.isEnabled()
+                end,
+                checked_func   = function()
+                    local ok_bm, BM = pcall(require, "features/library/sui_library_browse")
+                    return ok_bm and BM and BM.getShowEmpty()
+                end,
+                callback       = function()
+                    local ok_bm, BM = pcall(require, "features/library/sui_library_browse")
+                    if not (ok_bm and BM) then return end
+                    BM.setShowEmpty(not BM.getShowEmpty())
+                    local FM2 = package.loaded["apps/filemanager/filemanager"]
+                    local fc2 = FM2 and FM2.instance and FM2.instance.file_chooser
+                    if fc2 and BM.getPathLevel(fc2.path) == "dim_list" then
+                        pcall(function() fc2:refreshPath() end)
+                    end
+                end,
+            },
             -- ── Group by Book Series ──────────────────────────────────────────
             {
                 text           = _("Group by Book Series"),

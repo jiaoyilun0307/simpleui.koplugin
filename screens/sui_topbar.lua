@@ -198,8 +198,14 @@ local _topbar_ram_time  = 0
 -- the hot path. Invalidated by invalidateDimCache() on any settings change.
 local _topbar_enabled_cache = nil
 
+-- Bumped whenever dimensions or configuration may have changed. It is part of
+-- the bar shape (see resolveBar), so a bar built before the change is rebuilt
+-- instead of having its labels updated in place.
+local _layout_gen = 0
+
 function M.invalidateDimCache()
     _dim = {}
+    _layout_gen = _layout_gen + 1
     _topbar_enabled_cache = nil  -- settings may have changed
     _topbar_cfg_cache = nil  -- P5: settings may have changed, force re-read
     -- Also reset slow-data caches so they are refreshed on the next tick.
@@ -227,6 +233,7 @@ end
 
 function M.invalidateConfigCache()
     _topbar_cfg_cache = nil
+    _layout_gen = _layout_gen + 1
 end
 
 -- ---------------------------------------------------------------------------
@@ -376,15 +383,14 @@ end
 -- Widget construction
 -- ---------------------------------------------------------------------------
 
-function M.buildTopbarWidget()
-    local screen_w  = Screen:getWidth()
+-- Resolves what the bar shows right now into plain data:
+--   zones  — visible items per zone, each { icon, label, nerd, max_w }
+--   labels — every label text, in build order (left, right, center)
+--   shape  — everything that determines the rendered layout except the label
+--            texts; two bars with the same shape differ only in their labels
+local function resolveBar()
     local Core      = _getCore()
-    local side_m    = Core.SIDE_M()
-    local pad_top   = M.TOPBAR_PAD_TOP()
-    local pad_bot   = M.TOPBAR_PAD_BOT()
-    local total_h   = M.TOPBAR_H() + pad_top + pad_bot
-    local face      = Font:getFace(SUIStyle.FACE_REGULAR, M.TOPBAR_FS())
-    local icon_face = Font:getFace(SUIStyle.FACE_ICONS, M.TOPBAR_FS())
+    local screen_w  = Screen:getWidth()
     local info      = M.getTopbarInfo()
     local tb_cfg    = getTopbarConfigCached()
 
@@ -446,57 +452,22 @@ function M.buildTopbarWidget()
         end,
     }
 
-    local function buildSideGroup(order)
-        local group = HorizontalGroup:new{}
-        local first = true
-        local fg = _getBarFg()
+    local function resolveZone(order)
+        local items = {}
         for _, key in ipairs(order) do
-            if (tb_cfg.side[key] or "hidden") ~= "hidden" then
-                local builder = item_builders[key]
-                if builder then
-                    local icon, label, is_nerd, max_w = builder()
-                    if icon or (label and label ~= "") then
-                        if not first then
-                            group[#group + 1] = TextWidget:new{
-                                text = "  ", face = face, fgcolor = fg,
-                            }
-                        end
-                        if icon then
-                            group[#group + 1] = TextWidget:new{
-                                text    = icon,
-                                face    = is_nerd and icon_face or face,
-                                fgcolor = fg,
-                            }
-                        end
-                        if label and label ~= "" then
-                            group[#group + 1] = TextWidget:new{
-                                text      = label,
-                                face      = face,
-                                fgcolor   = fg,
-                                max_width = max_w or nil,
-                            }
-                        end
-                        first = false
-                    end
+            local builder = item_builders[key]
+            if builder and (tb_cfg.side[key] or "hidden") ~= "hidden" then
+                local icon, label, nerd, max_w = builder()
+                if label == "" then label = nil end
+                if icon or label then
+                    items[#items + 1] = { icon = icon, label = label, nerd = nerd, max_w = max_w }
                 end
             end
         end
-        return group
+        return items
     end
 
-    local inner_w = Core.getUsableW(screen_w)
-
-    local left_w = LeftContainer:new{
-        dimen = Geom:new{ w = inner_w, h = total_h },
-        buildSideGroup(tb_cfg.order_left),
-    }
-    local right_w = RightContainer:new{
-        dimen = Geom:new{ w = inner_w, h = total_h },
-        buildSideGroup(tb_cfg.order_right),
-    }
-
-    -- Build the center group (items assigned to "center" position).
-    -- If there are any visible center items, show them and suppress the chevron.
+    -- Items assigned to "center" replace the swipe chevron.
     local order_center = tb_cfg.order_center or {}
     local center_has_items = false
     for _, key in ipairs(order_center) do
@@ -506,14 +477,95 @@ function M.buildTopbarWidget()
         end
     end
 
-    local show_swipe = (not center_has_items) and SUISettings:nilOrTrue("simpleui_topbar_swipe_indicator")
+    local bar = {
+        zones = {
+            left   = resolveZone(tb_cfg.order_left),
+            right  = resolveZone(tb_cfg.order_right),
+            center = center_has_items and resolveZone(order_center) or nil,
+        },
+        show_swipe = (not center_has_items) and SUISettings:nilOrTrue("simpleui_topbar_swipe_indicator"),
+        labels     = {},
+    }
+    bar.bg, bar.scrim = _getBarBg()
+
+    local shapes = { _layout_gen, (bar.bg and "bg" or "nobg") .. (bar.scrim or ""),
+                     bar.show_swipe and "swipe" or "noswipe" }
+    for _, zone in ipairs({ "left", "right", "center" }) do
+        local parts = {}
+        for i, item in ipairs(bar.zones[zone] or {}) do
+            parts[i] = table.concat({ item.icon or "", item.nerd and "n" or "t",
+                                      item.label and "L" or "-", item.max_w or "" }, "|")
+            if item.label then bar.labels[#bar.labels + 1] = item.label end
+        end
+        shapes[#shapes + 1] = table.concat(parts, ";")
+    end
+    bar.shape = table.concat(shapes, "#")
+    return bar
+end
+
+-- Builds the bar widget from a resolved bar (resolved on the spot when omitted).
+function M.buildTopbarWidget(bar)
+    bar = bar or resolveBar()
+    local screen_w  = Screen:getWidth()
+    local Core      = _getCore()
+    local side_m    = Core.SIDE_M()
+    local pad_top   = M.TOPBAR_PAD_TOP()
+    local pad_bot   = M.TOPBAR_PAD_BOT()
+    local total_h   = M.TOPBAR_H() + pad_top + pad_bot
+    local face      = Font:getFace(SUIStyle.FACE_REGULAR, M.TOPBAR_FS())
+    local icon_face = Font:getFace(SUIStyle.FACE_ICONS, M.TOPBAR_FS())
+    local fg        = _getBarFg()
+
+    -- Label widgets in the order of bar.labels, kept for in-place updates.
+    local label_widgets = {}
+
+    local function buildSideGroup(items)
+        local group = HorizontalGroup:new{}
+        for i, item in ipairs(items) do
+            if i > 1 then
+                group[#group + 1] = TextWidget:new{
+                    text = "  ", face = face, fgcolor = fg,
+                }
+            end
+            if item.icon then
+                group[#group + 1] = TextWidget:new{
+                    text    = item.icon,
+                    face    = item.nerd and icon_face or face,
+                    fgcolor = fg,
+                }
+            end
+            if item.label then
+                local label = Core.trackDimen(TextWidget:new{
+                    text      = item.label,
+                    face      = face,
+                    fgcolor   = fg,
+                    max_width = item.max_w,
+                })
+                group[#group + 1] = label
+                label_widgets[#label_widgets + 1] = label
+            end
+        end
+        return group
+    end
+
+    local inner_w = Core.getUsableW(screen_w)
+
+    local left_w = LeftContainer:new{
+        dimen = Geom:new{ w = inner_w, h = total_h },
+        buildSideGroup(bar.zones.left),
+    }
+    local right_w = RightContainer:new{
+        dimen = Geom:new{ w = inner_w, h = total_h },
+        buildSideGroup(bar.zones.right),
+    }
+
     local center_w
-    if center_has_items then
+    if bar.zones.center then
         center_w = CenterContainer:new{
             dimen = Geom:new{ w = inner_w, h = total_h },
-            buildSideGroup(order_center),
+            buildSideGroup(bar.zones.center),
         }
-    elseif show_swipe then
+    elseif bar.show_swipe then
         center_w = CenterContainer:new{
             dimen = Geom:new{ w = inner_w, h = total_h },
             FrameContainer:new{
@@ -522,7 +574,7 @@ function M.buildTopbarWidget()
                 TextWidget:new{
                     text    = "\xef\xb9\x80",
                     face    = Font:getFace(SUIStyle.FACE_REGULAR, M.TOPBAR_CHEVRON_FS()),
-                    fgcolor = _getBarFg(),
+                    fgcolor = fg,
                 },
             },
         }
@@ -533,13 +585,14 @@ function M.buildTopbarWidget()
         left_w, right_w, center_w,
     }
 
-    local bar_bg, scrim_strength = _getBarBg()
     local root = FrameContainer:new{
         bordersize    = 0, padding = 0, margin = 0,
         padding_left  = side_m, padding_right = side_m,
-        background    = bar_bg,
+        background    = bar.bg,
         row,
     }
+    root._sui_bar = { shape = bar.shape, labels = label_widgets }
+    local scrim_strength = bar.scrim
     if scrim_strength and scrim_strength > 0 and scrim_strength < 100 then
         local orig_paint = root.paintTo
         local strength = scrim_strength
@@ -556,6 +609,20 @@ function M.buildTopbarWidget()
         end
     end
     return root
+end
+
+-- Updates the label texts of a built bar in place. Returns the label widgets
+-- whose text changed (possibly none), or nil when the bar must be rebuilt: it
+-- was built from a different layout, or a label changed size and would shift
+-- its neighbours.
+local function patchLabels(topbar, bar)
+    local built = topbar._sui_bar
+    if not built or built.shape ~= bar.shape then return nil end
+    local updates = {}
+    for i, widget in ipairs(built.labels) do
+        updates[i] = { widget = widget, text = bar.labels[i] }
+    end
+    return _getCore().setTextsInPlace(updates)
 end
 
 local function _showTopbarSettingsWindow(plugin)
@@ -696,19 +763,33 @@ function M.refresh(plugin)
     if (plugin and plugin._simpleui_suspended) or Device.screen_saver_mode then return end
     local UI    = require("infra/sui_core")
     local stack = UI.getWindowStack()  -- read once
-    -- Each widget gets its own topbar instance. Sharing a single object across
-    -- multiple _navbar_containers is unsafe: replaceTopbar mutates overlap_offset
-    -- in-place, so the first paint would corrupt the offset seen by subsequent
-    -- containers holding the same reference.
-    local new_topbar = M.buildTopbarWidget()
-    -- Re-check suspended state after buildTopbarWidget() — the device may have
-    -- suspended during that call. If so, discard the widget and do not setDirty
+    local bar   = resolveBar()
+    -- Re-check suspended state after resolveBar() — the device may have
+    -- suspended during that call. If so, do not touch any widget, setDirty
     -- or reschedule: onResume will restart the chain cleanly.
     if (plugin and plugin._simpleui_suspended) or Device.screen_saver_mode then return end
+
+    -- A bar whose layout is unchanged only has its label texts swapped, and
+    -- only the boxes of the labels that changed are refreshed (nothing at all
+    -- when no text changed). Otherwise the bar is replaced by a new one, built
+    -- once and shared by every widget that needs it, and refreshed as a whole.
+    local new_topbar
+    local patched = {}  -- topbar instance -> changed label widgets, or false when it needs a rebuild
     local seen = {}
     local function refreshWidget(w)
         if not w or not w._navbar_container or seen[w] then return end
         seen[w] = true
+        local current = w._navbar_topbar
+        local changed = patched[current]
+        if changed == nil and current then
+            changed = patchLabels(current, bar) or false
+            patched[current] = changed
+        end
+        if changed then
+            UI.refreshBoxes(w, changed)
+            return
+        end
+        new_topbar = new_topbar or M.buildTopbarWidget(bar)
         UI.replaceTopbar(w, new_topbar)
         -- Scope the e-ink refresh to the topbar's own region instead of the
         -- whole screen (same convention as module_clock.lua's surgical clock

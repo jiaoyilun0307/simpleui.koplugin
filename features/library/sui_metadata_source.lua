@@ -24,8 +24,10 @@
 --   MetadataSource.getMatchingFiles(bim, base_dir, filter_state)
 --       -> { {fullpath, filename, title=, authors=, series=, series_key=,
 --             series_index=, keywords=}, ... }  sorted by directory, filename
---   MetadataSource.getFacetValues(bim, base_dir, dimension, filter_state)
---       -> { {value, count, key=, _first=row}, ... } sorted for display
+--   MetadataSource.getFacetValues(bim, base_dir, dimension, filter_state, include_empty)
+--       -> { {value, count, key=, _first=row}, ... } sorted for display;
+--          the "no value" group (key == false) is only listed when
+--          include_empty is truthy
 --   MetadataSource.getValidRows(bim, base_dir, filter_state, variant, accept)
 --       -> rows matching the trail for which accept(row) is true (cached,
 --          read-only; `variant` identifies what accept depends on)
@@ -398,7 +400,7 @@ local function computeFacetValues(rows, definition)
     return out
 end
 
-function MetadataSource.getFacetValues(bim, base_dir, dimension, filter_state)
+function MetadataSource.getFacetValues(bim, base_dir, dimension, filter_state, include_empty)
     if not FilterState.isDimension(dimension) then return {} end
     syncWithDatabase()
 
@@ -411,8 +413,14 @@ function MetadataSource.getFacetValues(bim, base_dir, dimension, filter_state)
     end
     -- Return a shallow copy: cheap (copies entry refs, not rows), and keeps
     -- callers free to sort/mutate what they receive without corrupting the
-    -- cache — same contract as getMatchingFiles.
-    return copyArray(cached)
+    -- cache — same contract as getMatchingFiles. The cache always holds the
+    -- full list; the "no value" group is dropped from the copy only.
+    if include_empty then return copyArray(cached) end
+    local values = {}
+    for i = 1, #cached do
+        if cached[i].key ~= false then values[#values + 1] = cached[i] end
+    end
+    return values
 end
 
 -- ---------------------------------------------------------------------------

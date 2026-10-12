@@ -136,6 +136,18 @@ function M.setEnabled(v)
     SUISettings:saveSetting(_BM_KEY, v)
 end
 
+-- Whether the "no value" group (books without an author, series or tag) is
+-- listed in the Authors / Series / Tags views. Off by default.
+local _SHOW_EMPTY_KEY = "simpleui_browsemeta_show_empty"
+
+function M.getShowEmpty()
+    return SUISettings:isTrue(_SHOW_EMPTY_KEY)
+end
+
+function M.setShowEmpty(v)
+    SUISettings:saveSetting(_SHOW_EMPTY_KEY, v)
+end
+
 -- ---------------------------------------------------------------------------
 -- Public path helpers
 -- ---------------------------------------------------------------------------
@@ -210,9 +222,8 @@ function M.navigateTo(fm, mode)
     if fm.updateTitleBarPath then
         pcall(function() fm:updateTitleBarPath(target) end)
     end
-    -- Force the titlebar to re-evaluate the back-button state for page 1.
-    -- onGotoPage triggers _resolveIsSub which re-checks the path-based state,
-    -- ensuring the back button is correct when lock_home_folder is active.
+    -- Re-evaluates the title-bar state for page 1: onGotoPage re-checks the
+    -- path-based back-button state, which depends on lock_home_folder.
     if fc.onGotoPage then
         pcall(function() fc:onGotoPage(1) end)
     end
@@ -475,7 +486,7 @@ local function _getVirtualList(fc, path, collate)
     if not ok_bim or not bim then return dirs, files end
 
     if level == "dim_list" then
-        local values = MetadataSource.getFacetValues(bim, base_dir, active_dimension, filter_state)
+        local values = MetadataSource.getFacetValues(bim, base_dir, active_dimension, filter_state, M.getShowEmpty())
         local overrides = SUISettings:readSetting("simpleui_fc_covers") or {}
 
         -- Real (validated) per-group counts and a representative file. A row

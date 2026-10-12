@@ -402,15 +402,21 @@ function GridRenderer.setGridCols(pfx, id, n)
 end
 
 -- ---------------------------------------------------------------------------
--- applyBadges(cover_widget, bd, fp, cw, ch, badges_cfg, pfx, id, show_progress_badge) → widget
+-- resolveBadgeConfig(badges_cfg, pfx, id, show_progress_badge) → cfg | nil
+-- applyBadges(cover_widget, bd, fp, cw, ch, cfg) → widget
 --
--- Wraps `cover_widget` (already sized cw × ch) with the same corner badges
--- as the file-manager Library grid (features/library/sui_cover_widgets.lua),
--- reusing its drawing primitives so both grids render badges identically.
--- Unlike the Library grid, badges here stay INSIDE the cover's rectangle
--- (the progress pentagon doesn't poke above the top edge), so cell_h stays
--- a plain function of cw/ch with no extra bookkeeping to keep in sync
--- between build() and getHeight().
+-- resolveBadgeConfig reads every badge setting once per grid build (what to
+-- show, per-instance scale and colors) and returns nil when no badge applies
+-- to the grid. applyBadges then wraps each cover with its badges from that
+-- shared config, without touching settings.
+--
+-- applyBadges wraps `cover_widget` (already sized cw × ch) with the same
+-- corner badges as the file-manager Library grid
+-- (features/library/sui_cover_widgets.lua), reusing its drawing primitives so
+-- both grids render badges identically. Unlike the Library grid, badges here
+-- stay INSIDE the cover's rectangle (the progress pentagon doesn't poke above
+-- the top edge), so cell_h stays a plain function of cw/ch with no extra
+-- bookkeeping to keep in sync between build() and getHeight().
 --
 -- Layout (mirrors the Library grid):
 --   pages    → bottom-left    series → top-left
@@ -431,36 +437,50 @@ end
 -- instance (GridRenderer.getBadgeScale(pfx, id)), independent from every
 -- other module and from the Library grid's own badge size.
 --
--- Returns cover_widget unchanged when no badge is enabled/applicable —
--- callers don't need to special-case the "nothing to draw" outcome.
+-- applyBadges returns cover_widget unchanged when no badge is applicable to
+-- that book — callers don't need to special-case the "nothing to draw" outcome.
 -- ---------------------------------------------------------------------------
-function GridRenderer.applyBadges(cover_widget, bd, fp, cw, ch, badges_cfg, pfx, id, show_progress_badge)
-    if not badges_cfg then return cover_widget end
+function GridRenderer.resolveBadgeConfig(badges_cfg, pfx, id, show_progress_badge)
+    if not badges_cfg then return nil end
     local CW = getCoverWidgets()
     local fc = getFC()
-    if not CW or not fc then return cover_widget end
+    if not CW or not fc then return nil end
 
-    local show_pages    = GridRenderer.showBadgePages(pfx, id, badges_cfg.pages)
-    local show_series   = GridRenderer.showBadgeSeries(pfx, id, badges_cfg.series)
-    local new_mode      = GridRenderer.getBadgeNewMode(pfx, id, badges_cfg.new)
-    local show_new      = new_mode ~= "none"
-    local show_progress = show_progress_badge and true or false
-    if not (show_pages or show_series or show_new or show_progress) then
-        return cover_widget
+    local cfg = {
+        CW            = CW,
+        show_pages    = GridRenderer.showBadgePages(pfx, id, badges_cfg.pages),
+        show_series   = GridRenderer.showBadgeSeries(pfx, id, badges_cfg.series),
+        new_mode      = GridRenderer.getBadgeNewMode(pfx, id, badges_cfg.new),
+        show_progress = show_progress_badge and true or false,
+    }
+    if not (cfg.show_pages or cfg.show_series or cfg.new_mode ~= "none" or cfg.show_progress) then
+        return nil
     end
 
     -- Per-module-instance size, adjustable without touching any other
     -- module's badges or the Library grid's own "Badge Size".
-    local badge_scale  = GridRenderer.getBadgeScale(pfx, id)
+    cfg.badge_scale = GridRenderer.getBadgeScale(pfx, id)
     -- Corner-badge family (progress pentagon, pages, series, new-as-badge)
     -- reads 20% bigger than the ribbon at the same badge_scale — see
     -- _BG_CORNER_BADGE_BASE_BOOST's doc comment. Not applied to the New
-    -- Book ribbon, which keeps using the plain `badge_scale` below.
-    local corner_badge_scale = badge_scale * _BG_CORNER_BADGE_BASE_BOOST
-    local overlap = OverlapGroup:new{ dimen = Geom:new{ w = cw, h = ch }, cover_widget }
+    -- Book ribbon, which keeps using the plain `badge_scale`.
+    cfg.corner_badge_scale = cfg.badge_scale * _BG_CORNER_BADGE_BASE_BOOST
     -- Badges sit on the card, not on the room its shadow takes.
-    local inset = SUIStyle.coverShadowOffset(SUIStyle.SHADOW_MODULES)
-    cw, ch = cw - inset, ch - inset
+    cfg.inset = SUIStyle.coverShadowOffset(SUIStyle.SHADOW_MODULES)
+    cfg.dark = {
+        pages    = GridRenderer.getBadgeColor(pfx, id, "pages",    fc.getBadgeColorPages)    == "dark",
+        series   = GridRenderer.getBadgeColor(pfx, id, "series",   fc.getBadgeColorSeries)   == "dark",
+        new      = GridRenderer.getBadgeColor(pfx, id, "new",      fc.getBadgeColorNew)      == "dark",
+    }
+    cfg.progress_color = GridRenderer.getBadgeColor(pfx, id, "progress", fc.getBadgeColorProgress)
+    return cfg
+end
+
+function GridRenderer.applyBadges(cover_widget, bd, fp, cw, ch, cfg)
+    local CW = cfg.CW
+    local badge_scale, corner_badge_scale = cfg.badge_scale, cfg.corner_badge_scale
+    local overlap = OverlapGroup:new{ dimen = Geom:new{ w = cw, h = ch }, cover_widget }
+    cw, ch = cw - cfg.inset, ch - cfg.inset
     local cell_min     = math.min(cw, ch)
     local margin       = math.max(1, math.floor(cell_min * 0.04))
     -- Lateral (left/right) inset — wider than the vertical `margin` so
@@ -472,9 +492,8 @@ function GridRenderer.applyBadges(cover_widget, bd, fp, cw, ch, badges_cfg, pfx,
 
     -- Pages badge (bottom-left) — hidden for finished books, same rule as
     -- the Library grid (a finished book doesn't need its page count).
-    if show_pages and bd.status ~= "complete" and bd.pages then
-        local dark = GridRenderer.getBadgeColor(pfx, id, "pages", fc.getBadgeColorPages) == "dark"
-        local wg = CW.buildRectBadgeWidget(bd.pages .. _(" p."), false, cell_min, dark, false, corner_badge_scale)
+    if cfg.show_pages and bd.status ~= "complete" and bd.pages then
+        local wg = CW.buildRectBadgeWidget(bd.pages .. _(" p."), false, cell_min, cfg.dark.pages, false, corner_badge_scale)
         if wg then
             wg.overlap_offset = { edge_margin, ch - wg.dimen.h - margin }
             overlap[#overlap + 1] = wg
@@ -485,12 +504,11 @@ function GridRenderer.applyBadges(cover_widget, bd, fp, cw, ch, badges_cfg, pfx,
     -- Series index badge (top-left). One extra lookup per cell — cheap for
     -- the small non-paged modules (Recent/New Books/Featured Collection,
     -- ≤5 items). SH.getBookSeries() is memoized per filepath.
-    if show_series then
+    if cfg.show_series then
         local SH = getSH()
         local sd = SH and SH.getBookSeries(fp)
         if sd then
-            local dark = GridRenderer.getBadgeColor(pfx, id, "series", fc.getBadgeColorSeries) == "dark"
-            local wg = CW.buildRectBadgeWidget("#" .. sd.series_index, false, cell_min, dark, false, corner_badge_scale)
+            local wg = CW.buildRectBadgeWidget("#" .. sd.series_index, false, cell_min, cfg.dark.series, false, corner_badge_scale)
             if wg then
                 wg.overlap_offset = { edge_margin, margin }
                 overlap[#overlap + 1] = wg
@@ -502,10 +520,10 @@ function GridRenderer.applyBadges(cover_widget, bd, fp, cw, ch, badges_cfg, pfx,
     -- Progress pentagon / New badge (top-right, mutually exclusive).
     -- Progress uses the shared builder so the pentagon matches single-cover
     -- modules (Currently Reading, Coverdeck) exactly.
-    local has_progress = show_progress
+    local has_progress = cfg.show_progress
         and ((bd.percent or 0) > 0 or bd.status == "complete" or bd.status == "abandoned")
     if has_progress then
-        local color = GridRenderer.getBadgeColor(pfx, id, "progress", fc.getBadgeColorProgress)
+        local color = cfg.progress_color
         local eff_size = math.max(8, math.floor(cell_min * 0.14 * corner_badge_scale))
         local SH = getSH()
         local wg = SH and SH.buildProgressBadgeWidget and SH.buildProgressBadgeWidget(bd, eff_size, color)
@@ -517,12 +535,12 @@ function GridRenderer.applyBadges(cover_widget, bd, fp, cw, ch, badges_cfg, pfx,
             overlap[#overlap + 1] = wg
             badges_added = true
         end
-    elseif show_new and (bd.percent or 0) == 0 and bd.status == nil then
+    elseif cfg.new_mode ~= "none" and (bd.percent or 0) == 0 and bd.status == nil then
         -- "Unread" here means "0% and no status" — SH.getBookData() always
         -- defaults percent to 0, so the two aren't distinguishable from bd
         -- alone. Good enough for a homescreen glance badge.
-        local dark = GridRenderer.getBadgeColor(pfx, id, "new", fc.getBadgeColorNew) == "dark"
-        if new_mode == "ribbon" then
+        local dark = cfg.dark.new
+        if cfg.new_mode == "ribbon" then
             -- Not boosted — the ribbon keeps its own size (badge_scale).
             local wg = CW.buildCornerRibbonWidget(cw, ch, dark, badge_scale)
             if wg then
@@ -765,6 +783,9 @@ function GridRenderer.build(w, ctx, opts)
     -- draw_progress nor draw_text is active — updateStats treats a missing
     -- entry as "nothing to patch for this cell", not an error.
     local row_update_funcs = {}
+    local badge_cfg = not use_overlay
+        and GridRenderer.resolveBadgeConfig(opts.badges, pfx, id, use_progress_badge)
+        or nil
     local i = 0
     for r = 1, grid_rows do
         if i >= #page_fps then break end
@@ -838,8 +859,8 @@ function GridRenderer.build(w, ctx, opts)
         -- while the round percent-overlay is active; otherwise cover_widget
         -- is still exactly cw × ch here, so no extra height bookkeeping is
         -- needed.
-        if not use_overlay and opts.badges then
-            cover_widget = GridRenderer.applyBadges(cover_widget, bd, fp, cw, ch, opts.badges, pfx, id, use_progress_badge)
+        if badge_cfg then
+            cover_widget = GridRenderer.applyBadges(cover_widget, bd, fp, cw, ch, badge_cfg)
         end
 
         local cell = VerticalGroup:new{ align = "center", cover_widget }
@@ -966,7 +987,7 @@ function GridRenderer.build(w, ctx, opts)
             local bw = Screen:scaleBySize(3)
             cell_widget = OverlapGroup:new{
                 dimen = Geom:new{ w = cw, h = cell_h },
-                tappable,
+                cell_widget,
                 LineWidget:new{ dimen = Geom:new{ w = cw, h = bw },    background = SUIStyle.COLOR.text_primary },
                 LineWidget:new{ dimen = Geom:new{ w = cw, h = bw },    background = SUIStyle.COLOR.text_primary, overlap_offset = {0, cell_h - bw} },
                 LineWidget:new{ dimen = Geom:new{ w = bw, h = cell_h }, background = SUIStyle.COLOR.text_primary },

@@ -1214,6 +1214,7 @@ function ScreenWidget:init()
     self._clock_is_wrapped   = nil
     self._clock_pfx          = nil
     self._clock_inner_w      = nil
+    self._clock_live         = nil
     self._overflow_warn_key  = nil
 
     -- Minimal placeholder so patches.lua can call wrapWithNavbar safely.
@@ -2268,6 +2269,7 @@ function ScreenWidget:_updatePage(keep_cache, books_only, stats_only)
     body:clear()
 
     self._clock_body_idx    = nil
+    self._clock_live        = nil
     self._clock_body_ref    = body
     self._stats_mod_slots   = {}
     self._book_mod_slots    = {}
@@ -2356,11 +2358,12 @@ function ScreenWidget:_updatePage(keep_cache, books_only, stats_only)
                 self._cover_mod_slots[mod.id] = { mod = mod, widget = content }
             end
             if type(mod.updateStats) == "function" then
-                self._stats_mod_slots[mod.id] = { mod = mod, widget = widget }
+                self._stats_mod_slots[mod.id] = { mod = mod, content = content }
             end
-            -- Stash for _register_cell (widget + col_w needed by book slots).
+            -- Stash for _register_cell (widget, content + col_w needed by book slots).
             cell._sui_mod = mod
             cell._sui_widget = widget
+            cell._sui_content = content
             cell._sui_col_w = col_w
             return cell
         end
@@ -2372,6 +2375,7 @@ function ScreenWidget:_updatePage(keep_cache, books_only, stats_only)
             if not cell or not cell._sui_mod then return end
             local mod = cell._sui_mod
             local widget = cell._sui_widget
+            local content = cell._sui_content
             local col_w = cell._sui_col_w
             if mod.id == "clock" then
                 self._clock_body_ref   = cell
@@ -2382,6 +2386,7 @@ function ScreenWidget:_updatePage(keep_cache, books_only, stats_only)
                 self._book_mod_slots[mod.id] = {
                     mod      = mod,
                     widget   = widget,
+                    content  = content,
                     parent   = cell,
                     index    = #cell,
                     col_w    = col_w,
@@ -2390,6 +2395,7 @@ function ScreenWidget:_updatePage(keep_cache, books_only, stats_only)
             end
             cell._sui_mod = nil
             cell._sui_widget = nil
+            cell._sui_content = nil
             cell._sui_col_w = nil
         end
 
@@ -2660,6 +2666,19 @@ function ScreenWidget:_updatePage(keep_cache, books_only, stats_only)
 
 end
 
+-- Repaints the screen region occupied by a module slot. The pooled wrapper
+-- carries the module's absolute region; without one (not laid out yet) the
+-- whole screen is repainted.
+function ScreenWidget:_setSlotDirty(mod_id, slot)
+    local wrapper = self._wrapper_pool and self._wrapper_pool[mod_id]
+    local dimen   = (wrapper and wrapper.dimen) or (slot.content and slot.content.dimen)
+    if dimen then
+        UIManager:setDirty(self, function() return "ui", dimen end)
+    else
+        UIManager:setDirty(self, "ui")
+    end
+end
+
 -- ---------------------------------------------------------------------------
 -- _refresh — debounced rebuild. Page turns call _updatePage directly.
 -- ---------------------------------------------------------------------------
@@ -2818,18 +2837,12 @@ function ScreenWidget:_refresh(keep_cache, books_only, stats_only)
                         for id, slot in pairs(self._book_mod_slots or {}) do
                             local updated_in_place = false
                             if type(slot.mod.updateStats) == "function" then
-                                local ok, result = pcall(slot.mod.updateStats, slot.widget, self._ctx_cache)
+                                local ok, result = pcall(slot.mod.updateStats, slot.content, self._ctx_cache)
                                 updated_in_place = ok and result
                             end
 
                             if updated_in_place then
-                                -- Successful in-place update: setDirty only on the widget's region.
-                                local w = slot.widget
-                                if w and w.dimen then
-                                    UIManager:setDirty(self, function() return "ui", w.dimen end)
-                                else
-                                    UIManager:setDirty(self, "ui")
-                                end
+                                self:_setSlotDirty(id, slot)
                                 -- An in-place update can shift npages without the
                                 -- current page's own slice changing (see
                                 -- GridRenderer.updateStats), so the header follows.
@@ -2850,19 +2863,9 @@ function ScreenWidget:_refresh(keep_cache, books_only, stats_only)
                     -- avoiding a global repaint of the entire screen.
                     -- updateStats() returns false when _changed flags show none of the
                     -- module's fields were re-fetched — skip setDirty entirely in that case.
-                    for _, slot in pairs(self._stats_mod_slots or {}) do
-                        local updated = slot.mod.updateStats(slot.widget, self._ctx_cache)
-                        if updated then
-                            -- Surgical repaint: only the stats module's region.
-                            -- slot.widget.dimen may be nil if the widget hasn't been
-                            -- positioned yet; in that case falls back to the global repaint.
-                            if slot.widget and slot.widget.dimen then
-                                UIManager:setDirty(self, function()
-                                    return "ui", slot.widget.dimen
-                                end)
-                            else
-                                UIManager:setDirty(self, "ui")
-                            end
+                    for id, slot in pairs(self._stats_mod_slots or {}) do
+                        if slot.mod.updateStats(slot.content, self._ctx_cache) then
+                            self:_setSlotDirty(id, slot)
                         end
                     end
                 end
@@ -3014,13 +3017,15 @@ function ScreenWidget:_refreshBookModSlot(mod_id)
         -- like a full build — otherwise a taller widget's refresh region
         -- would be too small for UIManager:setDirty to fully clear/repaint.
         local wrapper = self:_makeModWrapper(slot.mod, new_widget, slot.col_w)
-        slot.widget = new_widget
+        slot.widget  = new_widget
+        slot.content = new_content
         local rtype = self:_bookModRefreshType(mod_id)
         UIManager:setDirty(self, function() return rtype, wrapper.dimen, true end)
     else
         if not slot.parent then return false end
         slot.parent[slot.index] = new_widget
-        slot.widget = new_widget
+        slot.widget  = new_widget
+        slot.content = new_content
         local rtype = self:_bookModRefreshType(mod_id)
         UIManager:setDirty(self, function() return rtype, new_widget.dimen, true end)
     end
@@ -3675,6 +3680,7 @@ function ScreenWidget:onCloseWidget()
     self._clock_is_wrapped = nil
     self._clock_pfx        = nil
     self._clock_inner_w    = nil
+    self._clock_live       = nil
     self._overflow_warn_key = nil
 
     -- Consumes the "file browser visited" marker; the series grouping module

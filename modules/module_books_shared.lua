@@ -43,44 +43,15 @@ end
 local SH = {}
 
 -- ---------------------------------------------------------------------------
--- applyCustomProps — overlay custom_metadata.lua overrides onto doc_props.
---
--- KOReader stores user-edited title/author in a *separate* file called
--- custom_metadata.lua (next to the main metadata.*.lua sidecar).  The
--- structure inside it is:
---   custom_props = { title = "...", authors = "..." }   <- user overrides
---   doc_props    = { title = "...", authors = "..." }   <- original copy
---
--- DS.open() only reads the main sidecar, so ds:readSetting("doc_props")
--- always returns the original (unedited) values.  We must open
--- custom_metadata.lua separately and let its custom_props win.
---
--- This mirrors what BookInfo.extendProps() does in KOReader core, which is
--- why History and the library show the correct custom values while SimpleUI
--- homescreen modules (Currently Reading, Recent) showed the originals.
+-- Lazy loaders for KOReader modules that are only needed once books are read.
 -- ---------------------------------------------------------------------------
-local _DS_for_custom = nil
-local function _getDS()
-    if not _DS_for_custom then
+local _DocSettings = nil
+local function getDocSettings()
+    if not _DocSettings then
         local ok, ds = pcall(require, "docsettings")
-        if ok then _DS_for_custom = ds end
+        if ok then _DocSettings = ds end
     end
-    return _DS_for_custom
-end
-
-local function applyCustomProps(fp, title, authors)
-    local DS = _getDS()
-    if not DS then return title, authors end
-    -- findCustomMetadataFile is an instance method (:), so pass DS as self + fp as arg.
-    local ok, custom_file = pcall(DS.findCustomMetadataFile, DS, fp)
-    if not ok or not custom_file then return title, authors end
-    -- openSettingsFile is a STATIC function (.), not an instance method.
-    -- Correct call: DS.openSettingsFile(custom_file) — do NOT pass DS as first arg.
-    local ok2, cs = pcall(DS.openSettingsFile, custom_file)
-    if not ok2 or not cs then return title, authors end
-    local custom_props = cs:readSetting("custom_props") or {}
-    return custom_props.title   or title,
-           custom_props.authors or authors
+    return _DocSettings
 end
 
 -- ---------------------------------------------------------------------------
@@ -425,41 +396,23 @@ end
 -- ---------------------------------------------------------------------------
 -- getBookData
 -- ---------------------------------------------------------------------------
-local _DocSettings = nil
-local function getDocSettings()
-    if not _DocSettings then
-        local ok, ds = pcall(require, "docsettings")
-        if ok then _DocSettings = ds end
-    end
-    return _DocSettings
-end
-
--- BookInfoManager — same lazy-loader pattern as getDocSettings(). Used as a
--- fallback title/author source for files whose doc_props are still empty
--- (e.g. books added to the TBR collection that have never been opened in
--- ReaderUI, so KOReader never extracted their EPUB/PDF metadata into the
--- sidecar). BookInfoManager indexes metadata independently of doc_props —
--- this mirrors the pattern already used in sui_library_browse.lua's title
--- resolution (bim:getBookInfo(fp, false)).
-local _BookInfoManager = nil
-local function getBookInfoManager()
-    if not _BookInfoManager then
-        local ok, bim = pcall(require, "bookinfomanager")
-        if ok then _BookInfoManager = bim end
-    end
-    return _BookInfoManager
-end
 
 -- ---------------------------------------------------------------------------
--- Sidecar metadata cache — invalidated by mtime, lives for the process lifetime.
+-- Sidecar data cache — validated on every read, lives for the process lifetime.
 --
--- Each entry: { sidecar_path, mtime, preferred_loc, data={...} }
--- where data holds all keys extracted by prefetchBooks + summary for countMarkedRead.
+-- Each entry: { sidecar_path, mtime, preferred_loc, custom_path, custom_mtime,
+-- data }. `data` holds the fields read from the sidecar: percent, title,
+-- authors, doc_pages, partial_md5_checksum, stat_pages, stat_total_time and
+-- summary. Title and authors already carry the custom_metadata.lua overrides.
+-- A book without a sidecar is cached too, with no sidecar_path and default
+-- data, and stays valid until a sidecar shows up.
 --
--- Cost per cache hit: 1 lfs.attributes("modification") instead of ~15 syscalls
--- + 1 dofile. Cache miss falls through to the normal DS.open path.
+-- A hit costs two stats (sidecar and custom metadata; a few more for a book
+-- without either) instead of the ~15 syscalls and the parse of a
+-- DocSettings.open.
 -- ---------------------------------------------------------------------------
 local _sidecar_cache = {}
+local _bim_fields    = {}   -- fp -> fields resolved from its BookInfoManager record
 
 -- Returns the preferred_location string used as part of cache validation.
 -- Reading G_reader_settings is a table lookup — no IO.
@@ -467,50 +420,66 @@ local function _prefLoc()
     return G_reader_settings:readSetting("document_metadata_folder", "doc")
 end
 
--- Returns cached data table for fp, or nil on miss / stale entry.
-local function _cacheGet(fp)
-    local e = _sidecar_cache[fp]
-    if not e then return nil end
-    -- Invalidate if the user changed metadata location between sessions.
-    if e.preferred_loc ~= _prefLoc() then
-        _sidecar_cache[fp] = nil
-        return nil
-    end
-    -- 1 syscall: stat the sidecar file we recorded on last DS.open.
-    local mtime = lfs.attributes(e.sidecar_path, "modification")
-    if mtime ~= e.mtime then
-        _sidecar_cache[fp] = nil
-        return nil
-    end
-    -- Also invalidate when custom_metadata.lua has changed (user edited title/author).
-    -- custom_mtime is nil when no custom_metadata.lua existed at cache-fill time;
-    -- a new non-nil mtime means the file was just created → invalidate.
-    if e.custom_mtime ~= lfs.attributes(e.custom_path or "", "modification") then
-        _sidecar_cache[fp] = nil
-        return nil
-    end
-    return e.data
+-- True when a lookup of `finder` (a DocSettings method taking the book path)
+-- finds a file for fp.
+local function _docSettingsFinds(finder, fp)
+    local DS = getDocSettings()
+    if not DS then return false end
+    local ok, path = pcall(DS[finder], DS, fp)
+    return (ok and path) and true or false
 end
 
--- Stores a cache entry after a successful DS.open.
--- source_candidate is ds.source_candidate (the winning sidecar path chosen by DS.open).
+-- True when the sidecar state recorded in `entry` no longer matches the disk:
+-- the file changed or moved, or one appeared for a book that had none.
+local function _sidecarChanged(entry, fp)
+    if entry.sidecar_path then
+        return lfs.attributes(entry.sidecar_path, "modification") ~= entry.mtime
+    end
+    return _docSettingsFinds("findSidecarFile", fp)
+end
+
+-- Same for the custom metadata file.
+local function _customMetadataChanged(entry, fp)
+    if entry.custom_path then
+        return lfs.attributes(entry.custom_path, "modification") ~= entry.custom_mtime
+    end
+    return _docSettingsFinds("findCustomMetadataFile", fp)
+end
+
+-- Returns cached data table for fp, or nil on miss / stale entry.
+local function _cacheGet(fp)
+    local entry = _sidecar_cache[fp]
+    if not entry then return nil end
+    if entry.preferred_loc ~= _prefLoc()
+            or _sidecarChanged(entry, fp)
+            or _customMetadataChanged(entry, fp) then
+        _sidecar_cache[fp] = nil
+        return nil
+    end
+    return entry.data
+end
+
+-- Stores `data` for fp. Title and authors are first overlaid with the user's
+-- custom_metadata.lua overrides, so cached data is always ready to display.
+-- `source_candidate` is the sidecar path DocSettings.open picked
+-- (ds.source_candidate); without one the book has no sidecar yet.
 local function _cachePut(fp, source_candidate, data)
-    if not source_candidate then return end
-    local mtime = lfs.attributes(source_candidate, "modification")
-    if not mtime then return end
-    -- Also record the custom_metadata.lua path and mtime so _cacheGet can
-    -- detect when the user edits title/author via "Book information".
-    local DS_c = _getDS()
+    local DS = getDocSettings()
     local custom_path, custom_mtime
-    if DS_c then
-        local ok, cp = pcall(DS_c.findCustomMetadataFile, DS_c, fp)
-        if ok and cp then
-            custom_path  = cp
-            custom_mtime = lfs.attributes(cp, "modification")
+    if DS then
+        local ok, path = pcall(DS.findCustomMetadataFile, DS, fp)
+        if ok and path then
+            custom_path  = path
+            custom_mtime = lfs.attributes(path, "modification")
+            local ok_open, settings = pcall(DS.openSettingsFile, path)
+            local props = ok_open and settings and settings:readSetting("custom_props") or {}
+            data.title   = props.title   or data.title
+            data.authors = props.authors or data.authors
         end
     end
+    local mtime = source_candidate and lfs.attributes(source_candidate, "modification")
     _sidecar_cache[fp] = {
-        sidecar_path  = source_candidate,
+        sidecar_path  = mtime and source_candidate or nil,
         mtime         = mtime,
         preferred_loc = _prefLoc(),
         custom_path   = custom_path,
@@ -519,10 +488,44 @@ local function _cachePut(fp, source_candidate, data)
     }
 end
 
--- Expose the sidecar cache accessors as part of the module API so that
--- module_stats_provider can share the same cache in countMarkedReadBoth
--- without creating a circular dependency or reaching into internals.
--- These are considered semi-internal (prefix _) but are stable across versions.
+-- Reads the sidecar fields of fp and caches them. Returns nil when the
+-- sidecar cannot be opened. The handle is only read from and never closed:
+-- close() rewrites the whole sidecar file.
+local function _loadSidecarData(DS, fp)
+    local ok, ds = pcall(DS.open, DS, fp)
+    if not (ok and ds) then return nil end
+    local props = ds:readSetting("doc_props") or {}
+    local stats = ds:readSetting("stats") or {}
+    local data = {
+        percent              = ds:readSetting("percent_finished") or 0,
+        title                = props.title,
+        authors              = props.authors,
+        doc_pages            = ds:readSetting("doc_pages"),
+        partial_md5_checksum = ds:readSetting("partial_md5_checksum"),
+        stat_pages           = stats.pages,
+        stat_total_time      = stats.total_time_in_sec,
+        summary              = ds:readSetting("summary"),
+    }
+    _cachePut(fp, ds.source_candidate, data)
+    return data
+end
+
+-- Cached sidecar data of fp, read from disk on a miss. Returns nil when the
+-- sidecar cannot be read, or, with `verify_file`, when fp is not a file.
+local function _sidecarData(fp, verify_file)
+    local data = _cacheGet(fp)
+    if data then return data end
+    local DS = getDocSettings()
+    if not DS or (verify_file and lfs.attributes(fp, "mode") ~= "file") then return nil end
+    return _loadSidecarData(DS, fp)
+end
+
+-- Public cache-or-load sidecar accessor, shared with other modules so every
+-- consumer reads the same cached record (see _loadSidecarData for its fields).
+SH.sidecarData = _sidecarData
+
+-- Cache accessors exposed for modules that manage entries directly.
+-- Semi-internal (prefixed _) but stable.
 SH._cacheGet = _cacheGet
 SH._cacheGetRaw = function(fp)
     local e = _sidecar_cache[fp]
@@ -530,13 +533,13 @@ SH._cacheGetRaw = function(fp)
 end
 SH._cachePut = _cachePut
 
-
--- or flush everything (fp == nil).
+-- Drops everything cached for fp — sidecar data and BookInfoManager fields —
+-- or flushes everything (fp == nil).
 function SH.invalidateSidecarCache(fp)
     if fp then
-        _sidecar_cache[fp] = nil
+        _sidecar_cache[fp], _bim_fields[fp] = nil, nil
     else
-        _sidecar_cache = {}
+        _sidecar_cache, _bim_fields = {}, {}
     end
 end
 
@@ -577,146 +580,101 @@ local function _readLiveProgress(filepath)
     return nil, nil
 end
 
-function SH.getBookData(filepath, prefetched)
-    local meta = {}
-    local percent, pages, md5, stat_pages, stat_total_time = 0, nil, nil, nil, nil
-    local status, summary = nil, nil
+-- Fills the percent and summary that were cleared from prefetched `data`
+-- (the hold dialog does so after a status change) from the live settings.
+local function _refreshLiveProgress(filepath, data)
+    if data.percent ~= nil and data.summary ~= nil then return end
+    local live_pct, live_sum = _readLiveProgress(filepath)
+    if data.percent == nil then data.percent = live_pct end
+    if data.summary == nil then data.summary = live_sum end
+end
 
-    if prefetched then
-        -- Fast path: use data already extracted by prefetchBooks.
-        -- percent/summary may be nil when a keep_cache refresh cleared them
-        -- after a hold-dialog status change — re-read only those fields so
-        -- progress badges/bars stay current without a full prefetchBooks.
-        percent         = prefetched.percent
-        pages           = prefetched.doc_pages
-        md5             = prefetched.partial_md5_checksum
-        stat_pages      = prefetched.stat_pages
-        stat_total_time = prefetched.stat_total_time
-        meta.title      = prefetched.title
-        meta.authors    = prefetched.authors
-        summary         = prefetched.summary
-        if percent == nil or summary == nil then
-            local live_pct, live_sum = _readLiveProgress(filepath)
-            if percent == nil and live_pct ~= nil then
-                percent = live_pct
-                prefetched.percent = percent
-            end
-            if summary == nil and live_sum ~= nil then
-                summary = live_sum
-                prefetched.summary = summary
-            end
-        end
-        percent = percent or 0
-        if type(summary) == "table" then status = summary.status end
-    elseif prefetched ~= false then
-        -- prefetched==nil means prefetchBooks was not called (e.g. direct call).
-        -- prefetched==false means prefetchBooks tried but DS.open failed — skip
-        -- the lfs.attributes syscall and DS.open retry; fall through with defaults.
-        local DS = getDocSettings()
-        if DS and lfs.attributes(filepath, "mode") == "file" then
-            local ok2, ds = pcall(DS.open, DS, filepath)
-            if ok2 and ds then
-                percent         = ds:readSetting("percent_finished") or 0
-                pages           = ds:readSetting("doc_pages")
-                md5             = ds:readSetting("partial_md5_checksum")
-                local rp        = ds:readSetting("doc_props") or {}
-                local rs        = ds:readSetting("stats") or {}
-                meta.title, meta.authors = applyCustomProps(filepath, rp.title, rp.authors)
-                stat_pages      = rs.pages
-                stat_total_time = rs.total_time_in_sec
-                summary         = ds:readSetting("summary")
-                if type(summary) == "table" then status = summary.status end
-            end
-        end
-    end
+-- Title, authors, page count and plain-text description from the book's
+-- BookInfoManager record, or nil while the book is not indexed. The fields are
+-- resolved once per book and dropped when the record changes in this process
+-- (Config.onBookInfoChanged) or on invalidateSidecarCache. Records written by
+-- background extraction are not reported, so the fields also expire.
+local _BIM_FIELDS_TTL = 60   -- seconds
 
-    -- Pages fallback chain — mirrors sui_foldercovers.lua's badge logic:
-    -- 1. doc_pages (rendered/stable count, already resolved above)
-    -- 2. BookInfoManager's cached page count (set once a book has been
-    --    scanned, even if never opened in ReaderUI)
-    -- 3. the "p(<n>)" filename token (last resort)
-    if not pages then
-        local BIM = getBookInfoManager()
-        if BIM then
-            local ok3, bi = pcall(BIM.getBookInfo, BIM, filepath, false)
-            if ok3 and bi and bi.pages then pages = bi.pages end
-        end
-    end
-    if not pages then
-        pages = SH.pageCountFromFilename(filepath)
-    end
+Config.onBookInfoChanged(function(fp) _bim_fields[fp] = nil end)
 
-    if not meta.title or meta.title == "" then
-        -- doc_props was empty — most likely this file was never opened in
-        -- ReaderUI (e.g. a TBR entry), so KOReader never wrote real title/
-        -- author metadata into the sidecar. Try BookInfoManager before
-        -- falling back to the raw filename.
-        local BIM = getBookInfoManager()
-        if BIM then
-            local ok3, bi = pcall(BIM.getBookInfo, BIM, filepath, false)
-            if ok3 and bi and bi.title and bi.title ~= "" then
-                meta.title   = bi.title
-                meta.authors = meta.authors and meta.authors ~= "" and meta.authors or bi.authors
-            end
-        end
-    end
-
-    if not meta.title or meta.title == "" then
-        meta.title = filepath:match("([^/]+)%.[^%.]+$") or "?"
-    end
-
-    -- Description — sourced from BookInfoManager (same index used for the
-    -- pages/title fallbacks above), which caches EPUB/OPF/etc. metadata
-    -- independently of doc_props. Prefer the prefetched value (already
-    -- resolved once by prefetchBooks for the currently-reading book) to
-    -- avoid a second BookInfoManager lookup on every homescreen render.
-    if prefetched and prefetched.description ~= nil then
-        meta.description = prefetched.description
+local function _bimFields(fp)
+    local fields = _bim_fields[fp]
+    if fields and os.time() - fields.resolved_at < _BIM_FIELDS_TTL then return fields end
+    local BIM = Config.getBookInfoManager()
+    if not BIM then return nil end
+    local ok, info = pcall(BIM.getBookInfo, BIM, fp, false)
+    if not (ok and info) then return nil end
+    local description = info.description
+    if description and description ~= "" then
+        -- EPUB/OPF descriptions are often HTML.
+        description = util.htmlToPlainTextIfHtml(description)
     else
-        local BIM = getBookInfoManager()
-        if BIM then
-            local ok4, bi = pcall(BIM.getBookInfo, BIM, filepath, false)
-            if ok4 and bi and bi.description and bi.description ~= "" then
-                -- Description text from EPUB/OPF metadata is often HTML;
-                -- strip markup so it renders as plain text.
-                meta.description = util.htmlToPlainTextIfHtml(bi.description)
-            end
-        end
+        description = nil
     end
+    fields = {
+        title = info.title, authors = info.authors, pages = info.pages,
+        description = description, resolved_at = os.time(),
+    }
+    _bim_fields[fp] = fields
+    return fields
+end
 
-    local avg_time
-    -- Source 1: live ReaderUI session — most accurate when a book is open.
-    pcall(function()
-        local ReaderUI = package.loaded["apps/reader/readerui"]
-        if ReaderUI and ReaderUI.instance then
-            local stats = ReaderUI.instance.statistics
-            if stats and stats.avg_time and stats.avg_time > 0 then
-                -- Only use if this is the same book currently being read.
-                local rui_fp = ReaderUI.instance.document
-                    and ReaderUI.instance.document.file
-                if rui_fp == filepath then
-                    avg_time = stats.avg_time
-                end
-            end
+-- Average seconds per page of the book currently open in the reader, or the
+-- one derived from its sidecar statistics.
+local function _avgPageTime(filepath, data)
+    local ReaderUI = package.loaded["apps/reader/readerui"]
+    local instance = ReaderUI and ReaderUI.instance
+    local ok, live = pcall(function()
+        local stats = instance and instance.statistics
+        local document = instance and instance.document
+        if stats and stats.avg_time and stats.avg_time > 0
+                and document and document.file == filepath then
+            return stats.avg_time
         end
     end)
-    -- Source 2: doc settings stats (written by Statistics plugin on close).
-    -- The capped avg_time from the stats DB is computed by fetchBookStats()
-    -- in module_currently and passed back via bstats — callers that need
-    -- the DB-backed value should use that instead of querying here again.
-    if not avg_time and stat_pages and stat_pages > 0
-            and stat_total_time and stat_total_time > 0 then
-        avg_time = stat_total_time / stat_pages
+    if ok and live then return live end
+    if data.stat_pages and data.stat_pages > 0
+            and data.stat_total_time and data.stat_total_time > 0 then
+        return data.stat_total_time / data.stat_pages
+    end
+end
+
+-- `prefetched` is the entry prefetchBooks stored for the book: `false` when it
+-- could not open the sidecar (defaults apply), nil when the caller did not
+-- prefetch (the cached sidecar data is used).
+function SH.getBookData(filepath, prefetched)
+    local data = prefetched
+    if data == nil then
+        data = _sidecarData(filepath, true)
+    elseif data then
+        _refreshLiveProgress(filepath, data)
+    end
+    data = data or {}
+
+    local bim = _bimFields(filepath)
+    local title, authors = data.title, data.authors
+    if (not title or title == "") and bim and bim.title and bim.title ~= "" then
+        title   = bim.title
+        authors = authors and authors ~= "" and authors or bim.authors
+    end
+    if not title or title == "" then
+        title = filepath:match("([^/]+)%.[^%.]+$") or "?"
     end
 
+    -- Page count: the rendered/stable count, then BookInfoManager's, then the
+    -- "p(<n>)" filename token.
+    local pages = data.doc_pages or (bim and bim.pages) or SH.pageCountFromFilename(filepath)
+    local summary = data.summary
+
     return {
-        percent     = percent,
-        title       = meta.title,
-        authors     = meta.authors or "",
-        description = meta.description or "",
+        percent     = data.percent or 0,
+        title       = title,
+        authors     = authors or "",
+        description = bim and bim.description or "",
         pages       = pages,
-        avg_time    = avg_time,
-        status      = status, -- "complete" | "abandoned" | nil ("reading"/unset)
+        avg_time    = _avgPageTime(filepath, data),
+        status      = type(summary) == "table" and summary.status or nil, -- "complete" | "abandoned" | nil
     }
 end
 
@@ -734,7 +692,7 @@ function SH.getBookSeries(filepath)
         if cached == false then return nil end
         return cached
     end
-    local BIM = getBookInfoManager()
+    local BIM = Config.getBookInfoManager()
     local result = false
     if BIM then
         local ok, bi = pcall(BIM.getBookInfo, BIM, filepath, false)
@@ -892,142 +850,32 @@ function SH.prefetchBooks(show_currently, show_recent, max_recent, opts)
         local entry = ReadHistory.hist[i]
         local fp = entry and entry.file
         if fp and lfs.attributes(fp, "mode") == "file" then
-            -- Normalise to KOBO_VIRTUAL:// if this is a real kepub path saved
-            -- by the kobo.koplugin into ReadHistory. Using the virtual path as
-            -- the key ensures cover extraction and sidecar lookups go through
-            -- the kobo.koplugin's BookInfoManager patch, and that openBook
-            -- passes the correct path to DocumentRegistry for DRM decryption.
+            -- A kepub known to an external library plugin is keyed by its
+            -- virtual path, so cover extraction, sidecar lookups and opening
+            -- all go through that plugin's own handling.
             fp = _koboVirtualPath(fp)
-            if show_currently and not claimed_current then
-                -- First existing history entry → currently-reading book.
+            local is_current = show_currently and not claimed_current
+            if is_current then
                 claimed_current = true
                 state.current_fp = fp
-                if DS then
-                    local cached = _cacheGet(fp)
-                    if cached then
-                        -- Re-apply custom props on the cache-hit path.
-                        -- The cached title/authors may predate a metadata edit
-                        -- or predate this fix. applyCustomProps is cheap (stat calls only).
-                        local _ct, _ca = applyCustomProps(fp, cached.title, cached.authors)
-                        if _ct ~= cached.title or _ca ~= cached.authors then
-                            -- Clone only when values differ to avoid mutating the shared cache entry.
-                            local patched = {}
-                            for k, v in pairs(cached) do patched[k] = v end
-                            patched.title   = _ct
-                            patched.authors = _ca
-                            state.prefetched_data[fp] = patched
-                        else
-                            state.prefetched_data[fp] = cached
-                        end
-                    else
-                        local ok2, ds = pcall(DS.open, DS, fp)
-                        if ok2 and ds then
-                            local rp = ds:readSetting("doc_props") or {}
-                            local rs = ds:readSetting("stats") or {}
-                            local _t, _a = applyCustomProps(fp, rp.title, rp.authors)
-                            -- Description comes from BookInfoManager, not doc_props;
-                            -- resolved once here so getBookData's fast (prefetched)
-                            -- path never has to query BookInfoManager again.
-                            local description = nil
-                            local BIM = getBookInfoManager()
-                            if BIM then
-                                local ok_bi, bi = pcall(BIM.getBookInfo, BIM, fp, false)
-                                if ok_bi and bi and bi.description and bi.description ~= "" then
-                                    description = util.htmlToPlainTextIfHtml(bi.description)
-                                end
-                            end
-                            local data = {
-                                percent              = ds:readSetting("percent_finished") or 0,
-                                title                = _t,
-                                authors              = _a,
-                                description          = description,
-                                doc_pages            = ds:readSetting("doc_pages"),
-                                partial_md5_checksum = ds:readSetting("partial_md5_checksum"),
-                                stat_pages           = rs.pages,
-                                stat_total_time      = rs.total_time_in_sec,
-                                summary              = ds:readSetting("summary"),
-                            }
-                            _cachePut(fp, ds.source_candidate, data)
-                            -- No ds:close() here on purpose: this DocSettings handle was
-                            -- only ever read from (readSetting), never written to, but
-                            -- close()/flush() in KOReader unconditionally rewrites the
-                            -- whole metadata.*.lua sidecar file regardless of whether
-                            -- anything actually changed (no dirty-tracking — see
-                            -- https://github.com/koreader/koreader/issues/2789). Closing
-                            -- here was turning every cold-cache prefetch read into a
-                            -- full disk write per book, which is what was stretching this
-                            -- "instant correction" pass out to multiple seconds and
-                            -- causing the visible homescreen reflow/blink on cold opens.
-                            -- Not calling close() is safe for read-only use; the handle
-                            -- is simply garbage-collected.
-                            state.prefetched_data[fp] = data
-                        else
-                            -- Signal that DS.open was attempted but failed — getBookData
-                            -- will skip the lfs.attributes syscall and DS.open retry.
-                            state.prefetched_data[fp] = false
-                        end
-                    end
-                end
-                -- When exclusion is off, the same book may also appear in Recent.
-                if show_recent and not exclude_current
-                        and #state.recent_fps < max_recent then
-                    state.recent_fps[#state.recent_fps + 1] = fp
-                end
-            elseif show_recent and #state.recent_fps < max_recent then
-                local pct = 0
-                local book_summary = nil
-                if DS then
-                    local cached = _cacheGet(fp)
-                    if cached then
-                        pct = cached.percent
-                        book_summary = cached.summary
-                        -- Re-apply custom props on the cache-hit path.
-                        local _ct, _ca = applyCustomProps(fp, cached.title, cached.authors)
-                        if _ct ~= cached.title or _ca ~= cached.authors then
-                            local patched = {}
-                            for k, v in pairs(cached) do patched[k] = v end
-                            patched.title   = _ct
-                            patched.authors = _ca
-                            state.prefetched_data[fp] = patched
-                        else
-                            state.prefetched_data[fp] = cached
-                        end
-                    else
-                        local ok2, ds = pcall(DS.open, DS, fp)
-                        if ok2 and ds then
-                            pct    = ds:readSetting("percent_finished") or 0
-                            book_summary = ds:readSetting("summary")
-                            local rp = ds:readSetting("doc_props") or {}
-                            local rs = ds:readSetting("stats") or {}
-                            local _t, _a = applyCustomProps(fp, rp.title, rp.authors)
-                            local data = {
-                                percent              = pct,
-                                title                = _t,
-                                authors              = _a,
-                                doc_pages            = ds:readSetting("doc_pages"),
-                                partial_md5_checksum = ds:readSetting("partial_md5_checksum"),
-                                stat_pages           = rs.pages,
-                                stat_total_time      = rs.total_time_in_sec,
-                                summary              = book_summary,
-                            }
-                            _cachePut(fp, ds.source_candidate, data)
-                            -- See the matching comment in the current_fp branch above:
-                            -- no ds:close() on purpose, read-only access.
-                            state.prefetched_data[fp] = data
-                        else
-                            state.prefetched_data[fp] = false
-                        end
-                    end
-                end
-                -- Always add to recent_fps regardless of read/complete status.
-                -- Filtering by finished/complete is each module's responsibility:
-                -- module_recent and module_coverdeck apply their own independent
-                -- setting at render time using pct/summary from prefetched_data.
+            end
+            -- Read/complete filtering is each module's responsibility:
+            -- module_recent and module_coverdeck apply their own setting at
+            -- render time from the prefetched pct/summary.
+            local is_recent = show_recent and #state.recent_fps < max_recent
+                and (not is_current or not exclude_current)
+            if is_recent then
                 state.recent_fps[#state.recent_fps + 1] = fp
             end
+            if DS and (is_current or is_recent) then
+                -- `false` marks a sidecar that could not be opened, so
+                -- getBookData falls back to defaults without retrying.
+                state.prefetched_data[fp] = _sidecarData(fp) or false
+            end
         end
-        if not show_recent and state.current_fp then break end
-        if state.current_fp and #state.recent_fps >= max_recent then break end
+        local has_current = not show_currently or state.current_fp
+        local has_recent  = not show_recent or #state.recent_fps >= max_recent
+        if has_current and has_recent then break end
     end
 
     -- Only cache results that actually resolved something — an early-return

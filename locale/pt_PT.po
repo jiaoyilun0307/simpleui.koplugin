@@ -2280,6 +2280,10 @@ msgstr "Clarear"
 msgid "List"
 msgstr "Lista"
 
+#: screens/sui_menu.lua:3143
+msgid "Lists books without an author, series or tag as a separate group in the Authors, Series and Tags views."
+msgstr "Lista os livros sem autor, série ou etiqueta como um grupo separado nas vistas Autores, Séries e Etiquetas."
+
 #: screens/sui_stats_windows.lua:2491
 msgid "Loading statistics…"
 msgstr "A carregar estatísticas…"
@@ -3939,6 +3943,10 @@ msgstr "Mostrar Ícone"
 msgid "Show Page Count in Title Bar"
 msgstr "Mostrar Contagem de Páginas na Barra de Título"
 
+#: screens/sui_menu.lua:3142
+msgid "Show Uncategorized Items"
+msgstr "Mostrar Itens Sem Categoria"
+
 #: screens/sui_menu.lua:2839
 msgid ""
 "Show a brief \"Closing book…\" notice when closing a book, preventing "
@@ -4730,6 +4738,10 @@ msgstr "Tipo de letra da interface  (predefinição)"
 #: screens/sui_menu.lua:4668
 msgid "UI Font  [%s]"
 msgstr "Tipo de letra da interface  [%s]"
+
+#: features/library/sui_virtual_path.lua:74
+msgid "Uncategorized"
+msgstr "Sem categoria"
 
 #: screens/sui_menu.lua:3795
 msgid "Uniformize Covers (2:3)"

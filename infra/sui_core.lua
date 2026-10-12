@@ -843,6 +843,61 @@ function M.updateColoredText(wgt, txt, fg)
 end
 
 -- ---------------------------------------------------------------------------
+-- In-place text refresh
+--
+-- Changing a few characters should repaint only the box those characters
+-- occupy, not the module or bar that contains them:
+--   trackDimen      — makes a widget record its on-screen box on every paint
+--                     (makeAlphaMaskWidget widgets already do).
+--   setTextsInPlace — swaps the text of already-mounted text widgets.
+--   refreshBoxes    — refreshes the recorded boxes of the changed widgets.
+-- ---------------------------------------------------------------------------
+
+-- Makes `widget` keep its on-screen box (x, y, w, h) in `widget.dimen`,
+-- updated on every paint.
+function M.trackDimen(widget)
+    local size = widget:getSize()
+    widget.dimen = Geom():new{ x = 0, y = 0, w = size.w, h = size.h }
+    local paint = widget.paintTo
+    function widget:paintTo(bb, x, y)
+        local box, current = self.dimen, self:getSize()
+        box.x, box.y, box.w, box.h = x, y, current.w, current.h
+        paint(self, bb, x, y)
+    end
+    return widget
+end
+
+-- Sets new texts on mounted text widgets (makeColoredText results or
+-- trackDimen'd TextWidgets). `updates` is a list of { widget, text }.
+-- Returns the widgets whose text changed (possibly none), or nil when one of
+-- them changed size: its neighbours would move, so the caller must rebuild.
+function M.setTextsInPlace(updates)
+    local changed = {}
+    for _, update in ipairs(updates) do
+        local wgt = update.widget
+        if (wgt._inner or wgt).text ~= update.text then
+            local before = wgt:getSize()
+            local w, h   = before.w, before.h
+            M.updateColoredText(wgt, update.text)
+            local after = wgt:getSize()
+            if after.w ~= w or after.h ~= h then return nil end
+            changed[#changed + 1] = wgt
+        end
+    end
+    return changed
+end
+
+-- Requests an e-ink refresh of the on-screen box of each widget in `widgets`,
+-- on behalf of `owner`. Boxes are read once the paint pass has run, when the
+-- widgets have recorded their final position.
+function M.refreshBoxes(owner, widgets)
+    local UIManager = require("ui/uimanager")
+    for _, wgt in ipairs(widgets) do
+        UIManager:setDirty(owner, function() return "ui", wgt.dimen end)
+    end
+end
+
+-- ---------------------------------------------------------------------------
 -- makeAlphaTextBox — transparent-background TextBoxWidget replacement.
 --
 -- Builds a WidgetContainer that renders a TextBoxWidget using Blitbuffer's

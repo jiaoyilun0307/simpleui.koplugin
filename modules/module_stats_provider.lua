@@ -271,146 +271,135 @@ local function fetchStreak(conn, today_str, yesterday_str, start_today)
 end
 
 -- ---------------------------------------------------------------------------
--- Sidecar reads
--- ---------------------------------------------------------------------------
--- Opens `fp`'s DocSettings sidecar, reads the fields modules across the
--- plugin need, and warms module_books_shared's cache with them so later
--- lookups hit the fast path instead of a second DS.open. Returns the
--- `summary` table (may be nil), `percent_finished`, and the partial md5
--- (only set when the shared cache is available and gets populated).
-local function _openAndCacheSidecar(fp, DocSettings, SH)
-    local ok_open, ds = pcall(function() return DocSettings:open(fp) end)
-    if not ok_open or not ds then return nil, 0, nil end
-    local percent = ds:readSetting("percent_finished") or 0
-    local summary = ds:readSetting("summary")
-    local md5
-    if SH and SH._cachePut then
-        local doc_props = ds:readSetting("doc_props")
-        local stats      = ds:readSetting("stats")
-        md5 = ds:readSetting("partial_md5_checksum")
-        SH._cachePut(fp, ds.source_candidate, {
-            percent              = percent,
-            title                = doc_props and doc_props.title,
-            authors              = doc_props and doc_props.authors,
-            doc_pages            = ds:readSetting("doc_pages"),
-            partial_md5_checksum = md5,
-            stat_pages           = stats and stats.pages,
-            stat_total_time      = stats and stats.total_time_in_sec,
-            summary              = summary,
-        })
-    end
-    -- No ds:close() here on purpose: this DocSettings handle is only ever
-    -- read from (readSetting), never written to, but close()/flush() in
-    -- KOReader unconditionally rewrites the whole metadata.*.lua sidecar
-    -- file regardless of whether anything actually changed (no
-    -- dirty-tracking — see https://github.com/koreader/koreader/issues/2789).
-    -- Closing here turns every sidecar scan (countMarkedReadBoth,
-    -- getStatusCounts — both called from the homescreen's post-cold-open
-    -- stats refresh) into a full disk write per book, stretching what
-    -- should be an instant correction pass into a multi-second one and
-    -- causing a visible homescreen reflow/blink. Same fix already applied
-    -- in module_books_shared.lua's SH.prefetchBooks() — see the matching
-    -- comment there. Not calling close() is safe for read-only use; the
-    -- handle is simply garbage-collected.
-    return summary, percent, md5
-end
-
--- ---------------------------------------------------------------------------
--- Sidecar scan: one pass over ReadHistory -> books_year + books_total.
+-- Finished books
 --
--- A book counts as completed when its sidecar summary.status == "complete".
--- Its completion year comes from summary.date_finished (SimpleUI-written
--- "YYYY-MM-DD") or, as a fallback, a STRING-typed summary.modified
--- (written by filemanagerutil.saveSummary on a manual status change).
--- A NUMERIC summary.modified is a KOReader session-close timestamp,
--- refreshed on every close regardless of completion — it is never used as a
--- completion date, or reopening an old finished book would inflate
--- books_year for the current year.
+-- Single source of truth for every "books finished" figure and list. One pass
+-- over ReadHistory yields one entry per book whose sidecar summary.status is
+-- "complete"; books preserved after deletion (sui_store's DeletedBooks, keyed
+-- by partial md5) are merged in when that option is enabled.
+--
+-- Entry fields:
+--   key                 unique id: the file path, or "md5:<md5>" if preserved
+--   filepath            nil for preserved books
+--   title, authors, md5
+--   year                completion year (integer) or nil when unknown
+--   date_started, date_finished   "YYYY-MM-DD" strings or nil
+--   exclude_from_goals  true for books left out of the counts
+--   preserved           true for books no longer on the device
 -- ---------------------------------------------------------------------------
 local _MAX_HIST = 200   -- hard cap: avoids an unbounded scan on huge histories
 
-local function _modifiedInYear(summary, year_str)
-    local mod
-    if summary then
-        if summary.date_finished ~= nil then
-            mod = summary.date_finished
-        elseif type(summary.modified) == "string" then
-            mod = summary.modified
-        end
+--- Completion year of a sidecar summary. Taken from summary.date_finished or,
+--- as a fallback, a STRING summary.modified (written on a manual status
+--- change). A NUMERIC summary.modified is a session-close timestamp refreshed
+--- on every close, so it never counts as a completion date.
+function SP.finishedYear(summary)
+    local stamp = summary.date_finished
+    if stamp == nil and type(summary.modified) == "string" then
+        stamp = summary.modified
     end
-    if mod == nil then return false end
-    if type(mod) == "string" then
-        return #mod >= 4 and mod:sub(1, 4) == year_str
-    end
-    return false
+    if type(stamp) ~= "string" or #stamp < 4 then return nil end
+    return tonumber(stamp:sub(1, 4))
 end
 
--- Also merges in finished books preserved after deletion (sui_store's
--- DeletedBooks, keyed by partial md5) when that option is enabled. Each
--- book's md5 is recorded while scanning ReadHistory so the merge can skip
--- any book already counted from a live sidecar (a book deleted and then
--- re-added takes the live entry, not the preserved one).
-local function countMarkedReadBoth(year_str)
-    local books_year, books_total = 0, 0
+local function _stringOrNil(value)
+    return type(value) == "string" and value or nil
+end
 
-    local ok_DS, DocSettings = pcall(require, "docsettings")
-    if not ok_DS then return books_year, books_total end
+local function _liveEntry(fp, history_entry, data)
+    local summary = data.summary
+    return {
+        key                = fp,
+        filepath           = fp,
+        title              = data.title or history_entry.text or fp,
+        authors            = data.authors or "",
+        md5                = data.partial_md5_checksum,
+        year               = SP.finishedYear(summary),
+        date_started       = _stringOrNil(summary.date_started),
+        date_finished      = _stringOrNil(summary.date_finished) or _stringOrNil(summary.modified),
+        exclude_from_goals = summary.exclude_from_goals,
+    }
+end
+
+local function _preservedEntry(md5, stored)
+    return {
+        key       = "md5:" .. md5,
+        title     = stored.title,
+        authors   = stored.authors,
+        md5       = md5,
+        year      = (stored.year or 0) > 0 and stored.year or nil,
+        preserved = true,
+    }
+end
+
+local function _scanFinishedBooks()
+    local books = {}
 
     local ReadHistory = package.loaded["readhistory"]
-    if not ReadHistory or not ReadHistory.hist then return books_year, books_total end
-
-    -- Borrow the sidecar cache warmed by module_books_shared.prefetchBooks
-    -- (always required before this provider runs) via package.loaded, to
-    -- avoid a circular require.
-    local SH = package.loaded["modules/module_books_shared"]
-    if not SH then
-        logger.warn("simpleui: stats_provider: module_books_shared not loaded — sidecar cache unavailable")
+    local SH          = package.loaded["modules/module_books_shared"]
+    if not (ReadHistory and ReadHistory.hist and SH and SH.sidecarData) then
+        logger.warn("simpleui: stats_provider: history or sidecar cache unavailable")
+        return books
     end
 
-    local ok_SS, SUIStore = pcall(require, "infra/sui_store")
-    local DeletedBooks  = ok_SS and SUIStore and SUIStore.DeletedBooks
+    local ok_store, SUIStore = pcall(require, "infra/sui_store")
+    local DeletedBooks  = ok_store and SUIStore and SUIStore.DeletedBooks
     local merge_deleted = DeletedBooks and DeletedBooks.isEnabled()
-    local counted_md5s  = merge_deleted and {} or nil
+    local seen_md5      = {}
 
-    local limit = math.min(#ReadHistory.hist, _MAX_HIST)
-    for i = 1, limit do
-        local entry = ReadHistory.hist[i]
-        local fp    = entry and entry.file
-        if fp and lfs.attributes(fp, "mode") == "file" then
-            local summary, md5
-            local cached = SH and SH._cacheGet and SH._cacheGet(fp)
-            if cached then
-                summary = cached.summary
-                md5     = cached.partial_md5_checksum
-            else
-                summary, _, md5 = _openAndCacheSidecar(fp, DocSettings, SH)
-            end
-
-            if counted_md5s and md5 then counted_md5s[md5] = true end
-
-            if type(summary) == "table" and summary.status == "complete" and not summary.exclude_from_goals then
-                books_total = books_total + 1
-                if _modifiedInYear(summary, year_str) then
-                    books_year = books_year + 1
-                end
+    for i = 1, math.min(#ReadHistory.hist, _MAX_HIST) do
+        local history_entry = ReadHistory.hist[i]
+        local fp = history_entry and history_entry.file
+        local data = fp and lfs.attributes(fp, "mode") == "file" and SH.sidecarData(fp)
+        if data then
+            -- Any book still on the device supersedes its preserved entry,
+            -- whatever its current status.
+            if data.partial_md5_checksum then seen_md5[data.partial_md5_checksum] = true end
+            if type(data.summary) == "table" and data.summary.status == "complete" then
+                books[#books + 1] = _liveEntry(fp, history_entry, data)
             end
         end
     end
 
     if merge_deleted then
-        local deleted   = DeletedBooks.getAll()
-        local year_int  = tonumber(year_str)
-        for md5, entry in pairs(deleted) do
-            if not counted_md5s[md5] then
-                books_total = books_total + 1
-                if entry.year and entry.year == year_int then
-                    books_year = books_year + 1
-                end
+        for md5, stored in pairs(DeletedBooks.getAll()) do
+            if not seen_md5[md5] then
+                books[#books + 1] = _preservedEntry(md5, stored)
             end
         end
     end
 
-    return books_year, books_total
+    return books
+end
+
+local function _filterByYear(books, year)
+    local matching = {}
+    for _, book in ipairs(books) do
+        if book.year == year then matching[#matching + 1] = book end
+    end
+    return matching
+end
+
+--- Finished books (see entry fields above), restricted to `year` (integer)
+--- when given.
+function SP.getFinishedBooks(year)
+    local books = _scanFinishedBooks()
+    return year and _filterByYear(books, year) or books
+end
+
+--- Number of books in `books` that count towards totals and goals.
+function SP.countFinished(books)
+    local count = 0
+    for _, book in ipairs(books) do
+        if not book.exclude_from_goals then count = count + 1 end
+    end
+    return count
+end
+
+-- Returns the counts for `year_str` and for all time, from a single scan.
+local function countFinishedBooks(year_str)
+    local books = _scanFinishedBooks()
+    return SP.countFinished(_filterByYear(books, tonumber(year_str))), SP.countFinished(books)
 end
 
 -- ---------------------------------------------------------------------------
@@ -421,11 +410,11 @@ end
 -- near-duplicate total_books), but this returns all four so callers can
 -- decide which to show.
 --
--- Unlike countMarkedReadBoth() below, which only sees books present in
+-- Unlike the finished-books scan above, which only sees books present in
 -- ReadHistory (i.e. opened at least once), this needs every book in the
 -- library, so it walks sui_library_scan's file list — itself mtime-cached
 -- per directory — and classifies each one from its sidecar percent/status,
--- reusing the same module_books_shared cache as countMarkedReadBoth().
+-- reusing the same module_books_shared cache as the finished-books scan.
 -- Cached independently of the time-series `_cache` above and computed on
 -- demand.
 
@@ -458,31 +447,17 @@ function SP.getStatusCounts()
 
     local counts = { unread = 0, reading = 0, complete = 0, abandoned = 0 }
     local ok_scan, LibraryScan = pcall(require, "engines/sui_library_scan")
-    local ok_DS, DocSettings   = pcall(require, "docsettings")
-    if not ok_scan or not LibraryScan or not ok_DS then
-        _status_cache = counts
-        return counts
-    end
-    local home = LibraryScan.resolveHomeDir()
-    if not home then
+    local home = ok_scan and LibraryScan and LibraryScan.resolveHomeDir()
+    local SH   = package.loaded["modules/module_books_shared"]
+    if not (home and SH and SH.sidecarData) then
         _status_cache = counts
         return counts
     end
 
-    local SH = package.loaded["modules/module_books_shared"]
-
-    local fps = LibraryScan.getFileList(home)
-    for _, fp in ipairs(fps) do
-        local percent, status
-        local cached = SH and SH._cacheGet and SH._cacheGet(fp)
-        if cached then
-            percent = cached.percent or 0
-            status  = type(cached.summary) == "table" and cached.summary.status or nil
-        elseif lfs.attributes(fp, "mode") == "file" then
-            local summary
-            summary, percent = _openAndCacheSidecar(fp, DocSettings, SH)
-            status = type(summary) == "table" and summary.status or nil
-        end
+    for _, fp in ipairs(LibraryScan.getFileList(home)) do
+        local data    = SH.sidecarData(fp, true)
+        local percent = data and data.percent
+        local status  = data and type(data.summary) == "table" and data.summary.status or nil
         _classifyStatusEntry(counts, percent, status)
     end
 
@@ -577,7 +552,7 @@ function SP.get(db_conn, year_str, needs_books)
             _has_books    = true,
             _changed      = { timeseries = false, streak = false, books = true },
         }
-        local by, bt = countMarkedReadBoth(year_str or tostring(t.year))
+        local by, bt = countFinishedBooks(year_str or tostring(t.year))
         result.books_year  = by
         result.books_total = bt
         _cache = result
@@ -682,7 +657,7 @@ function SP.get(db_conn, year_str, needs_books)
         result.books_total = (_cache and _cache.books_total) or 0
         _books_cache_valid = false
     else
-        local by, bt = countMarkedReadBoth(year_str or tostring(t.year))
+        local by, bt = countFinishedBooks(year_str or tostring(t.year))
         result.books_year  = by
         result.books_total = bt
     end
@@ -750,11 +725,6 @@ function SP.invalidateStreak()
     _books_cache_valid  = true
     _cache_day          = nil
 end
-
--- Reserved for countMarkedReadBoth's shared-cache access via SH — not part
--- of the public API.
-SP._cacheGet = nil
-SP._cachePut = nil
 
 --- Instant, zero-cost return of the last successful SP.get() result. See
 --- the cross-process persistence note above the cache declaration: on cold

@@ -213,8 +213,8 @@ end
 --     …
 --   }
 --
--- year is the calendar year (integer) captured at deletion time from
--- summary.modified — the same source used by countMarkedReadBoth.
+-- year is the completion year (integer, 0 when unknown) captured at deletion
+-- time via the stats provider's finishedYear().
 --
 -- Public API:
 --   DeletedBooks.isEnabled()          → boolean (nil → true, i.e. on by default)

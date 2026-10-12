@@ -5182,16 +5182,7 @@ function M.patchDeleteFile(FileManager, plugin)
         local doc_props = ds:readSetting("doc_props")
         local title   = doc_props and doc_props.title   or ""
         local authors = doc_props and doc_props.authors or ""
-        -- Derive year from summary.modified (same source as countMarkedReadBoth).
-        local year = 0
-        local mod = summary.modified
-        if type(mod) == "number" then
-            year = tonumber(os.date("%Y", mod)) or 0
-        elseif type(mod) == "string" and #mod >= 4 then
-            year = tonumber(mod:sub(1, 4)) or 0
-        elseif type(mod) == "table" and mod.year then
-            year = mod.year
-        end
+        local year = require("modules/module_stats_provider").finishedYear(summary) or 0
         pcall(function() ds:close() end)
         DB.add(md5, title, authors, year)
         logger.dbg("simpleui: preserved deleted finished book in stats:",
