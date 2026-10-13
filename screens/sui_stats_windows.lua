@@ -25,6 +25,7 @@ local Config          = require("infra/sui_config")
 local SUIStyle        = require("features/sui_style")
 local UI              = require("infra/sui_core")
 local SUIStreak       = require("infra/sui_streak")
+local DateNames       = require("infra/sui_datenames")
 
 -- Landscape-aware size multiplier for the few call sites in this file that
 -- run BEFORE any SUIWindow ctx exists — e.g. shared fonts computed once in
@@ -37,23 +38,13 @@ local SUIStreak       = require("infra/sui_streak")
 -- anything nested inside them) uses ctx.SZ(n) instead — the same scale
 -- SUIWindow's own chrome uses, handed in for free, no import needed. The
 -- handful of standalone helpers that build screen content but aren't
--- themselves screen builders (_makeDateCard, _riYearHeader, _riYearlyRow,
+-- themselves screen builders (_makeDateCard, _riYearlyRow,
 -- _riMonthlyChart, _buildInsightsPage2) take SZ as an explicit trailing
 -- parameter from their caller's ctx.SZ, falling back to UI.SZ if ever called
 -- without one.
 local function SZ(n) return UI.SZ(n) end
 
 local StatsWindows = {}
-
-local function _getYearStr() return os.date("%Y") end
-
--- Finished books for the given scope: "year" (current calendar year) or "all".
--- Entries come from the stats provider's shared scan, so the list always
--- matches the counts shown on the homescreen.
-local function _getFinishedBooks(scope)
-    local SP = require("modules/module_stats_provider")
-    return SP.getFinishedBooks(scope == "year" and tonumber(_getYearStr()) or nil)
-end
 
 -- Fetches all statistics for a book from statistics.sqlite3.
 -- Returns a data table on success, or nil + error string on failure.
@@ -367,6 +358,28 @@ local function _fmtDuration(secs)
     end
 end
 
+-- Formats a "YYYY-MM-DD" stamp as a short date, and a "YYYY" stamp as is.
+local function _fmtStamp(stamp)
+    local date = _parseDate(stamp)
+    if not date then return stamp end
+    return string.format("%02d %s %d", date.d, _monthAbbr()[date.m] or "?", date.y)
+end
+
+-- Date range of a finished book for the list: a manually entered book may
+-- carry either stamp, or only a year.
+local function _fmtBookRange(book, start_dates)
+    if book.manual then
+        if book.date_started and book.date_finished then
+            return _fmtStamp(book.date_started) .. " \xe2\x80\x93 " .. _fmtStamp(book.date_finished)
+        end
+        if book.date_finished then return _fmtStamp(book.date_finished) end
+        return _fmtStamp(book.date_started) .. " \xe2\x80\x93"
+    end
+    -- Preserved books have no file to read dates from; show the year only.
+    if not book.filepath then return book.year and tostring(book.year) end
+    return _fmtDateRange(start_dates[book.filepath], book.date_finished)
+end
+
 local function _fmtDate(ts)
     return os.date("%Y-%m-%d", ts)
 end
@@ -388,123 +401,75 @@ end
 
 -- Validates a YYYY-MM-DD string; returns true if the date is well-formed.
 local function _isValidDateStr(s)
-    if type(s) ~= "string" then return false end
-    local y, m, d = s:match("^(%d%d%d%d)-(%d%d)-(%d%d)$")
-    y, m, d = tonumber(y), tonumber(m), tonumber(d)
-    if not (y and m and d) then return false end
-    if m < 1 or m > 12 then return false end
-    if d < 1 or d > 31 then return false end
+    local _year, month = require("modules/module_stats_provider").parseStamp(s)
+    return month ~= nil
+end
+
+-- Applies `mutate(summary)` to the sidecar summary of `filepath` and flushes
+-- it, unless `mutate` returns false (nothing to change). The stats provider
+-- is then told the book changed, so the counts, the ledger and the screens
+-- follow the edit.
+local function _updateSummary(filepath, mutate)
+    if not filepath then return false end
+    local ok_ds, DocSettings = pcall(require, "docsettings")
+    if not ok_ds then return false end
+    local ok_open, ds = pcall(DocSettings.open, DocSettings, filepath)
+    if not ok_open or not ds then return false end
+
+    local summary = ds:readSetting("summary") or {}
+    if mutate(summary) ~= false then
+        ds:saveSetting("summary", summary)
+        ds:flush()
+    end
+
+    local SP = package.loaded["modules/module_stats_provider"]
+    if SP and SP.bookChanged then SP.bookChanged(filepath) end
     return true
 end
 
--- Writes summary.modified (and optionally sets status = "complete") to the
--- sidecar, then flushes it.  Invalidates the module_books_shared cache entry
--- so the next homescreen refresh picks up the new value.
+-- Sets the completion date and marks the book complete.
 local function _writeSummaryModified(filepath, date_str)
-    if not filepath or not _isValidDateStr(date_str) then return false end
-    local ok_ds, DocSettings = pcall(require, "docsettings")
-    if not ok_ds then return false end
-    local ok_open, ds = pcall(function() return DocSettings:open(filepath) end)
-    if not ok_open or not ds then return false end
-    local summary = ds:readSetting("summary") or {}
-    summary.modified = date_str
-    summary.date_finished = date_str
-    if summary.status ~= "complete" then
-        summary.status = "complete"
-    end
-    ds:saveSetting("summary", summary)
-    pcall(function() ds:flush() end)
-    pcall(function() ds:close() end)
-    -- Invalidate shared sidecar cache if available.
-    local SH = package.loaded["modules/module_books_shared"]
-    if SH then
-        -- module_books_shared's real API is invalidateSidecarCache(), not
-        -- _cacheInvalidate/_cache (those never existed — this used to be a
-        -- silent no-op, same class of wrong-module-reference bug as the
-        -- Library quick-action series-view fix).
-        if SH.invalidateSidecarCache then
-            SH.invalidateSidecarCache(filepath)
-        end
-    end
-    return true
+    if not _isValidDateStr(date_str) then return false end
+    return _updateSummary(filepath, function(summary)
+        summary.modified      = date_str
+        summary.date_finished = date_str
+        summary.status        = "complete"
+    end)
 end
 
--- Writes summary.date_started to the sidecar and flushes it.
--- This is a SimpleUI-only field; KOReader ignores unknown sidecar keys.
+-- Sets the start date. SimpleUI-only field; KOReader ignores unknown sidecar keys.
 local function _writeSummaryStarted(filepath, date_str)
-    if not filepath or not _isValidDateStr(date_str) then return false end
-    local ok_ds, DocSettings = pcall(require, "docsettings")
-    if not ok_ds then return false end
-    local ok_open, ds = pcall(function() return DocSettings:open(filepath) end)
-    if not ok_open or not ds then return false end
-    local summary = ds:readSetting("summary") or {}
-    summary.date_started = date_str
-    ds:saveSetting("summary", summary)
-    pcall(function() ds:flush() end)
-    pcall(function() ds:close() end)
-    local SH = package.loaded["modules/module_books_shared"]
-    if SH then
-        -- module_books_shared's real API is invalidateSidecarCache(), not
-        -- _cacheInvalidate/_cache (those never existed — this used to be a
-        -- silent no-op, same class of wrong-module-reference bug as the
-        -- Library quick-action series-view fix).
-        if SH.invalidateSidecarCache then
-            SH.invalidateSidecarCache(filepath)
+    if not _isValidDateStr(date_str) then return false end
+    return _updateSummary(filepath, function(summary)
+        summary.date_started = date_str
+    end)
+end
+
+local function _writeSummaryExclude(filepath, excluded)
+    return _updateSummary(filepath, function(summary)
+        summary.exclude_from_goals = excluded and true or nil
+    end)
+end
+
+-- Removes keys from the summary (used by the Reset button to revert to the
+-- DB-derived fallback).
+local function _deleteSummaryFields(filepath, ...)
+    local keys = { ... }
+    return _updateSummary(filepath, function(summary)
+        local changed = false
+        for _, key in ipairs(keys) do
+            if summary[key] ~= nil then
+                summary[key] = nil
+                changed      = true
+            end
         end
-    end
-    return true
+        return changed
+    end)
 end
 
 -- Builds a date range card with independently tappable start/end halves.
 --
 -- Parameters:
--- Writes summary.exclude_from_goals to the sidecar and flushes it.
-local function _writeSummaryExclude(filepath, val)
-    if not filepath then return false end
-    local ok_ds, DocSettings = pcall(require, "docsettings")
-    if not ok_ds then return false end
-    local ok_open, ds = pcall(function() return DocSettings:open(filepath) end)
-    if not ok_open or not ds then return false end
-    local summary = ds:readSetting("summary") or {}
-    summary.exclude_from_goals = val and true or nil
-    ds:saveSetting("summary", summary)
-    pcall(function() ds:flush() end)
-    pcall(function() ds:close() end)
-    local SH = package.loaded["modules/module_books_shared"]
-    if SH then
-        -- module_books_shared's real API is invalidateSidecarCache(), not
-        -- _cacheInvalidate/_cache (those never existed — this used to be a
-        -- silent no-op, same class of wrong-module-reference bug as the
-        -- Library quick-action series-view fix).
-        if SH.invalidateSidecarCache then
-            SH.invalidateSidecarCache(filepath)
-        end
-    end
-    return true
-end
-
--- Removes a single key from summary in the sidecar (sets it to nil).
--- Used by the Reset button to revert to the DB-derived fallback.
-local function _deleteSummaryField(filepath, key)
-    if not filepath or not key then return false end
-    local ok_ds, DocSettings = pcall(require, "docsettings")
-    if not ok_ds then return false end
-    local ok_open, ds = pcall(function() return DocSettings:open(filepath) end)
-    if not ok_open or not ds then return false end
-    local summary = ds:readSetting("summary")
-    if type(summary) == "table" and summary[key] ~= nil then
-        summary[key] = nil
-        ds:saveSetting("summary", summary)
-        pcall(function() ds:flush() end)
-    end
-    pcall(function() ds:close() end)
-    local SH = package.loaded["modules/module_books_shared"]
-    if SH then
-        if SH.invalidateSidecarCache then SH.invalidateSidecarCache(filepath) end
-    end
-    return true
-end
-
 --   inner_w           – full inner width
 --   PAD_H             – horizontal padding (passed in to match caller's layout)
 --   date_start_str    – string to display on the left  (YYYY-MM-DD or "–")
@@ -619,17 +584,14 @@ local function _makeDateCard(inner_w, PAD_H,
     local start_widget = makeSideTappable(
         date_start_str, _("Date started"),
         _writeSummaryStarted,
-        function(fp) _deleteSummaryField(fp, "date_started") end,
+        function(fp) _deleteSummaryFields(fp, "date_started") end,
         original_start_str,
         on_start_saved)
 
     local end_widget = makeSideTappable(
         date_end_str, _("Date finished"),
         _writeSummaryModified,
-        function(fp)
-            _deleteSummaryField(fp, "date_finished")
-            _deleteSummaryField(fp, "modified")
-        end,
+        function(fp) _deleteSummaryFields(fp, "date_finished", "modified") end,
         original_end_str,
         on_end_saved)
 
@@ -677,29 +639,55 @@ local function _openBookFromStats(filepath)
     })
 end
 
---- Lists finished books. `scope` is "year" (default) or "all".
-function StatsWindows.showFinishedBooksDialog(initial_page, scope)
+-- Year-dropdown options covering min_year..max_year, newest first.
+local function _yearOptions(min_year, max_year)
+    local options = {}
+    for year = max_year, min_year, -1 do
+        options[#options + 1] = { value = year, text = tostring(year) }
+    end
+    return options
+end
+
+--- Lists finished books one year at a time, with a year selector.
+--- opts: { initial_year = number (default: current year), on_back = function }
+function StatsWindows.showFinishedBooksDialog(opts)
+    opts = opts or {}
     _lazyLoad()
-    local SUIWindow = require("engines/sui_window")
-    scope = scope or "year"
-    local year_str = _getYearStr()
+    local SUIWindow   = require("engines/sui_window")
+    local SP          = require("modules/module_stats_provider")
+    local ManualBooks = require("features/sui_manual_books")
 
-    local books = _getFinishedBooks(scope)
+    local selected_year = opts.initial_year or tonumber(os.date("%Y"))
+    local min_year, max_year, books_by_year, start_dates, book_date_range
 
-    if #books == 0 then
-        UI.Notify.toast(scope == "year"
-            and string.format(_("No books finished in %s"), year_str)
-            or _("No books finished"))
-        return
+    -- Reads the finished books and derives everything the list shows from
+    -- them. Returns how many there are.
+    local function loadBooks()
+        local all_books = SP.getFinishedBooks()
+        min_year, max_year = SP.getFinishedYears()
+        selected_year = math.max(min_year, math.min(selected_year, max_year))
+
+        -- Books per completion year; each list keeps the provider's newest-first order.
+        books_by_year = {}
+        for _i, book in ipairs(all_books) do
+            if book.year then
+                local list = books_by_year[book.year] or {}
+                list[#list + 1] = book
+                books_by_year[book.year] = list
+            end
+        end
+
+        start_dates     = _getStartDatesForBooks(all_books)
+        book_date_range = {}
+        for _i, book in ipairs(all_books) do
+            book_date_range[book.key] = _fmtBookRange(book, start_dates)
+        end
+        return #all_books
     end
 
-    local start_dates     = _getStartDatesForBooks(books)
-    local book_date_range = {}
-    for _, book in ipairs(books) do
-        -- Preserved books have no file to read dates from; show the year only.
-        book_date_range[book.key] = book.filepath
-            and _fmtDateRange(start_dates[book.filepath], book.date_finished)
-            or (book.year and tostring(book.year))
+    if loadBooks() == 0 then
+        UI.Notify.toast(_("No books finished"))
+        return
     end
 
     local face_stat_title  = Font:getFace(SUIStyle.FACE_REGULAR, SZ(SUIStyle.FS_SUBTITLE))
@@ -737,10 +725,35 @@ function StatsWindows.showFinishedBooksDialog(initial_page, scope)
         return _cell_geo
     end
 
+    -- Returns a callback that re-reads the books and repaints `ctx`'s screen.
+    local function reloaderFor(ctx)
+        return function()
+            loadBooks()
+            ctx.repaint()
+        end
+    end
+
+    -- Returns a callback that re-reads the books and returns to the screen
+    -- below the current one.
+    local function reloaderAndPopFor(ctx)
+        return function()
+            loadBooks()
+            ctx.pop()
+        end
+    end
+
+    local function openAddBookMenu(ctx)
+        ctx.push("nested_menu", {
+            title = ManualBooks.menuTitle(),
+            items = ManualBooks.makeEntryItems(reloaderAndPopFor(ctx)),
+        })
+    end
+
     local function buildListScreen(ctx)
         local inner_w = ctx.inner_w
         local rows = {}
-        for i, book in ipairs(books) do
+        local reload = reloaderFor(ctx)
+        for _i, book in ipairs(books_by_year[selected_year] or {}) do
             local date_range = book_date_range[book.key] or "\xe2\x80\x93"
             local sub_text
             if book.authors and book.authors ~= "" then
@@ -754,25 +767,63 @@ function StatsWindows.showFinishedBooksDialog(initial_page, scope)
                     sub_text = _("Excluded")
                 end
             end
-            rows[#rows + 1] = SUIWindow.ListRow{
+
+            local row = {
                 inner_w      = inner_w,
                 title        = book.title,
                 subtitle     = sub_text,
                 right_value  = date_range,
                 dim_only     = book.exclude_from_goals,
-                show_chevron = book.filepath ~= nil,
+                show_chevron = book.filepath ~= nil or book.manual,
                 separator    = true,
-                on_tap       = book.filepath and function()
+            }
+            if book.count then
+                -- Books entered as a plain number: one row standing for all of them.
+                row.title       = _("Manual Yearly Count")
+                row.right_value = string.format(N_("%d book", "%d books", book.count), book.count)
+                row.on_tap      = function() ManualBooks.showCountDialog(book.year, reload) end
+            elseif book.manual then
+                row.on_tap = function() ManualBooks.showBookDialog(book, reload) end
+            elseif book.filepath then
+                row.on_tap = function()
                     local d, err = _fetchBookStatsData(book)
                     if not d then
                         UI.Notify.toast(err or _("Unknown error."))
                         return
                     end
                     ctx.push("book_stats", { book = book, stats = d })
-                end or nil,
+                end
+            end
+            rows[#rows + 1] = SUIWindow.ListRow(row)
+        end
+        if #rows == 0 then
+            rows[1] = SUIWindow.ListRow{
+                inner_w  = inner_w,
+                title    = string.format(_("No books finished in %s"), tostring(selected_year)),
+                dim_only = true,
             }
         end
         return rows
+    end
+
+    -- Year selector and the add-book button, fixed above the list on every page.
+    local function buildListHeader(ctx)
+        return SUIWindow.ToolbarRow{
+            inner_w = ctx.inner_w,
+            left    = SUIWindow.PeriodDropdown{
+                compact   = true,
+                options   = _yearOptions(min_year, max_year),
+                selected  = selected_year,
+                on_select = function(year)
+                    selected_year = year
+                    ctx.repaint()
+                end,
+            },
+            right   = SUIWindow.SquareButton{
+                glyph  = SUIStyle.icon("add_book"),
+                on_tap = function() openAddBookMenu(ctx) end,
+            },
+        }
     end
 
     local function buildStatsScreen(ctx)
@@ -1128,11 +1179,6 @@ function StatsWindows.showFinishedBooksDialog(initial_page, scope)
                         local next_val = not book.exclude_from_goals
                         book.exclude_from_goals = next_val and true or nil
                         _writeSummaryExclude(fp, book.exclude_from_goals)
-
-                        -- Force full stats invalidation so homescreen widget / stats provider update
-                        local SP = package.loaded["modules/module_stats_provider"]
-                        if SP and SP.invalidate then SP.invalidate() end
-
                         ctx.repaint()
                     end
                 ),
@@ -1184,42 +1230,31 @@ function StatsWindows.showFinishedBooksDialog(initial_page, scope)
         }
     end
 
-    local function titleFn(ctx)
-        local count = require("modules/module_stats_provider").countFinished(books)
-        if scope == "year" then
-            return string.format(
-                N_("%d book read in %s", "%d books read in %s", count),
-                count, year_str)
-        end
+    local function titleFn()
+        local count = SP.countFinished(books_by_year[selected_year] or {})
         return string.format(N_("%d book read", "%d books read", count), count)
     end
 
+    local screens = SUIWindow.makeSettingsScreens(buildListScreen)
+    screens.book_stats = buildStatsScreen
+
     local win = SUIWindow:new{
         name           = "sui_win_reading_history",
+        on_back        = opts.on_back,
         title          = titleFn,
+        screen_titles  = {
+            nested_menu = function(ctx) return ctx.current().params.title end,
+        },
         -- Matches the Settings window's height (SUIWindow's own default,
         -- 23/30 of portrait height), same as Reading Insights/Streak.
         height         = math.floor((select(2, UI.getPortraitDims())) * 23 / 30),
         position       = "bottom",
         navpager_mode  = require("infra/sui_config").isNavpagerEnabled(),
-        screens        = {
-            __root__   = buildListScreen,
-            book_stats = buildStatsScreen,
+        screens        = screens,
+        screen_headers = {
+            __root__   = buildListHeader,
         },
     }
-    if initial_page and initial_page > 1 then
-        local real_show = win.show
-        function win:show()
-            real_show(self)
-            UIManager:nextTick(function()
-                if self._total_pages and initial_page <= self._total_pages then
-                    self._current_page = initial_page
-                    self:_repaint()
-                end
-            end)
-        end
-    end
-
     win:show()
 end
 
@@ -1749,73 +1784,6 @@ local function _riFmtCount(n)
 end
 
 
-
--- SZ threaded in by the caller (ctx.SZ); falls back to UI.SZ if ever called
--- without one (identical value during a synchronous window build).
-local function _riYearHeader(inner_w, year, year_range, on_prev, on_next, SZ)
-    SZ = SZ or UI.SZ
-    local face = Font:getFace(SUIStyle.FACE_REGULAR, SZ(SUIStyle.FS_SUBTITLE))
-    local face_chev = Font:getFace(SUIStyle.FACE_ICONS, math.floor(SZ(SUIStyle.FS_TITLE * 1.8)))
-    local CLR_BLACK = SUIStyle.COLOR.text_primary
-
-    local prev_enabled = year > year_range.min_year
-    local next_enabled = year < year_range.max_year
-
-    local gap = SZ(Screen:scaleBySize(16))
-    local btn_w = SZ(Screen:scaleBySize(60))
-
-    local year_lbl = TextWidget:new{
-        text    = tostring(year),
-        face    = face,
-        fgcolor = CLR_BLACK,
-        bold    = true,
-        padding = 0,
-    }
-
-    local lbl_w = year_lbl:getSize().w
-    local lbl_h = year_lbl:getSize().h
-
-    local function navBtn(label, enabled, cb)
-        local tw = TextWidget:new{
-            text    = label,
-            face    = face_chev,
-            fgcolor = enabled and CLR_BLACK or SUIStyle.COLOR.disabled,
-            padding   = 0,
-        }
-        local ic = InputContainer:new{
-            dimen = Geom:new{ w = btn_w, h = lbl_h },
-            _CenterContainer:new{
-                dimen = Geom:new{ w = btn_w, h = lbl_h },
-                tw,
-            }
-        }
-        if enabled then
-            ic.ges_events = {
-                Tap = { GestureRange:new{ ges = "tap",
-                    range = function() return ic.dimen end } },
-            }
-            function ic:onTap() cb(); return true end
-        end
-        return ic
-    end
-
-    local prev_btn = navBtn("\u{E840}", prev_enabled, on_prev)
-    local next_btn = navBtn("\u{E841}", next_enabled, on_next)
-
-    local center_x = math.floor(inner_w / 2)
-    local half_lbl = math.floor(lbl_w / 2)
-
-    prev_btn.overlap_offset = { center_x - half_lbl - gap - btn_w, 0 }
-    year_lbl.overlap_offset = { center_x - half_lbl, 0 }
-    next_btn.overlap_offset = { center_x + half_lbl + gap, 0 }
-
-    return OverlapGroup:new{
-        dimen = Geom:new{ w = inner_w, h = lbl_h },
-        prev_btn,
-        year_lbl,
-        next_btn,
-    }
-end
 
 -- Builds the two-column yearly stat row (days/hours | pages).
 -- Returns a HorizontalGroup of two tappable cells.
@@ -2383,27 +2351,10 @@ end
 -- remembered, but is not written to LuaSettings (ephemeral preference).
 local _ri_mode_key = "days"  -- "days" | "hours"
 
---- Shows a brief "Loading statistics…" toast and flushes it to the e-ink
---- screen immediately, so there is visible feedback before the (potentially
---- slow) SQLite queries run.
----
---- Controlled by the "simpleui_stats_loading_notice" setting (default on).
---- Callers must invoke this *before* any blocking work so the notice reaches
---- the screen while the homescreen/library dialog is still the background.
-function StatsWindows.showLoadingNotice()
-    local ok_ss, SUISettings = pcall(require, "infra/sui_store")
-    if ok_ss and SUISettings and not SUISettings:nilOrTrue("simpleui_stats_loading_notice") then
-        return nil
-    end
-    local notice = UI.Notify.sticky(_("Loading statistics…"), { timeout = 0.0 })
-    StatsWindows._loading_notice = notice
-    return notice
-end
-
 --- Opens the Reading Insights window.
---- Can be called from module_reading_stats (streak card tap) or any other
---- SimpleUI touch-point.
-function StatsWindows.showReadingInsightsWindow(on_close_extra)
+--- opts: { on_close = function, on_back = function }
+function StatsWindows.showReadingInsightsWindow(opts)
+    opts = opts or {}
     _lazyLoad()
     local SUIWindow = require("engines/sui_window")
 
@@ -2523,24 +2474,18 @@ function StatsWindows.showReadingInsightsWindow(on_close_extra)
         }
 
         -- ── Section 2: year header + stats row ───────────────────────
-        local function goPrev()
-            if selected_year > year_range.min_year then
-                selected_year = selected_year - 1
-                _riGetOrFetchYear(selected_year)
-                ctx.repaint()
-            end
+        local function setYear(year)
+            selected_year = year
+            _riGetOrFetchYear(year)
+            ctx.repaint()
         end
 
-        local function goNext()
-            if selected_year < year_range.max_year then
-                selected_year = selected_year + 1
-                _riGetOrFetchYear(selected_year)
-                ctx.repaint()
-            end
-        end
-
-        local year_header = _riYearHeader(inner_w, selected_year,
-                                          year_range, goPrev, goNext, ctx.SZ)
+        local year_header = SUIWindow.PeriodDropdown{
+            inner_w   = inner_w,
+            options   = _yearOptions(year_range.min_year, year_range.max_year),
+            selected  = selected_year,
+            on_select = setYear,
+        }
 
         local function toggleMode()
             _ri_mode_key = (_ri_mode_key == "hours") and "days" or "hours"
@@ -2603,7 +2548,7 @@ function StatsWindows.showReadingInsightsWindow(on_close_extra)
             alltime_block,
         }
 
-        -- year_header already renders its own year number + prev/next nav,
+        -- year_header already renders its own year number + year dropdown,
         -- so it doubles as this group's title — no separate sectionLabel
         -- needed. Split out from the old combined alltime_and_year block:
         -- that single item bundled ALL TIME + year nav + yearly row + the
@@ -2621,7 +2566,7 @@ function StatsWindows.showReadingInsightsWindow(on_close_extra)
         local year_chart_section = VerticalGroup:new{ align = "left",
             VerticalSpan:new{ width = ctx.SZ(Screen:scaleBySize(16)) },
             year_header,
-            VerticalSpan:new{ width = ctx.SZ(Screen:scaleBySize(4)) },
+            VerticalSpan:new{ width = ctx.SZ(Screen:scaleBySize(8)) },
             yearly_row,
             VerticalSpan:new{ width = ctx.SZ(Screen:scaleBySize(16)) },
             chart,
@@ -2639,17 +2584,13 @@ function StatsWindows.showReadingInsightsWindow(on_close_extra)
         }
     end
 
-    -- Swipe navigation: swipe left = next year, swipe right = prev year.
-    -- Implemented via a screen_footer that is invisible but gesture-aware.
-    -- (SUIWindow wraps content so we rely on the window's own onSwipe if
-    --  the framework exposes it; otherwise we skip and rely on tap buttons.)
-
     local function titleFn(ctx)
         return _("Reading Insights")
     end
 
     local win = SUIWindow:new{
         name          = "sui_win_reading_insights",
+        on_back       = opts.on_back,
         title         = titleFn,
         -- Matches the Settings window's height (SUIWindow's own default,
         -- 23/30 of portrait height, when no explicit height is passed),
@@ -2662,7 +2603,7 @@ function StatsWindows.showReadingInsightsWindow(on_close_extra)
         },
         on_close = function()
             _riClearCache()
-            if on_close_extra then on_close_extra() end
+            if opts.on_close then opts.on_close() end
         end,
     }
     win_ref = win
@@ -2681,7 +2622,7 @@ end
 -- mode simply never has that section to add).
 --
 -- Calendar layout: day_width from inner_w/7, filler cells for out-of-month
--- padding, chevron month navigation, Sunday-first week.
+-- padding, month dropdown selector, Sunday-first week.
 -- ===========================================================================
 
 -- Frozen-day badge glyph: nf-fa-snowflake-o (U+F2DC), rendered in place of
@@ -2694,38 +2635,16 @@ end
 local _SM_STREAK_ICON = "\u{F490}"  -- nf-fa-fire — same glyph/meaning as the homescreen card
 local _SM_FROZEN_ICON = "\u{F2DC}"  -- nf-fa-snowflake-o — frozen-day badge
 
+-- Calendar page sizing: the most week rows a month can span, and the
+-- smallest day-cell height (before scaling) the grid may be squeezed to.
+local CAL_MAX_WEEKS  = 6
+local CAL_MIN_CELL_H = 24
+
 -- Day-cell circle fill colours (see _smDayCell): a dark dot for
 -- unread/future/filler days, and a light fill for every day that
 -- counts toward the streak — whether that's a lone active day (plain
 -- circle, no icon) or a day within a run of 2+ (streak-fire or frozen-
 -- snowflake icon on the same light circle).
-
--- Sunday-first weekday abbreviations and full month names, translated via
--- this project's own _() i18n (mirrors the existing _monthAbbr() pattern in
--- this same file) rather than pulling locale tables from KOReader's
--- `datetime` module, so these strings land in simpleui.pot/pt_PT.po/pt_BR.po
--- like every other user-facing string in the plugin.
-local _SM_WEEKDAY_ABBR
-local function _smWeekdayAbbr()
-    if not _SM_WEEKDAY_ABBR then
-        _SM_WEEKDAY_ABBR = {
-            _("Sun"), _("Mon"), _("Tue"), _("Wed"), _("Thu"), _("Fri"), _("Sat"),
-        }
-    end
-    return _SM_WEEKDAY_ABBR
-end
-
-local _SM_MONTH_FULL
-local function _smMonthFull()
-    if not _SM_MONTH_FULL then
-        _SM_MONTH_FULL = {
-            _("January"), _("February"), _("March"), _("April"),
-            _("May"), _("June"), _("July"), _("August"),
-            _("September"), _("October"), _("November"), _("December"),
-        }
-    end
-    return _SM_MONTH_FULL
-end
 
 -- ---------------------------------------------------------------------------
 -- Data fetchers
@@ -2779,75 +2698,6 @@ local function _smGetMonthActiveDates(year, month)
 
     _sm_month_cache[key] = set
     return set
-end
-
--- ---------------------------------------------------------------------------
--- _smMonthHeader — month/year label with prev/next chevrons.
--- Mirrors _riYearHeader's exact OverlapGroup/navBtn construction (same
--- codepoints, same centring approach) so month navigation here looks and
--- behaves like year navigation in Reading Insights.
--- ---------------------------------------------------------------------------
-local function _smMonthHeader(inner_w, year, month, prev_enabled, next_enabled, on_prev, on_next, SZ)
-    SZ = SZ or UI.SZ
-    local face      = Font:getFace(SUIStyle.FACE_REGULAR, SZ(SUIStyle.FS_SUBTITLE))
-    local face_chev = Font:getFace(SUIStyle.FACE_ICONS, math.floor(SZ(SUIStyle.FS_TITLE * 1.8)))
-    local CLR_BLACK = SUIStyle.COLOR.text_primary
-
-    local gap   = SZ(Screen:scaleBySize(16))
-    local btn_w = SZ(Screen:scaleBySize(60))
-
-    local label_txt = _smMonthFull()[month] .. " " .. tostring(year)
-    local label_w = TextWidget:new{
-        text    = label_txt,
-        face    = face,
-        fgcolor = CLR_BLACK,
-        bold    = true,
-        padding = 0,
-    }
-
-    local lbl_w = label_w:getSize().w
-    local lbl_h = label_w:getSize().h
-
-    local function navBtn(label, enabled, cb)
-        local tw = TextWidget:new{
-            text    = label,
-            face    = face_chev,
-            fgcolor = enabled and CLR_BLACK or SUIStyle.COLOR.disabled,
-            padding = 0,
-        }
-        local ic = InputContainer:new{
-            dimen = Geom:new{ w = btn_w, h = lbl_h },
-            _CenterContainer:new{
-                dimen = Geom:new{ w = btn_w, h = lbl_h },
-                tw,
-            }
-        }
-        if enabled then
-            ic.ges_events = {
-                Tap = { GestureRange:new{ ges = "tap",
-                    range = function() return ic.dimen end } },
-            }
-            function ic:onTap() cb(); return true end
-        end
-        return ic
-    end
-
-    local prev_btn = navBtn("\u{E840}", prev_enabled, on_prev)
-    local next_btn = navBtn("\u{E841}", next_enabled, on_next)
-
-    local center_x = math.floor(inner_w / 2)
-    local half_lbl = math.floor(lbl_w / 2)
-
-    prev_btn.overlap_offset = { center_x - half_lbl - gap - btn_w, 0 }
-    label_w.overlap_offset  = { center_x - half_lbl, 0 }
-    next_btn.overlap_offset = { center_x + half_lbl + gap, 0 }
-
-    return OverlapGroup:new{
-        dimen = Geom:new{ w = inner_w, h = lbl_h },
-        prev_btn,
-        label_w,
-        next_btn,
-    }
 end
 
 -- ---------------------------------------------------------------------------
@@ -2915,9 +2765,9 @@ local function _smDayCell(SZ, cell_w, cell_h, is_counted, is_frozen, is_run)
 end
 
 --- Opens the Streak window.
---- Can be called from module_reading_stats (streak card tap) or any other
---- SimpleUI touch-point.
-function StatsWindows.showStreakManagerWindow()
+--- opts: { on_back = function }
+function StatsWindows.showStreakManagerWindow(opts)
+    opts = opts or {}
     _lazyLoad()
     local SUIWindow = require("engines/sui_window")
 
@@ -2937,6 +2787,9 @@ function StatsWindows.showStreakManagerWindow()
     local now_t = os.date("*t")
     local selected_year  = now_t.year
     local selected_month = now_t.month
+    -- Earliest year the month selector offers: the first year with any
+    -- recorded reading.
+    local first_year = math.min(_riGetYearRange().min_year, now_t.year)
 
     local function buildRootScreen(ctx)
         local inner_w    = ctx.inner_w
@@ -3025,43 +2878,27 @@ function StatsWindows.showStreakManagerWindow()
             TextWidget:new{ text = _("CALENDAR"), face = face_section, fgcolor = CLR_BLACK, bold = true },
             VerticalSpan:new{ width = ctx.SZ(Screen:scaleBySize(8)) },
         }
+        -- Small breathing-room gap between the calendar and where page 2
+        -- starts (day_section, force_new_page).
+        local after_calendar_spacer = VerticalSpan:new{ width = ctx.SZ(Screen:scaleBySize(12)) }
 
         -- ── Month calendar ───────────────────────────────────────────────
-        local function goPrevMonth()
-            selected_month = selected_month - 1
-            if selected_month < 1 then
-                selected_month = 12
-                selected_year  = selected_year - 1
-            end
-            ctx.repaint()
-        end
-
-        local function goNextMonth()
-            -- Never browse past the current real month — there is nothing
-            -- meaningful to show beyond it, and "future days dimmed" only
-            -- needs to apply within the current month view.
-            if selected_year < now_t.year
-                    or (selected_year == now_t.year and selected_month < now_t.month) then
-                selected_month = selected_month + 1
-                if selected_month > 12 then
-                    selected_month = 1
-                    selected_year  = selected_year + 1
-                end
-                ctx.repaint()
-            end
-        end
-
-        local next_enabled = selected_year < now_t.year
-            or (selected_year == now_t.year and selected_month < now_t.month)
-
-        -- The calendar now sits inside a rounded bordered frame (see
-        -- calendar_frame below), so cal_w leaves room for that frame's
-        -- own left/right padding instead of spanning the full inner_w.
+        -- The calendar sits inside a rounded bordered frame (see
+        -- calendar_group below), so cal_w leaves room for that frame's own
+        -- left/right padding instead of spanning the full inner_w.
         local cal_pad = ctx.SZ(Screen:scaleBySize(16))
         local cal_w   = inner_w - 2 * cal_pad
 
-        local month_header = _smMonthHeader(cal_w, selected_year, selected_month,
-            true, next_enabled, goPrevMonth, goNextMonth, ctx.SZ)
+        local month_header = SUIWindow.MonthDropdown{
+            inner_w   = cal_w,
+            selected  = { year = selected_year, month = selected_month },
+            first     = { year = first_year,    month = 1 },
+            last      = { year = now_t.year,    month = now_t.month },
+            on_select = function(year, month)
+                selected_year, selected_month = year, month
+                ctx.repaint()
+            end,
+        }
 
         -- Weekday header row (Sunday-first).
         --
@@ -3090,7 +2927,7 @@ function StatsWindows.showStreakManagerWindow()
 
         local face_wd = Font:getFace(SUIStyle.FACE_REGULAR, ctx.SZ(SUIStyle.FS_CAPTION))
         local weekday_row = HorizontalGroup:new{ align = "center" }
-        for i, name in ipairs(_smWeekdayAbbr()) do
+        for i, name in ipairs(DateNames.weekdayShort()) do
             weekday_row[#weekday_row + 1] = _CenterContainer:new{
                 dimen = Geom:new{ w = cell_w, h = wd_h },
                 TextWidget:new{ text = name, face = face_wd, fgcolor = SUIStyle.COLOR.text_dim, bold = true },
@@ -3112,7 +2949,21 @@ function StatsWindows.showStreakManagerWindow()
         local first_wday = os.date("*t", os.time{ year = selected_year, month = selected_month, day = 1 }).wday
         -- os.date's wday is already 1=Sunday..7=Saturday, matching the
         -- Sunday-first week this window uses — no remapping needed.
-        local cell_h = math.floor(cell_h_full * CAL_SCALE)
+
+        -- Cell height: the natural size, capped so that the tallest month
+        -- (CAL_MAX_WEEKS rows) still fits on the calendar page together
+        -- with everything above and around the grid. The cap is the same
+        -- for every month, so the dots keep one size while browsing; the
+        -- window itself still shrinks to the rows the month actually has.
+        local calendar_chrome_h = top_spacer:getSize().h + month_header:getSize().h
+            + ctx.SZ(Screen:scaleBySize(12))                     -- gap under the header
+            + 2 * (cal_pad + SUIStyle.BORDER_SZ)                  -- frame
+            + wd_h + span_full                                    -- weekday row
+            + after_calendar_spacer:getSize().h
+        local max_cell_h = math.floor((ctx.page_h - calendar_chrome_h
+            - (CAL_MAX_WEEKS - 1) * span_full) / CAL_MAX_WEEKS)
+        local cell_h = math.max(ctx.SZ(Screen:scaleBySize(CAL_MIN_CELL_H)),
+            math.min(math.floor(cell_h_full * CAL_SCALE), max_cell_h))
 
         -- Precompute, for every real day in the month, whether it counts
         -- toward the streak (real activity or — in freeze mode — a spent
@@ -3387,12 +3238,15 @@ function StatsWindows.showStreakManagerWindow()
             }
         end
 
-        -- Small breathing-room gap between the calendar and where page 2
-        -- starts (day_section, force_new_page) — stays on page 1 since it's
-        -- ordered before the widget that forces the break.
-        local after_calendar_spacer = VerticalSpan:new{ width = ctx.SZ(Screen:scaleBySize(12)) }
+        -- The calendar page is one indivisible item, so pagination can never
+        -- separate the heading, the calendar and the gap below it.
+        local calendar_section = VerticalGroup:new{ align = "left",
+            top_spacer,
+            calendar_group,
+            after_calendar_spacer,
+        }
 
-        local items = { top_spacer, calendar_group, after_calendar_spacer, day_section, week_section }
+        local items = { calendar_section, day_section, week_section }
         if freeze_section then
             items[#items + 1] = freeze_section
         end
@@ -3401,6 +3255,7 @@ function StatsWindows.showStreakManagerWindow()
 
     local win = SUIWindow:new{
         name          = "sui_win_streak_manager",
+        on_back       = opts.on_back,
         title         = function() return _("Streak") end,
         -- height is now the max ceiling, not the fixed size: auto_height_per_page
         -- shrinks each page (calendar-only page 1, streak-boxes page 2) to its
@@ -3422,15 +3277,14 @@ end
 
 
 -- Opens a standalone SUIWindow showing the per-book statistics screen for the
--- book at `filepath`.  This is the same "book_stats" screen rendered inside
+-- book at opts.filepath. This is the same "book_stats" screen rendered inside
 -- showFinishedBooksDialog, but surfaced directly from the library long-press
 -- dialog without requiring the user to navigate through the history list.
---
--- Usage:
---   local ok, SW = pcall(require, "screens/sui_stats_windows")
---   if ok and SW then SW.showBookStatsFromFile(filepath) end
+-- opts: { filepath = string, on_back = function }
 -- ===========================================================================
-function StatsWindows.showBookStatsFromFile(filepath)
+function StatsWindows.showBookStatsFromFile(opts)
+    opts = opts or {}
+    local filepath = opts.filepath
     if not filepath then return end
     _lazyLoad()
 
@@ -3839,6 +3693,7 @@ function StatsWindows.showBookStatsFromFile(filepath)
 
     local win = SUIWindow:new{
         name     = "sui_win_book_stats_standalone",
+        on_back  = opts.on_back,
         title    = _("Book Statistics"),
         -- Matches the Settings window's height (SUIWindow's own default,
         -- 23/30 of portrait height), same as the other stats windows.
@@ -3847,10 +3702,6 @@ function StatsWindows.showBookStatsFromFile(filepath)
         navpager_mode = require("infra/sui_config").isNavpagerEnabled(),
         screens  = { __root__ = buildStatsScreen },
     }
-    if StatsWindows._loading_notice then
-        UI.Notify.close(StatsWindows._loading_notice)
-        StatsWindows._loading_notice = nil
-    end
     win:show()
 end
 

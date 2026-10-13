@@ -962,10 +962,10 @@ function ScreenWidget:init()
                     for mod_id, slot in pairs(self._book_mod_slots) do
                         if on_current_page[mod_id] then
                             -- Hit-test against the layout wrapper when present: the raw
-                            -- build() result sits inside wrapBox (FrameContainer /
-                            -- HorizontalGroup for the module frame & background) and
-                            -- may not carry absolute screen dimen. The pooled wrapper
-                            -- always does — it is what the body lays out and paints.
+                            -- build() result sits inside the module chrome (frame &
+                            -- background) and may not carry absolute screen dimen. The
+                            -- pooled wrapper always does — it is what the body lays out
+                            -- and paints.
                             local hit_dimen
                             if slot.has_menu and self._wrapper_pool then
                                 local wrap = self._wrapper_pool[mod_id]
@@ -3943,6 +3943,23 @@ end
 function ScreenEngine.needsRefresh(id)
     local inst = _sget(id, "_instance")
     return (inst and inst._stats_need_refresh) or _sget(id, "_stats_need_refresh") or false
+end
+
+-- Flags every known screen for a full data rebuild the next time it becomes
+-- visible: drops the cached books state (and, on a live instance, the cached
+-- ctx) so book progress, statuses and stats are all re-fetched. Call after a
+-- change to a book that any screen may display.
+function ScreenEngine.markAllStale()
+    for _, id in ipairs(ScreenEngine.knownScreenIds()) do
+        ScreenEngine.setNeedsRefresh(id)
+        local inst = _sget(id, "_instance")
+        if inst then
+            inst._ctx_cache          = nil
+            inst._cached_books_state = nil
+        else
+            ScreenEngine.setCachedBooksState(id, nil)
+        end
+    end
 end
 
 -- Refreshes whichever screen `id` is currently open, if any. No-op if that
