@@ -6619,3 +6619,6 @@ msgstr "Tabs and Search"
 
 msgid "The title bar style will change after restart.\n\nRestart now?"
 msgstr "The title bar style will change after restart.\n\nRestart now?"
+
+msgid "Flow"
+msgstr "[待翻译] Flow"
