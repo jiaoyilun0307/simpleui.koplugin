@@ -316,15 +316,30 @@ end
 -- Used by single-cover modules (Currently Reading, Coverdeck) and by the
 -- book-grid engine so the badge looks identical everywhere.
 --
--- buildProgressBadgeWidget(bd, eff_size, color) → widget|nil
---   Pure builder. color is "dark"|"light"|nil (nil follows Library).
---   Book-grid callers place the widget into their multi-badge OverlapGroup.
+-- progressBadgeDesc(bd, eff_size, color) → desc|nil
+--   Pure builder of the pentagon's descriptor (see CoverWidgets). color is
+--   "dark"|"light"|nil (nil follows Library). nil when the book has no
+--   progress to show.
 --
--- applyProgressBadge(cover_widget, bd, cw, ch, color, ref_w, ref_h, scale_pct)
---   Convenience for single-cover modules: computes size/margin, builds
---   the badge, wraps in OverlapGroup. ref_w/ref_h keep size consistent
---   on narrower peeks. scale_pct (default 100) scales the badge only; its
---   edge margin stays fixed.
+-- buildProgressBadgeWidget(bd, eff_size, color) → widget|nil
+--   The descriptor wrapped in a widget. Book-grid callers place it into
+--   their multi-badge OverlapGroup.
+--
+-- coverBadgeDesc(bd, cw, ch, opts) → desc|nil, edge_margin
+--   Descriptor sized for a single cover of cw × ch, with the margin the badge
+--   keeps from the cover edge. opts is optional:
+--     color            "dark"|"light"|nil (nil follows Library)
+--     ref_w, ref_h     reference cover size, keeping the badge size
+--                      consistent on narrower slots
+--     scale_pct        scales the badge only (default 100); its edge margin
+--                      stays fixed
+--
+-- applyProgressBadge(cover_widget, bd, cw, ch, opts)
+--   Convenience for single-cover modules: builds the badge from coverBadgeDesc
+--   and wraps it with the cover in an OverlapGroup, in the top-right corner of
+--   the card. opts adds to coverBadgeDesc's:
+--     allow_mirroring  false keeps the badge where it is placed in RTL
+--                      layouts, for covers laid out in logical coordinates
 -- ---------------------------------------------------------------------------
 local _FC = nil
 local function getFC()
@@ -344,35 +359,50 @@ local function _resolveProgressBadgeDark(color)
     return resolved == "dark"
 end
 
--- Builds the progress pentagon widget (or nil). Callers that compose
--- multiple badges (book grid) place it themselves; single-cover callers
--- use applyProgressBadge instead.
-function SH.buildProgressBadgeWidget(bd, eff_size, color)
+function SH.progressBadgeDesc(bd, eff_size, color)
     local has_progress = (bd.percent or 0) > 0 or bd.status == "complete" or bd.status == "abandoned"
     if not has_progress then return nil end
     local CW = getCoverWidgets()
     if not CW then return nil end
-    local dark = _resolveProgressBadgeDark(color)
-    local desc = CW.buildProgressBadgeDesc(eff_size, bd.status, bd.percent, SUIStyle.BADGE_BORDER_SZ, dark)
-    return CW.buildProgressBadgeWidget(desc)
+    return CW.buildProgressBadgeDesc(eff_size, bd.status, bd.percent, SUIStyle.BADGE_BORDER_SZ,
+        _resolveProgressBadgeDark(color))
 end
 
-function SH.applyProgressBadge(cover_widget, bd, cw, ch, color, ref_w, ref_h, scale_pct)
+local function badgeWidget(desc)
+    local CW = getCoverWidgets()
+    return CW and CW.buildProgressBadgeWidget(desc)
+end
+
+function SH.buildProgressBadgeWidget(bd, eff_size, color)
+    return badgeWidget(SH.progressBadgeDesc(bd, eff_size, color))
+end
+
+function SH.coverBadgeDesc(bd, cw, ch, opts)
+    opts = opts or {}
+    local ref_w, ref_h = opts.ref_w, opts.ref_h
     local base_min, fit = math_min(cw, ch), 1
     if ref_h and ref_h > 0 and ref_w and ref_w > 0 then
         base_min, fit = math_min(ref_w, ref_h), ch / ref_h
     end
     local edge_margin = math_max(1, math_floor(base_min * 0.08 * fit))
-    local eff_size    = math_max(8, math_floor(base_min * 0.14 * fit * ((scale_pct or 100) / 100)))
+    local eff_size    = math_max(8, math_floor(base_min * 0.14 * fit * ((opts.scale_pct or 100) / 100)))
+    return SH.progressBadgeDesc(bd, eff_size, opts.color), edge_margin
+end
 
-    local wg = SH.buildProgressBadgeWidget(bd, eff_size, color)
+function SH.applyProgressBadge(cover_widget, bd, cw, ch, opts)
+    local desc, edge_margin = SH.coverBadgeDesc(bd, cw, ch, opts)
+    local wg = badgeWidget(desc)
     if not wg then return cover_widget end
 
     local sz = wg:getSize()
     -- The badge sits on the card, not on the room its shadow takes.
     wg.overlap_offset = { cw - SUIStyle.coverShadowOffset(SUIStyle.SHADOW_MODULES) - sz.w - edge_margin, 0 }
 
-    local overlap = OverlapGroup:new{ dimen = Geom:new{ w = cw, h = ch }, cover_widget }
+    local overlap = OverlapGroup:new{
+        dimen           = Geom:new{ w = cw, h = ch },
+        allow_mirroring = opts and opts.allow_mirroring,
+        cover_widget,
+    }
     overlap[#overlap + 1] = wg
     return overlap
 end

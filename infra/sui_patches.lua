@@ -3820,6 +3820,7 @@ function M.patchFontGetFace(plugin)
 
     Font._simpleui_getface_patched = true
     local orig_getFace   = Font.getFace
+    Font._simpleui_native_getface = orig_getFace  -- for fixed-box glyph faces
     plugin._orig_font_getface = orig_getFace
 
     -- Reentrancy guard: Font:getFace() is not only called top-down by
@@ -3885,6 +3886,7 @@ function M.unpatchFontGetFace(plugin)
         plugin._orig_font_getface = nil
     end
     Font._simpleui_getface_patched = nil
+    Font._simpleui_native_getface  = nil
 end
 
 -- ---------------------------------------------------------------------------
@@ -5277,7 +5279,7 @@ function M.installAll(plugin)
     if ok_fb and FB then pcall(FB.install) end
     -- Series grouping (books grouped inline inside a real folder) is a
     -- separate module from folder covers now — installed unconditionally;
-    -- it checks FC.getSeriesGrouping() internally before doing anything.
+    -- it checks SG.isEnabled() internally before doing anything.
     local ok_sg, SG = pcall(require, "features/library/sui_series_grouping")
     if ok_sg and SG then
         pcall(SG.install)

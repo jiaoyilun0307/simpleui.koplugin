@@ -3103,6 +3103,45 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
         return item
     end
 
+    -- "Group by Book Series": one checkbox per view whose lists can be grouped.
+    local function makeSeriesGroupingItem(FC)
+        local BM = require("features/library/sui_library_browse")
+
+        local function activeViews()
+            local labels = {}
+            for _i, mode in ipairs(BM.SERIES_GROUPING_MODES) do
+                if FC.getSeriesGrouping(mode) then labels[#labels + 1] = BM.getModeLabel(mode) end
+            end
+            return #labels > 0 and table.concat(labels, ", ") or _("Off")
+        end
+
+        local function viewItems()
+            local items = {}
+            for _i, mode in ipairs(BM.SERIES_GROUPING_MODES) do
+                items[#items + 1] = {
+                    text           = BM.getModeLabel(mode),
+                    checked_func   = function() return FC.getSeriesGrouping(mode) end,
+                    enabled_func   = function() return mode == "normal" or BM.isEnabled() end,
+                    keep_menu_open = true,
+                    callback       = function()
+                        FC.setSeriesGrouping(mode, not FC.getSeriesGrouping(mode))
+                        FC.invalidateCache()
+                        _refreshFC()
+                    end,
+                }
+            end
+            return items
+        end
+
+        return {
+            text                = _("Group by Book Series"),
+            value_func          = activeViews,
+            separator           = true,
+            enabled_func        = function() return FC.isEnabled() end,
+            sub_item_table_func = viewItems,
+        }
+    end
+
     local function makeLibraryMenuItems(ctx_menu)
         local ok_fc, FC = pcall(require, "features/library/sui_foldercovers")
         if not ok_fc or not FC then return {} end
@@ -3185,18 +3224,7 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
                 end,
             },
             -- ── Group by Book Series ──────────────────────────────────────────
-            {
-                text           = _("Group by Book Series"),
-                checked_func   = function() return FC.getSeriesGrouping() end,
-                keep_menu_open = true,
-                separator      = true,
-                enabled_func   = function() return FC.isEnabled() end,
-                callback       = function()
-                    FC.setSeriesGrouping(not FC.getSeriesGrouping())
-                    FC.invalidateCache()
-                    _refreshFC()
-                end,
-            },
+            makeSeriesGroupingItem(FC),
             -- ── Cover Settings ───────────────────────────────────
             {
                 text         = _("Cover Settings"),

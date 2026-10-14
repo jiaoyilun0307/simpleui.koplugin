@@ -1668,72 +1668,8 @@ function QA.sui_show_custom_qa_list(plugin, ctx_menu, ctx)
 end
 
 function QA.sui_build_qa_icons(plugin, ctx_menu, ctx)
-    local Device = require("device")
-    local Screen = Device.screen
-    local Blitbuffer = require("ffi/blitbuffer")
-    local FrameContainer = require("ui/widget/container/framecontainer")
-    local CenterContainer = require("ui/widget/container/centercontainer")
-    local ImageWidget = require("ui/widget/imagewidget")
-    local TextWidget = require("ui/widget/textwidget")
-    local Font = require("ui/font")
-    local Geom = require("ui/geometry")
-    
-    local btn_size = ctx.SZ(Screen:scaleBySize(36))
-    local icon_size = math.floor(btn_size * 0.7)
-    local ok_ss, SUIStyle = pcall(require, "features/sui_style")
-    local border_sz = ok_ss and SUIStyle.BORDER_SZ or 1
-    
-    local function makeIconPreview(icon_path, is_nerd, fallback_label)
-        local icon_widget
-        if is_nerd and icon_path then
-            local nerd_char = Config.nerdIconChar(icon_path)
-            if nerd_char and ok_ss and SUIStyle then
-                icon_widget = TextWidget:new{
-                    text    = nerd_char,
-                    face    = Font:getFace(SUIStyle.FACE_ICONS, math.floor(icon_size * 0.8)),
-                    fgcolor = SUIStyle.COLOR.text_primary,
-                    padding = 0,
-                }
-            end
-        elseif icon_path then
-            local safe_path = ok_ss and SUIStyle and SUIStyle.safeIconPath(icon_path, nil)
-            if safe_path then
-                local iw = ImageWidget:new{
-                    file    = safe_path,
-                    width   = icon_size,
-                    height  = icon_size,
-                    is_icon = true,
-                    alpha   = true,
-                }
-                if pcall(function() iw:_render() end) then
-                    icon_widget = iw
-                else
-                    iw:free()
-                end
-            end
-        end
-        
-        if not icon_widget then
-            icon_widget = TextWidget:new{
-                text    = fallback_label and fallback_label:sub(1, 1):upper() or "?",
-                face    = Font:getFace("cfont", math.floor(icon_size * 0.7)),
-                fgcolor = SUIStyle.COLOR.text_primary,
-            }
-        end
-        
-        return FrameContainer:new{
-            dimen      = Geom:new{ w = btn_size, h = btn_size },
-            radius     = ctx.SZ(Screen:scaleBySize(8)),
-            bordersize = border_sz,
-            background = SUIStyle.COLOR.surface,
-            color      = SUIStyle.COLOR.gray,
-            padding    = 0,
-            [1]        = CenterContainer:new{
-                dimen = Geom:new{ w = btn_size - border_sz * 2, h = btn_size - border_sz * 2 },
-                [1]   = icon_widget,
-            }
-        }
-    end
+    local Screen = require("device").screen
+    local preview_size = ctx.SZ(Screen:scaleBySize(36))
 
     local pool = {}
     for _k, a in ipairs(Config.ALL_ACTIONS) do
@@ -1806,7 +1742,6 @@ function QA.sui_build_qa_icons(plugin, ctx_menu, ctx)
                     and c.icon ~= Config.CUSTOM_GROUP_ICON
             end
                     
-            local is_nerd = Config.isNerdIcon(current_icon)
             local effective_icon = current_icon
             if not effective_icon then
                 if _is_default then
@@ -1835,7 +1770,7 @@ function QA.sui_build_qa_icons(plugin, ctx_menu, ctx)
             rows[#rows + 1] = {
                 text = _title .. (has_custom and "  \u{270E}" or ""),
                 show_chevron = true,
-                right_widget = makeIconPreview(effective_icon, is_nerd, _title),
+                right_widget = SUIStyle.buildIconPreview(preview_size, { icon = effective_icon, label = _title }),
                 on_hold = function() end,
                 on_tap = function()
                     local default_label = _title .. " (" .. _("default") .. ")"
@@ -3184,72 +3119,13 @@ end
 -- ---------------------------------------------------------------------------
 
 function QA.buildQARowIcon(icon_value, fallback_label, scale_fn)
-    local Blitbuffer     = require("ffi/blitbuffer")
-    local FrameContainer = require("ui/widget/container/framecontainer")
-    local CenterContainer = require("ui/widget/container/centercontainer")
-    local ImageWidget    = require("ui/widget/imagewidget")
-    local TextWidget     = require("ui/widget/textwidget")
-    local Font           = require("ui/font")
-    local Geom           = require("ui/geometry")
-    local ok_ss, SUIStyle = pcall(require, "features/sui_style")
-
     -- scale_fn is the caller's ctx.SZ; fall back to UI.SZ (identical value
     -- during a synchronous SUIWindow build) if ever called without a ctx.
     local SZ = scale_fn or UI.SZ
-    local btn_size  = SZ(Screen:scaleBySize(28))
-    local icon_size = math.floor(btn_size * 0.7)
-    local border_sz = ok_ss and SUIStyle.BORDER_SZ or 1
-    local is_nerd   = Config.isNerdIcon(icon_value)
-
-    local icon_widget
-    if is_nerd and icon_value then
-        local nerd_char = Config.nerdIconChar(icon_value)
-        if nerd_char and ok_ss and SUIStyle then
-            icon_widget = TextWidget:new{
-                text    = nerd_char,
-                face    = Font:getFace(SUIStyle.FACE_ICONS, math.floor(icon_size * 0.8)),
-                fgcolor = SUIStyle.COLOR.text_primary,
-                padding = 0,
-            }
-        end
-    elseif icon_value then
-        local safe_path = ok_ss and SUIStyle and SUIStyle.safeIconPath(icon_value, nil)
-        if safe_path then
-            local iw = ImageWidget:new{
-                file    = safe_path,
-                width   = icon_size,
-                height  = icon_size,
-                is_icon = true,
-                alpha   = true,
-            }
-            if pcall(function() iw:_render() end) then
-                icon_widget = iw
-            else
-                iw:free()
-            end
-        end
-    end
-
-    if not icon_widget then
-        icon_widget = TextWidget:new{
-            text    = fallback_label and fallback_label:sub(1, 1):upper() or "?",
-            face    = Font:getFace("cfont", math.floor(icon_size * 0.7)),
-            fgcolor = SUIStyle.COLOR.text_primary,
-        }
-    end
-
-    return FrameContainer:new{
-        dimen      = Geom:new{ w = btn_size, h = btn_size },
-        radius     = SZ(Screen:scaleBySize(6)),
-        bordersize = border_sz,
-        background = SUIStyle.COLOR.surface,
-        color      = SUIStyle.COLOR.gray,
-        padding    = 0,
-        [1]        = CenterContainer:new{
-            dimen = Geom:new{ w = btn_size - border_sz * 2, h = btn_size - border_sz * 2 },
-            [1]   = icon_widget,
-        }
-    }
+    return SUIStyle.buildIconPreview(SZ(Screen:scaleBySize(28)), {
+        icon  = icon_value,
+        label = fallback_label,
+    })
 end
 
 -- ---------------------------------------------------------------------------

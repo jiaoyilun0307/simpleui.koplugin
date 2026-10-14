@@ -164,17 +164,13 @@ function QARenderer.buildIcon(entry, size, fgcolor, opts)
 
     local container_w   = opts.container_w or size
     local container_h   = opts.container_h or size
-    local nerd_scale     = 0.65
-    local fallback_scale = 0.55
-    local icons_face     = style.FACE_ICONS or "symbols"
-    local fallback_face  = opts.fallback_face or "cfont"
 
     local icon_widget
     local nerd_char = Config().nerdIconChar(entry.icon)
     if nerd_char then
         local glyph = ui.makeColoredText{
             text    = nerd_char,
-            face    = Font():getFace(icons_face, math.floor(size * nerd_scale)),
+            face    = style.glyphFace(size),
             fgcolor = fgcolor,
             padding = 0,
         }
@@ -207,7 +203,7 @@ function QARenderer.buildIcon(entry, size, fgcolor, opts)
                 dimen = Geom():new{ w = container_w, h = container_h },
                 ui.makeColoredText{
                     text    = (entry.label and entry.label:sub(1, 1):upper()) or "?",
-                    face    = Font():getFace(fallback_face, math.floor(size * fallback_scale)),
+                    face    = style.letterFace(size, opts.fallback_face),
                     fgcolor = fgcolor,
                     padding = 0,
                 },
@@ -383,7 +379,7 @@ function QARenderer.buildFramedIcon(file, size, fgcolor)
         widget._fg   = fgcolor
         local tw = TextWidget():new{
             text    = nerd_char,
-            face    = Font():getFace(style.FACE_ICONS or "symbols", math.floor(size * 0.75)),
+            face    = style.glyphFace(size),
             fgcolor = fgcolor,
             padding = 0,
         }

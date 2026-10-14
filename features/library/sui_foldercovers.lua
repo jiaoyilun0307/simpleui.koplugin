@@ -199,9 +199,11 @@ end
 function M.getOverlayNew()  return M.getNewMode() ~= "none" end
 function M.setOverlayNew(v) M.setNewMode(v and "badge" or "none") end
 
--- Virtual series folders in the mosaic.
-function M.getSeriesGrouping()  return SUISettings:isTrue(SK.series_grouping) end
-function M.setSeriesGrouping(v) _setFlag(SK.series_grouping, v)               end
+-- Virtual series folders in the mosaic, enabled per browse mode (see
+-- sui_library_browse.MODES): "normal" is the filesystem view.
+local function _seriesGroupingKey(mode) return SK.series_grouping .. "_" .. mode end
+function M.getSeriesGrouping(mode)    return SUISettings:isTrue(_seriesGroupingKey(mode)) end
+function M.setSeriesGrouping(mode, v) _setFlag(_seriesGroupingKey(mode), v)               end
 
 -- Placeholder cover for folders with no direct ebooks.
 function M.getSubfolderCover()  return SUISettings:isTrue(SK.subfolder_cover) end
@@ -749,7 +751,7 @@ local function _installFileDialogButton(BookInfoManager)
             if is_virtual_meta then return nil end
 
             if is_virtual_series then
-                if not M.getSeriesGrouping() then return nil end
+                if not (SG and SG.isEnabled()) then return nil end
                 local series_name = (item_entry and item_entry.text) or ""
                 return {{
                     text = _("Create collection"),
@@ -1612,7 +1614,7 @@ function M.install()
                     dimen = Geom:new{ w = img_w, h = img_h },
                     TextWidget:new{
                         text    = nerd_char,
-                        face    = Font:getFace(SUIStyle.FACE_ICONS, math.floor(icon_size * 0.85)),
+                        face    = SUIStyle.glyphFace(icon_size),
                         fgcolor = SUIStyle.COLOR.text_primary,
                         padding = 0,
                     },

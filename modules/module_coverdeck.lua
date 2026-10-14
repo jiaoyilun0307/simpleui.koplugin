@@ -1,5 +1,9 @@
 -- module_coverdeck.lua
--- Displays recent or TBR books as a cover-flow carousel.
+-- Displays recent or TBR books as a cover carousel.
+--
+-- The covers beside the centre one are laid out by a carousel style (see
+-- CAROUSEL_STYLES): "classic" shows the outer slice of each neighbouring
+-- cover, "flow" shows each whole cover tilted in perspective.
 
 local Blitbuffer       = require("ffi/blitbuffer")
 local BD               = require("ui/bidi")
@@ -12,7 +16,12 @@ local GestureRange     = require("ui/gesturerange")
 local InputContainer   = require("ui/widget/container/inputcontainer")
 local OverlapGroup     = require("ui/widget/overlapgroup")
 local TextBoxWidget    = require("ui/widget/textboxwidget")
+local UIManager        = require("ui/uimanager")
 local VerticalGroup    = require("ui/widget/verticalgroup")
+local CoverPlaceholder = require("engines/sui_cover_placeholder")
+local CoverShadow      = require("engines/sui_cover_shadow")
+local CoverWarp        = require("engines/sui_cover_warp")
+local CoverWidgets     = require("features/library/sui_cover_widgets")
 local Screen           = Device.screen
 local _ = require("infra/sui_i18n").translate
 local N_ = require("infra/sui_i18n").ngettext
@@ -33,6 +42,11 @@ local CLR_TEXT_SUB = UI.CLR_TEXT_SUB
 local MAX_RECENT_FPS   = 10
 local MAX_SEC_PER_PAGE = 120  -- matches KOReader statistics query cap
 local BSTATS_CACHE_MAX = 20   -- max md5 entries kept in the stats LRU cache
+local TILT_CACHE_MAX   = 16   -- max tilted covers kept: visible slots plus those of both neighbours
+local WARMUP_DELAY     = 0.3  -- s from a build to the first warm-up step, once its repaint is under way
+local WARMUP_TICK      = 0.05 -- s between warm-up steps, leaving the event loop free for input
+local SWIPE_DELTAS     = { 1, -1 }  -- carousel steps a swipe can take, likeliest first
+local COVER_ASPECT     = 3 / 2  -- cover height over width, shared by every cover consumer
 
 -- ---------------------------------------------------------------------------
 -- Base carousel size, expressed as a percentage of inner_w rather than a
@@ -41,7 +55,7 @@ local BSTATS_CACHE_MAX = 20   -- max md5 entries kept in the stats LRU cache
 -- scale down proportionally.
 -- ---------------------------------------------------------------------------
 local _REF_INNER_W   = UI.getInnerW() - PAD * 2
-local _CENTER_W_PCT  = Screen:scaleBySize(140) / _REF_INNER_W
+local _CENTER_W_PCT  = Screen:scaleBySize(168) / _REF_INNER_W
 local _CENTER_W_MIN  = Screen:scaleBySize(60)  -- floor so covers never collapse to unreadable size
 
 -- ---------------------------------------------------------------------------
@@ -115,6 +129,7 @@ end
 -- ---------------------------------------------------------------------------
 
 local SETTING_SOURCE        = "coverdeck_source"          -- pfx .. this; "recent"|"tbr"
+local SETTING_STYLE         = "coverdeck_style"           -- pfx .. this; "classic"|"flow"
 local SETTING_SHOW_FINISHED = "coverdeck_show_finished"   -- pfx .. this; default OFF
 local ELEM_ORDER_KEY        = "coverdeck_stats_order"     -- pfx .. this
 local MAIN_ORDER_KEY        = "coverdeck_main_order"      -- pfx .. this
@@ -166,11 +181,57 @@ local _MAIN_ELEM_LABELS = {
 }
 
 -- ---------------------------------------------------------------------------
+-- Carousel styles
+-- ---------------------------------------------------------------------------
+-- A style is pure data describing the covers beside the centre one.
+-- levels[d] is the pair of covers d steps away from the centre. Sizes are
+-- fractions of the centre cover; `offset` is the distance from the centre
+-- cover's edge to the outer edge of the slot.
+--   kind       "crop": the outer slice of each cover.
+--              "tilt": the whole cover in perspective; `tilt` is the ratio of
+--              its inner edge height to its outer edge height.
+local DEFAULT_STYLE = "flow"
+local STYLE_ORDER   = { "classic", "flow" }
+local CAROUSEL_STYLES = {
+    classic = {
+        kind      = "crop",
+        levels    = {
+            { w = 0.45, h = 0.85, offset = 0.35 },
+            { w = 0.35, h = 0.75, offset = 0.60 },
+        },
+    },
+    flow = {
+        kind      = "tilt",
+        tilt      = 0.75,
+        -- Both levels share the same size so a single warped buffer per
+        -- (book, side) hits the tilt cache across swipes; depth is conveyed
+        -- only by offset.
+        levels    = {
+            { w = 0.55, h = 0.92, offset = 0.30 },
+            { w = 0.55, h = 0.92, offset = 0.60 },
+        },
+    },
+}
+local SIDES = { "left", "right" }
+
+-- ---------------------------------------------------------------------------
 -- Settings accessors
 -- ---------------------------------------------------------------------------
 
 local function getSource(pfx)
     return SUISettings:readSetting(pfx .. SETTING_SOURCE) or "recent"
+end
+
+-- bundle (ctx.cfg.coverdeck), when given, supplies the style from the
+-- pre-read settings snapshot; otherwise it is read live.
+local function getStyleId(pfx, bundle)
+    local stored = bundle and bundle.style
+    if not bundle then stored = SUISettings:readSetting(pfx .. SETTING_STYLE) end
+    return Config.resolveChoice(stored, STYLE_ORDER, DEFAULT_STYLE)
+end
+
+local function getStyle(pfx, bundle)
+    return CAROUSEL_STYLES[getStyleId(pfx, bundle)]
 end
 
 local function showFinished(pfx)
@@ -318,37 +379,71 @@ end
 -- drawing primitive matches every other progress badge in the app. Color
 -- and size come from the module's own settings.
 -- ---------------------------------------------------------------------------
-local function applyProgressBadge(cover_widget, bd, cw, ch, pfx, ref_w, ref_h)
+
+-- Size and colour of a slot's progress badge, from the module's settings and
+-- the centre cover size that keeps the badge uniform on narrower covers.
+local function progressBadgeOpts(slot, pfx)
+    return {
+        color     = getProgressBadgeColorOverride(pfx),
+        ref_w     = slot.ref_w,
+        ref_h     = slot.ref_h,
+        scale_pct = Config.getBadgeScalePct("coverdeck", pfx),
+    }
+end
+
+-- Badge laid as a widget over a flat cover. Side covers are laid out in
+-- logical coordinates, so their badge keeps its position in RTL layouts.
+local function applyProgressBadge(cover_widget, bd, slot, pfx)
     local SH = getSH()
     if not SH or not SH.applyProgressBadge then return cover_widget end
-    return SH.applyProgressBadge(cover_widget, bd, cw, ch,
-        getProgressBadgeColorOverride(pfx), ref_w, ref_h,
-        Config.getBadgeScalePct("coverdeck", pfx))
+    local opts = progressBadgeOpts(slot, pfx)
+    opts.allow_mirroring = slot.align == nil
+    return SH.applyProgressBadge(cover_widget, bd, slot.w, slot.h, opts)
 end
 
 -- ---------------------------------------------------------------------------
--- Stats cache — LRU capped at BSTATS_CACHE_MAX entries: { result, t }.
--- Eviction scans the small table for the oldest entry. Keeps RAM bounded
--- even when the user browses a large TBR list across a long session.
+-- LRU cache — capped at `max_entries` keyed values. Eviction scans the small
+-- table for the least recently used entry, which keeps RAM bounded even when
+-- the user browses a large TBR list across a long session. Evicted values are
+-- only dereferenced, never freed, so a widget still holding one stays valid.
 -- ---------------------------------------------------------------------------
 
-local _bstats_cache       = {}
-local _bstats_cache_count = 0
+local function newLru(max_entries)
+    return { max = max_entries, count = 0, tick = 0, entries = {} }
+end
 
-local function _bstats_evict()
-    local oldest_key = nil
-    local oldest_t   = math.huge
-    for k, entry in pairs(_bstats_cache) do
-        if entry.t < oldest_t then
-            oldest_t   = entry.t
-            oldest_key = k
+local function lruGet(lru, key)
+    local entry = lru.entries[key]
+    if not entry then return nil end
+    lru.tick = lru.tick + 1
+    entry.tick = lru.tick
+    return entry.value
+end
+
+local function lruRemove(lru, key)
+    if lru.entries[key] then
+        lru.entries[key] = nil
+        lru.count = lru.count - 1
+    end
+end
+
+local function lruPut(lru, key, value)
+    if not lru.entries[key] then
+        if lru.count >= lru.max then
+            local oldest_key, oldest_tick = nil, math.huge
+            for k, entry in pairs(lru.entries) do
+                if entry.tick < oldest_tick then oldest_key, oldest_tick = k, entry.tick end
+            end
+            lruRemove(lru, oldest_key)
         end
+        lru.count = lru.count + 1
     end
-    if oldest_key then
-        _bstats_cache[oldest_key] = nil
-        _bstats_cache_count = _bstats_cache_count - 1
-    end
+    lru.tick = lru.tick + 1
+    lru.entries[key] = { value = value, tick = lru.tick }
 end
+
+-- Per-book reading statistics, keyed by md5.
+local _bstats = newLru(BSTATS_CACHE_MAX)
 
 local function fmtTime(secs)
     secs = math.floor(secs or 0)
@@ -376,10 +471,9 @@ end
 
 local function fetchBookStats(md5, shared_conn, ctx, force)
     if not md5 then return nil end
-    local cached = _bstats_cache[md5]
-    if not force and cached then
-        cached.t = os.time()   -- update LRU access time
-        return cached.result
+    if not force then
+        local cached = lruGet(_bstats, md5)
+        if cached then return cached end
     end
 
     local conn     = shared_conn or Config.openStatsDB()
@@ -428,11 +522,7 @@ local function fetchBookStats(md5, shared_conn, ctx, force)
         end
     end
     if own_conn then pcall(function() conn:close() end) end
-    if result then
-        if _bstats_cache_count >= BSTATS_CACHE_MAX then _bstats_evict() end
-        _bstats_cache[md5] = { result = result, t = os.time() }
-        _bstats_cache_count = _bstats_cache_count + 1
-    end
+    if result then lruPut(_bstats, md5, result) end
     return result
 end
 
@@ -446,6 +536,396 @@ end
 
 local function yTopOf(centerY, h)
     return math.floor(centerY - h / 2)
+end
+
+-- Width of the centre cover in a module `inner_w` wide; `cs` is the raw
+-- module scale times the cover scale. Shared by build() and getHeight().
+local function centerWidth(inner_w, cs)
+    return math.max(_CENTER_W_MIN, math.floor(inner_w * _CENTER_W_PCT * cs))
+end
+
+-- Distance from the centre cover's edge to the outer edge of a level's slot.
+local function levelOffset(level, center_w)
+    return math.floor(center_w * level.offset)
+end
+
+-- Whether the side cover `depth` steps away on `side` shows a book that no
+-- other visible cover shows. With two books the other one sits on the left.
+local function hasPeek(count, depth, side)
+    if depth == 1 and side == "left" then return count >= 2 end
+    return count >= 2 * depth + 1
+end
+
+-- Slots of `style` for a carousel of `count` books, farthest first and the
+-- centre cover last, so painting them in order stacks nearer covers on top.
+-- g: { center_w, center_h, centerX, centerY }.
+-- Every slot has its position in the carousel (rel: steps from the centre),
+-- its box (x, y, w, h) and its kind. Side slots add the side they hang on
+-- (align) and the style's tilt, plus the width of the flat cover the warp
+-- narrows to the slot; right-hand ones also carry the centre cover size, which
+-- scales their progress badge.
+local function layoutSlots(style, count, g)
+    local half_cw = math.floor(g.center_w / 2)
+    local slots = {}
+    for depth = #style.levels, 1, -1 do
+        local level  = style.levels[depth]
+        local w      = math.floor(g.center_w * level.w)
+        local h      = math.floor(g.center_h * level.h)
+        local offset = levelOffset(level, g.center_w)
+        for _i, side in ipairs(SIDES) do
+            if hasPeek(count, depth, side) then
+                local left = side == "left"
+                slots[#slots + 1] = {
+                    rel   = left and -depth or depth,
+                    kind  = style.kind,
+                    align = side,
+                    tilt  = style.tilt,
+                    flat_w = style.kind == "tilt" and math.ceil(h / COVER_ASPECT) or nil,
+                    x     = left and (g.centerX - half_cw - offset)
+                                  or (g.centerX + half_cw + offset - w),
+                    y     = yTopOf(g.centerY, h),
+                    w     = w,
+                    h     = h,
+                    ref_w = (not left) and g.center_w or nil,
+                    ref_h = (not left) and g.center_h or nil,
+                }
+            end
+        end
+    end
+    slots[#slots + 1] = {
+        rel  = 0,
+        kind = "center",
+        x    = g.centerX - half_cw,
+        y    = yTopOf(g.centerY, g.center_h),
+        w    = g.center_w,
+        h    = g.center_h,
+    }
+    return slots
+end
+
+-- Points every slot at the book it shows when the book `cur` of `fps` is in
+-- the centre.
+local function assignBooks(slots, fps, cur)
+    local count = #fps
+    for _i, slot in ipairs(slots) do
+        slot.fp = fps[carouselIdx(cur, slot.rel, count)]
+    end
+end
+
+-- ---------------------------------------------------------------------------
+-- Tilted covers
+-- ---------------------------------------------------------------------------
+-- Perspective warp lives in engines/sui_cover_warp. This section owns the
+-- widget, the LRU of warped buffers, and the glue to the cover cache.
+
+-- Widget painting a warped cover. The buffer belongs to the tilt cache; the
+-- widget only borrows it. allow_mirroring is off so OverlapGroup does not
+-- flip the trapezoid orientation in RTL — side and align are resolved by
+-- the module in logical coordinates.
+local TiltedCover = {
+    allow_mirroring = false,
+}
+TiltedCover.__index = TiltedCover
+
+function TiltedCover:getSize()
+    return Geom:new{ w = self.w, h = self.h }
+end
+
+function TiltedCover:paintTo(bb, x, y)
+    local entry = self.entry
+    if not entry or not entry.bb then return end
+    local tops, heights = entry.tops, entry.heights
+    local col = 0
+    while col < self.w do
+        local top = tops[col + 1]
+        local col_h = heights[col + 1]
+        if not col_h or col_h <= 0 then
+            col = col + 1
+        else
+            -- Merge consecutive columns that share the same vertical span
+            -- into a single blitFrom to cut FFI call volume.
+            local run = 1
+            while col + run < self.w
+                    and tops[col + run + 1] == top
+                    and heights[col + run + 1] == col_h do
+                run = run + 1
+            end
+            bb:blitFrom(entry.bb, x + col, y + top, col, top, run, col_h)
+            col = col + run
+        end
+    end
+end
+
+function TiltedCover:handleEvent()
+    return false
+end
+
+local function freeTiltEntry(entry)
+    if entry and entry.bb then
+        pcall(entry.bb.free, entry.bb)
+        entry.bb = nil
+    end
+end
+
+-- Warped covers keyed by book, side and size. Evicted entries free their
+-- blitbuffers. An entry made from a cover bitmap remembers the source
+-- identity weakly and is rebuilt once the cover cache replaces it.
+local _tilt_cache = newLru(TILT_CACHE_MAX)
+local WEAK_VALUES = { __mode = "v" }
+
+local function tiltCachePut(key, value)
+    local lru = _tilt_cache
+    if not lru.entries[key] then
+        if lru.count >= lru.max then
+            local oldest_key, oldest_tick = nil, math.huge
+            for k, e in pairs(lru.entries) do
+                if e.tick < oldest_tick then
+                    oldest_key, oldest_tick = k, e.tick
+                end
+            end
+            if oldest_key then
+                freeTiltEntry(lru.entries[oldest_key].value)
+                lruRemove(lru, oldest_key)
+            end
+        end
+        lru.count = lru.count + 1
+    else
+        freeTiltEntry(lru.entries[key].value)
+    end
+    lru.tick = lru.tick + 1
+    lru.entries[key] = { value = value, tick = lru.tick }
+end
+
+-- Warped entry of `slot` stored under `key`. `source` is a cover-cache bitmap
+-- (must not be freed here). When nil, `render` returns a newly allocated
+-- bitmap that this function frees after warping.
+local function tiltEntry(slot, key, source, render)
+    local entry = lruGet(_tilt_cache, key)
+    if entry and (not source or (entry.source and entry.source[1] == source)) then
+        return entry
+    end
+
+    local w, h = math.floor(slot.w), math.floor(slot.h)
+    if w < 2 or h < 2 then return nil end
+    local flat_w = slot.flat_w
+
+    local src = source
+    local own_src = false
+    if not src then
+        if not render then return nil end
+        src = render()
+        if not src then return nil end
+        own_src = true
+    end
+
+    -- Private buffer so the cover cache can replace the original without
+    -- invalidating the warp. stretchBBToSize copies before scaling. The cover
+    -- stays in its flat shape; the warp narrows it to the slot.
+    local ok_sc, working = pcall(Config.stretchBBToSize, src, flat_w, h)
+    if own_src then
+        pcall(src.free, src)
+        src = nil
+    end
+    if not (ok_sc and working) then return nil end
+
+    -- Guard against stretch returning a shared buffer unchanged.
+    local owned = working
+    if source and working == source then
+        local ok_cp, clone = pcall(Blitbuffer.new, working:getWidth(), working:getHeight(), working:getType())
+        if not (ok_cp and clone) then return nil end
+        pcall(clone.blitFrom, clone, working, 0, 0, 0, 0, working:getWidth(), working:getHeight())
+        owned = clone
+    end
+
+    -- Reject size mismatches from a failed stretch path that returned the
+    -- original raw buffer at a different size.
+    if owned:getWidth() ~= flat_w or owned:getHeight() ~= h then
+        if owned ~= source then pcall(owned.free, owned) end
+        return nil
+    end
+
+    -- The badge is part of the flat cover, so the warp squeezes and tilts it
+    -- along with the artwork.
+    local badge = slot.badge
+    if badge then CoverWidgets.drawProgressBadge(owned, badge.x, badge.y, badge.desc) end
+
+    local ok, warped = pcall(CoverWarp.warp, owned, w, h, slot.tilt, slot.align == "left")
+    if owned ~= source then pcall(owned.free, owned) end
+
+    if not (ok and warped) then
+        logger.warn("coverdeck: tilted cover unavailable: " .. tostring(warped))
+        return nil
+    end
+
+    warped.source = source and setmetatable({ source }, WEAK_VALUES) or nil
+    tiltCachePut(key, warped)
+    return warped
+end
+
+-- Cache key is independent of carousel depth: both flow levels share size, so
+-- a book keeps the same warped buffer as it moves between levels on swipe. It
+-- includes the badge, which is drawn into the buffer.
+local function tiltedKey(slot, variant)
+    return table.concat({ slot.fp, variant, slot.w, slot.h, slot.align, slot.tilt,
+        slot.badge and slot.badge.key or "" }, "|")
+end
+
+local function newTiltedCover(slot, entry)
+    return setmetatable({ w = slot.w, h = slot.h, entry = entry }, TiltedCover)
+end
+
+-- Tilted cover of the slot's book; nil while its image is not available yet.
+-- The source is the whole cover in the shared 3:2 shape, as tall as the slot,
+-- which the cover store serves from the bitmap of the centre cover; the warp
+-- narrows it to the slot width.
+local function tiltedCover(slot)
+    local w, h = math.floor(slot.w), math.floor(slot.h)
+    if w < 2 or h < 2 then return nil end
+    local src = Config.getStretchedCoverBB(slot.fp, slot.flat_w, h)
+    if not src then return nil end
+    local entry = tiltEntry(slot, tiltedKey(slot, "cover"), src)
+    return entry and newTiltedCover(slot, entry)
+end
+
+-- Tilted generated cover for a book without an image; nil when it cannot be built.
+local function tiltedPlaceholder(slot, bd)
+    local w, h = math.floor(slot.w), math.floor(slot.h)
+    if w < 2 or h < 2 then return nil end
+    local entry = tiltEntry(slot, tiltedKey(slot, "generated"), nil, function()
+        return CoverPlaceholder.render(slot.flat_w, h, bd.title, bd.authors)
+    end)
+    return entry and newTiltedCover(slot, entry)
+end
+
+-- ---------------------------------------------------------------------------
+-- Slot covers
+-- ---------------------------------------------------------------------------
+
+-- Cover widget of a slot's book; nil while its image is not available yet.
+local function loadSlotCover(SH, slot)
+    if slot.kind == "tilt" then return tiltedCover(slot) end
+    if slot.kind == "crop" then
+        return SH.getCroppedBookCover(slot.fp, slot.w, slot.h, slot.align, true)
+    end
+    return SH.getBookCover(slot.fp, slot.w, slot.h, true)
+end
+
+-- Generated cover standing in until the slot's image is available.
+local function placeholderCover(SH, slot, bd)
+    local cover = slot.kind == "tilt" and tiltedPlaceholder(slot, bd)
+    if cover then return cover end
+    return SH.coverPlaceholder(bd.title, bd.authors, slot.w, slot.h, true,
+        slot.kind ~= "center" and slot.align or nil)
+end
+
+-- Shadow of a slot's cover, placed at the slot; nil while shadows are off.
+-- A tilted slot casts the shadow of its trapezoid, which depends on the slot
+-- geometry alone, so it stays right while the cover or its placeholder loads.
+local function slotShadow(SH, slot)
+    local profile = slot.kind == "tilt"
+        and CoverWarp.profile(slot.w, slot.h, slot.tilt, slot.align == "left", slot.flat_w)
+    if not profile then return SH.buildOverlapShadow(slot.x, slot.y, slot.w, slot.h) end
+    local shadow = CoverShadow.buildWidget(profile.w, profile.h,
+        SUIStyle.coverShadowOffset(SUIStyle.SHADOW_MODULES), profile)
+    if shadow then shadow.overlap_offset = { slot.x, slot.y } end
+    return shadow
+end
+
+-- Whether the progress badge is painted on a slot: always on the centre cover,
+-- and on right-hand side covers when enabled for them, which show the outer
+-- edge the badge sits on. Left-hand side covers show their inner edge, so they
+-- never carry it.
+local function slotWantsBadge(slot, show_badge, on_peeks)
+    if not show_badge then return false end
+    return slot.kind == "center" or (on_peeks and slot.align == "right")
+end
+
+-- Flat covers carry their badge as a widget over the cover; tilted covers
+-- carry it in their own pixels (tiltBadge).
+local function slotWantsBadgeWidget(slot, show_badge, on_peeks)
+    return slot.kind ~= "tilt" and slotWantsBadge(slot, show_badge, on_peeks)
+end
+
+-- Badge of a tilted slot, placed in the top-right corner of the flat cover
+-- (slot.flat_w wide): { desc, x, y, key }, or nil when the slot carries none.
+-- Painted into the cover before the warp, it is squeezed and tilted with the
+-- artwork, text included.
+local function tiltBadge(SH, slot, bd, pfx, show_badge, on_peeks)
+    if slot.kind ~= "tilt" or not slotWantsBadge(slot, show_badge, on_peeks) then return nil end
+    local desc, margin = SH.coverBadgeDesc(bd, slot.flat_w, slot.h, progressBadgeOpts(slot, pfx))
+    if not desc then return nil end
+    local badge_w = CoverWidgets.progressBadgeSize(desc)
+    return {
+        desc = desc,
+        x    = math.max(0, slot.flat_w - badge_w - margin),
+        y    = 0,
+        key  = CoverWidgets.progressBadgeKey(desc),
+    }
+end
+
+-- ---------------------------------------------------------------------------
+-- Idle warm-up
+-- ---------------------------------------------------------------------------
+-- A swipe rebuilds the module synchronously, so every cover it shows that is
+-- not cached yet costs time right then. After a build, the covers that a swipe
+-- to either neighbour would show are therefore made one per scheduler tick,
+-- nearest first. A newer build or a reset drops what is still queued.
+
+local _warmup_step = nil   -- the pending scheduler callback
+
+local function cancelWarmup()
+    if _warmup_step then
+        UIManager:unschedule(_warmup_step)
+        _warmup_step = nil
+    end
+end
+
+-- Makes the cover `slot` shows, ready in its cache. `deck` is the build's
+-- context: { SH, pfx, bookData, show_badge, on_peeks, ... }.
+local function warmSlot(deck, slot)
+    if slot.kind == "center" then
+        Config.getStretchedCoverBB(slot.fp, slot.w, slot.h)
+        return
+    end
+    local bd = deck.bookData(slot.fp)
+    slot.badge = tiltBadge(deck.SH, slot, bd, deck.pfx, deck.show_badge, deck.on_peeks)
+    if not tiltedCover(slot) and Config.isCoverMissing(slot.fp) then
+        tiltedPlaceholder(slot, bd)
+    end
+end
+
+-- Queues the covers shown after a swipe from the centre book `cur`, and works
+-- through them while `alive()` holds. Slots that are neither the centre nor
+-- tilted draw from caches that need no warming.
+local function scheduleWarmup(deck, cur, alive)
+    cancelWarmup()
+    local queue, queued = {}, {}
+    for _i, delta in ipairs(SWIPE_DELTAS) do
+        local target = (cur - 1 + delta) % deck.count + 1
+        if not queued[target] then
+            queued[target] = true
+            local slots = layoutSlots(deck.style, deck.count, deck.geometry)
+            assignBooks(slots, deck.fps, target)
+            for i = #slots, 1, -1 do
+                local kind = slots[i].kind
+                if kind == "center" or kind == "tilt" then queue[#queue + 1] = slots[i] end
+            end
+        end
+    end
+
+    local n = 0
+    local function step()
+        n = n + 1
+        local slot = queue[n]
+        if not (slot and alive()) then
+            _warmup_step = nil
+            return
+        end
+        warmSlot(deck, slot)
+        UIManager:scheduleIn(WARMUP_TICK, step)
+    end
+    _warmup_step = step
+    UIManager:scheduleIn(WARMUP_DELAY, step)
 end
 
 -- ---------------------------------------------------------------------------
@@ -591,9 +1071,15 @@ M.text_elems  = { "title", "author", "info" }
 Config.declareTextVariants(M.id, { title = "bold" })
 
 function M.reset()
-    _SH                 = nil
-    _bstats_cache       = {}
-    _bstats_cache_count = 0
+    cancelWarmup()
+    _SH = nil
+    _bstats = newLru(BSTATS_CACHE_MAX)
+    if _tilt_cache then
+        for _, e in pairs(_tilt_cache.entries) do
+            freeTiltEntry(e.value)
+        end
+    end
+    _tilt_cache = newLru(TILT_CACHE_MAX)
 end
 
 -- No-op: called from main.lua:onCloseDocument as a fallback when the closed
@@ -611,10 +1097,7 @@ end
 -- intact. Called after closing a document so the centre cover's stats are
 -- fresh without discarding stats cached for every other book.
 function M.invalidateCacheForMd5(md5)
-    if md5 and _bstats_cache[md5] then
-        _bstats_cache[md5] = nil
-        _bstats_cache_count = _bstats_cache_count - 1
-    end
+    if md5 then lruRemove(_bstats, md5) end
 end
 
 -- Exposed for pre-computation from outside the module (see _buildCtx).
@@ -734,22 +1217,18 @@ function M.build(w, ctx)
 
     -- Carousel dimensions: center_w is a percentage of inner_w (see
     -- _CENTER_W_PCT above), scaled by cs (raw scale * thumb_scale) on top.
+    local style    = getStyle(pfx, c)
     local inner_w  = w - PAD * 2
-    local center_w = math.max(_CENTER_W_MIN, math.floor(inner_w * _CENTER_W_PCT * cs))
-    local center_h = math.floor(center_w * 3 / 2)
-    local side_w   = math.floor(center_w * 0.45)
-    local side_h   = math.floor(center_h * 0.85)
-    local far_w    = math.floor(center_w * 0.35)
-    local far_h    = math.floor(center_h * 0.75)
+    local center_w = centerWidth(inner_w, cs)
+    local center_h = math.floor(center_w * COVER_ASPECT)
 
-    local centerX     = math.floor(inner_w / 2)
-    local half_cw     = math.floor(center_w / 2)
-    local offset_near = math.floor(center_w * 0.35)
-    local offset_far  = math.floor(center_w * 0.60)
-    -- Full carousel footprint (left far edge to right far edge), clamped to
+    local centerX = math.floor(inner_w / 2)
+    local half_cw = math.floor(center_w / 2)
+    -- Full carousel footprint (left outer edge to right outer edge), clamped to
     -- the overlap group width. Title/author max_width uses this so those
-    -- lines stay within the cover block including side peeks.
-    local covers_block_w = math.min(inner_w, center_w + 2 * offset_far)
+    -- lines stay within the cover block including the side covers.
+    local covers_block_w = math.min(inner_w,
+        center_w + 2 * levelOffset(style.levels[#style.levels], center_w))
     -- Stats may run wider than the covers; truncate only past 95% of the
     -- module page width.
     local stats_max_w = math.floor(w * 0.95)
@@ -763,15 +1242,8 @@ function M.build(w, ctx)
     if curIdx > count then curIdx = 1 end
     ctx.coverdeck_cur_idx = curIdx
 
-    -- Covers: only the centre slot is genuinely 3:2 (center_h = center_w *
-    -- 3/2). side_w/h and far_w/h are deliberately narrower boxes: slivers
-    -- meant to look like the visible edge of a book partly hidden behind
-    -- the centre cover. That illusion needs an actual cropped slice of a
-    -- full 3:2 cover, not a whole cover squashed into a narrow box — so
-    -- the centre uses the stretch-only path (SH.getBookCover) and the
-    -- side/far slots use the crop-to-fill path (SH.getCroppedBookCover).
     -- Book data is resolved once per book per build: the centre book is read
-    -- by buildCover and again for the text block below.
+    -- by its cover and again for the text block below.
     local book_data = {}
     local function bookData(fp)
         local bd = book_data[fp]
@@ -781,69 +1253,37 @@ function M.build(w, ctx)
         end
         return bd
     end
-    local function buildCover(fp, cw, ch)
-        local bd    = bookData(fp)
-        local cover = SH.getBookCover(fp, cw, ch, true) or SH.coverPlaceholder(bd.title, bd.authors, cw, ch, true)
-        if show_progress_badge then
-            cover = applyProgressBadge(cover, bd, cw, ch, pfx)
-        end
-        return cover
-    end
-    local function buildCroppedCover(fp, cw, ch, align)
-        local bd    = bookData(fp)
-        local cover = SH.getCroppedBookCover(fp, cw, ch, align, true) or SH.coverPlaceholder(bd.title, bd.authors, cw, ch, true, align)
-        -- Right-hand peeks show the cover's right edge — where the progress
-        -- badge sits — so paint it there too when enabled (optional setting).
-        -- Left peeks crop the left edge (badge would be off-canvas).
-        -- Size/margin scale from centre by ch/center_h (side 0.85, far 0.75).
-        if show_progress_badge and show_progress_badge_on_peeks and align == "right" then
-            cover = applyProgressBadge(cover, bd, cw, ch, pfx, center_w, center_h)
-        end
-        return cover
-    end
 
-    local items = {}
-    local cover_slots = {}  -- parallel: {fp, w, h, kind, align} for each items entry
-    if count >= 5 then
-        items[#items+1] = buildCroppedCover(fps[carouselIdx(curIdx, -2, count)], far_w, far_h, "left")
-        items[#items].overlap_offset = { math.floor(centerX - half_cw - offset_far),         yTopOf(centerY, far_h) }
-        cover_slots[#cover_slots+1] = { fp = fps[carouselIdx(curIdx, -2, count)], w = far_w,  h = far_h, kind = "crop", align = "left",
-                                        overlap_offset = items[#items].overlap_offset }
-        items[#items+1] = buildCroppedCover(fps[carouselIdx(curIdx, 2, count)], far_w, far_h, "right")
-        items[#items].overlap_offset = { math.floor(centerX + half_cw + offset_far - far_w), yTopOf(centerY, far_h) }
-        cover_slots[#cover_slots+1] = { fp = fps[carouselIdx(curIdx, 2, count)],  w = far_w,  h = far_h, kind = "crop", align = "right",
-                                        overlap_offset = items[#items].overlap_offset,
-                                        ref_w = center_w, ref_h = center_h }
-    end
-    if count >= 2 then
-        items[#items+1] = buildCroppedCover(fps[carouselIdx(curIdx, -1, count)], side_w, side_h, "left")
-        items[#items].overlap_offset = { math.floor(centerX - half_cw - offset_near),          yTopOf(centerY, side_h) }
-        cover_slots[#cover_slots+1] = { fp = fps[carouselIdx(curIdx, -1, count)], w = side_w, h = side_h, kind = "crop", align = "left",
-                                        overlap_offset = items[#items].overlap_offset }
-    end
-    if count >= 3 then
-        items[#items+1] = buildCroppedCover(fps[carouselIdx(curIdx, 1, count)], side_w, side_h, "right")
-        items[#items].overlap_offset = { math.floor(centerX + half_cw + offset_near - side_w), yTopOf(centerY, side_h) }
-        cover_slots[#cover_slots+1] = { fp = fps[carouselIdx(curIdx, 1, count)],  w = side_w, h = side_h, kind = "crop", align = "right",
-                                        overlap_offset = items[#items].overlap_offset,
-                                        ref_w = center_w, ref_h = center_h }
-    end
-    items[#items+1] = buildCover(fps[curIdx], center_w, center_h)
-    items[#items].overlap_offset = { math.floor(centerX - half_cw), yTopOf(centerY, center_h) }
-    cover_slots[#cover_slots+1] = { fp = fps[curIdx], w = center_w, h = center_h,
-                                    overlap_offset = items[#items].overlap_offset }
+    -- Tappable carousel container. Each cover is preceded by its own shadow
+    -- so it falls on the covers behind it along the edge where they touch.
+    -- allow_mirroring is off: side layout and tilt orientation are resolved
+    -- in logical coordinates; RTL navigation is handled in the gesture code.
+    local geometry = { center_w = center_w, center_h = center_h, centerX = centerX, centerY = centerY }
+    local slots    = layoutSlots(style, count, geometry)
+    assignBooks(slots, fps, curIdx)
+    local group_h = center_h + TOP_CLEAR
+    local overlap = OverlapGroup:new{
+        dimen = Geom:new{ w = inner_w, h = group_h },
+        allow_mirroring = false,
+    }
+    for _i, slot in ipairs(slots) do
+        local bd = bookData(slot.fp)
+        slot.badge = tiltBadge(SH, slot, bd, pfx, show_progress_badge, show_progress_badge_on_peeks)
+        local cover = loadSlotCover(SH, slot) or placeholderCover(SH, slot, bd)
+        if slotWantsBadgeWidget(slot, show_progress_badge, show_progress_badge_on_peeks) then
+            cover = applyProgressBadge(cover, bd, slot, pfx)
+        end
+        -- Fresh table per cover so OverlapGroup mutations never corrupt the
+        -- slot's base coordinates used by updateCovers.
+        slot.base_x, slot.base_y = slot.x, slot.y
+        cover.overlap_offset = { slot.x, slot.y }
 
-    -- Tappable carousel container
-    local group_h  = center_h + TOP_CLEAR
-    local overlap  = OverlapGroup:new{ dimen = Geom:new{ w = inner_w, h = group_h } }
-    -- Each cover is preceded by its own shadow, so it falls on the covers
-    -- behind it along the edge where they touch. Each cover_slot records its
-    -- container+index inside the OverlapGroup.
-    for i, item in ipairs(items) do
-        local slot   = cover_slots[i]
-        local shadow = SH.buildOverlapShadow(slot.overlap_offset[1], slot.overlap_offset[2], slot.w, slot.h)
-        if shadow then overlap[#overlap + 1] = shadow end
-        overlap[#overlap + 1] = item
+        local shadow = slotShadow(SH, slot)
+        if shadow then
+            shadow.allow_mirroring = false
+            overlap[#overlap + 1] = shadow
+        end
+        overlap[#overlap + 1] = cover
         slot.container = overlap
         slot.idx       = #overlap
     end
@@ -871,13 +1311,9 @@ function M.build(w, ctx)
         screen:_refreshImmediate(true)
     end
 
-    -- Advances self._cur by one step (forward or backward) and repaints.
-    local function _navigateStep(self, forward)
-        if forward then
-            self._cur = self._cur % self._count + 1
-        else
-            self._cur = (self._cur - 2 + self._count) % self._count + 1
-        end
+    -- Moves self._cur by `delta` covers (positive: forward) and repaints.
+    local function _navigateBy(self, delta)
+        self._cur = (self._cur - 1 + delta) % self._count + 1
         if self._screen then
             self._screen:_setCoverdeckIdx(self._cur)
             _navigateRefresh(self._screen)
@@ -885,15 +1321,17 @@ function M.build(w, ctx)
     end
 
     function tappable:onTap(_, ges)
-        local x       = ges.pos.x - self.dimen.x
+        local x        = ges.pos.x - self.dimen.x
         local mirrored = BD.mirroredUILayout()
+        local side
         if x < self._mid - self._half_cw then
-            _navigateStep(self, mirrored)   -- left side: previous in LTR, next in RTL
+            side = -1   -- left: previous in LTR, next in RTL
         elseif x > self._mid + self._half_cw then
-            _navigateStep(self, not mirrored)  -- right side: next in LTR, previous in RTL
+            side = 1    -- right: next in LTR, previous in RTL
         elseif self._open_fn then
             self._open_fn(self._fps[self._cur])
         end
+        if side then _navigateBy(self, mirrored and -side or side) end
         return true
     end
 
@@ -903,10 +1341,10 @@ function M.build(w, ctx)
             if dir == "west" then dir = "east" elseif dir == "east" then dir = "west" end
         end
         if dir == "east" then
-            _navigateStep(self, false)
+            _navigateBy(self, -1)
             return true
         elseif dir == "west" then
-            _navigateStep(self, true)
+            _navigateBy(self, 1)
             return true
         end
         return false
@@ -1027,7 +1465,7 @@ function M.build(w, ctx)
             if pre and pre.fp == fps[curIdx] then
                 bstats = pre.stats
             else
-                -- Slow path: query once; result lands in _bstats_cache for
+                -- Slow path: query once; result lands in the stats cache for
                 -- subsequent carousel navigations.
                 local prefetched_entry = ctx.prefetched and ctx.prefetched[fps[curIdx]]
                 local md5 = _resolveMd5(fps[curIdx], prefetched_entry)
@@ -1103,29 +1541,21 @@ function M.build(w, ctx)
         end
     end
 
-    -- Pre-warm the cover of the next book in the carousel at center size.
-    -- When the user swipes, that cover will be the new center — having it
-    -- already scaled in cache eliminates the blitter stall on the next build.
-    -- scheduleIn(0) defers the scale to after the current paint cycle so the
-    -- homescreen appears immediately and the work is done during idle time.
     if count > 1 then
-        local next_fp      = fps[curIdx % count + 1]
-        local warm_w       = center_w
-        local warm_h       = center_h
-        local UIManager_lz = require("ui/uimanager")
-        UIManager_lz:scheduleIn(0, function()
-            -- Only stretches fresh if the cache doesn't already hold a bb
-            -- at least this size (getStretchedCoverBB returns early on hit
-            -- — see infra/sui_cover_cache.lua's prefer-larger get()).
-            Config.getStretchedCoverBB(next_fp, warm_w, warm_h)
-        end)
+        local screen = ctx._screen_widget
+        scheduleWarmup({
+            SH = SH, pfx = pfx, style = style, geometry = geometry, fps = fps, count = count,
+            bookData   = bookData,
+            show_badge = show_progress_badge,
+            on_peeks   = show_progress_badge_on_peeks,
+        }, curIdx, function() return screen ~= nil and screen:isActive() end)
     end
 
     local result = FrameContainer:new{
         bordersize = 0, padding = PAD, padding_top = PAD, padding_bottom = 0,
         final_vg,
     }
-    result._cover_slots     = cover_slots
+    result._cover_slots     = slots
     result._cd_update_funcs = _cd_update_funcs
     result._cd_bd_only_funcs = _cd_bd_only_funcs
     result._center_fp       = fps[curIdx]
@@ -1138,28 +1568,21 @@ function M.updateCovers(widget, ctx)
     if not SH then return true end
     local pfx = (ctx and ctx.pfx) or ""
     local show_badge = showProgressBadge(pfx)
+    local on_peeks   = showProgressBadgeOnPeeks(pfx)
     local all_done = true
     for _, slot in ipairs(widget._cover_slots) do
-        -- Crop slots (side/far "peek" covers) carry their left/right
-        -- alignment forward, or a reload would re-crop them centred and
-        -- lose the "peeking edge" illusion.
-        local new_cover = (slot.kind == "crop")
-            and SH.getCroppedBookCover(slot.fp, slot.w, slot.h, slot.align, true)
-            or SH.getBookCover(slot.fp, slot.w, slot.h, true)
+        local new_cover = loadSlotCover(SH, slot)
         if new_cover then
-            -- Re-apply progress badge after a late cover load (build() already
-            -- did this for centre + right peeks; the poll would otherwise
-            -- strip it).
-            local on_peeks = showProgressBadgeOnPeeks(pfx)
-            local apply = show_badge and (slot.kind ~= "crop"
-                or (on_peeks and slot.align == "right"))
-            if apply then
+            -- Re-apply the progress badge after a late cover load (build()
+            -- already did this where it applies; the poll would otherwise
+            -- strip it). A tilted cover brings its badge (slot.badge) along.
+            if slotWantsBadgeWidget(slot, show_badge, on_peeks) then
                 local bd = SH.getBookData(slot.fp, ctx and ctx.prefetched and ctx.prefetched[slot.fp])
-                new_cover = applyProgressBadge(new_cover, bd, slot.w, slot.h, pfx, slot.ref_w, slot.ref_h)
+                new_cover = applyProgressBadge(new_cover, bd, slot, pfx)
             end
-            -- Use the overlap_offset recorded at build() time — the current
-            -- widget at slot.idx may be a placeholder with no overlap_offset.
-            new_cover.overlap_offset = slot.overlap_offset
+            -- Fresh offset from the slot's base coordinates so a previous
+            -- OverlapGroup paint cannot leave a mirrored value behind.
+            new_cover.overlap_offset = { slot.base_x, slot.base_y }
             slot.container[slot.idx] = new_cover
         elseif not Config.isCoverMissing(slot.fp) then
             all_done = false
@@ -1253,9 +1676,8 @@ function M.getHeight(ctx)
     local show_title  = vis.show_title
     local show_author = vis.show_author
 
-    local center_w = math.max(_CENTER_W_MIN,
-        math.floor(inner_w_estimate * _CENTER_W_PCT * raw_scale * raw_thumb_scale))
-    local center_h = math.floor(center_w * 3 / 2)
+    local center_w = centerWidth(inner_w_estimate, raw_scale * raw_thumb_scale)
+    local center_h = math.floor(center_w * COVER_ASPECT)
     local h        = center_h + 2  -- TOP_CLEAR
 
     -- Must mirror the face sizes used in build(), or the reserved height
@@ -1332,6 +1754,17 @@ function M.getMenuItems(ctx_menu)
             set       = function(v) Config.setThumbScale(v, "coverdeck", pfx) end,
             refresh   = refresh,
         }),
+    }
+
+    local style_item = Config.makeRadioSubmenuItem{
+        text    = _lc("Style"),
+        options = {
+            { value = "classic", label = _lc("Classic") },
+            { value = "flow",    label = _lc("Flow") },
+        },
+        get     = function() return getStyleId(pfx) end,
+        set     = function(value) SUISettings:saveSetting(pfx .. SETTING_STYLE, value) end,
+        refresh = refresh,
     }
 
     local fixed_sources = {
@@ -1708,6 +2141,7 @@ function M.getMenuItems(ctx_menu)
             size  = scale_items,
             text  = text_opts,
             extra = {
+                style_item,
                 Config.makeCoverHoldModeItem{
                     mod_id  = "coverdeck",
                     pfx     = pfx,

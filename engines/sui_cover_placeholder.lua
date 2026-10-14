@@ -5,6 +5,8 @@
 --   Placeholder.build(w, h, title, authors)               → widget of exactly w × h
 --   Placeholder.buildCropped(w, h, title, authors, align) → a w × h slice of the
 --       full 2:3 cover, cut from its "left" or "right" edge
+--   Placeholder.render(w, h, title, authors)              → the w × h cover painted
+--       into a new RGB32 buffer owned by the caller
 --   Placeholder.fitSize(max_w, max_h)                     → w, h of the largest
 --       2:3 box that fits the given bounds
 
@@ -181,16 +183,21 @@ function Placeholder.build(w, h, title, authors)
     }
 end
 
+function Placeholder.render(w, h, title, authors)
+    local cover = Placeholder.build(w, h, title, authors)
+    local sheet = Blitbuffer.new(w, h, Blitbuffer.TYPE_BBRGB32)
+    sheet:fill(Blitbuffer.COLOR_WHITE)
+    cover:paintTo(sheet, 0, 0)
+    cover:free()
+    return sheet
+end
+
 function Placeholder.buildCropped(w, h, title, authors, align)
     local full_w = Placeholder.fitSize(math.huge, h)
     if full_w <= w then return Placeholder.build(w, h, title, authors) end
 
     -- Render the whole cover off-screen, then keep only the requested slice.
-    local cover = Placeholder.build(full_w, h, title, authors)
-    local sheet = Blitbuffer.new(full_w, h, Blitbuffer.TYPE_BBRGB32)
-    sheet:fill(Blitbuffer.COLOR_WHITE)
-    cover:paintTo(sheet, 0, 0)
-    cover:free()
+    local sheet = Placeholder.render(full_w, h, title, authors)
 
     local slice = Blitbuffer.new(w, h, Blitbuffer.TYPE_BBRGB32)
     slice:blitFrom(sheet, 0, 0, align == "right" and (full_w - w) or 0, 0, w, h)

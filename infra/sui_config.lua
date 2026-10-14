@@ -2357,6 +2357,12 @@ local function _stretchBBToSize(raw_bb, target_w, target_h)
     return stretched_bb
 end
 
+-- Stretches `bb` to exactly w x h, aspect not preserved, for consumers that
+-- reshape a cover themselves. Returns a new buffer owned by the caller, or
+-- `bb` itself when it could not be scaled; callers free the result only when
+-- it differs from `bb`.
+M.stretchBBToSize = _stretchBBToSize
+
 -- Decodes the cover bitmap held by the book info store. The decode is
 -- comparatively expensive, so callers first validate through metadata-only
 -- lookups and call this only when no local cache entry can serve the request.

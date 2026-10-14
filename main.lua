@@ -908,6 +908,27 @@ function SimpleUIPlugin:init()
         end
         -- -------------------------------------------------------------------
 
+        -- Settings migration v11:
+        -- Series grouping becomes a per-view setting. An enabled global flag
+        -- enables it in every view that supported it, keeping the previous
+        -- behaviour; the global flag is then dropped.
+        if not SUISettings:isTrue("simpleui_settings_migrated_v11") then
+            pcall(function()
+                local legacy_key = "simpleui_fc_series_grouping"
+                local legacy = SUISettings:get(legacy_key)
+                if legacy == nil then return end
+                for _, mode in ipairs({ "normal", "author", "tags" }) do
+                    local key = legacy_key .. "_" .. mode
+                    if SUISettings:get(key) == nil then SUISettings:set(key, legacy == true) end
+                end
+                SUISettings:del(legacy_key)
+                logger.info("simpleui: migration v11 — series grouping split per view")
+            end)
+            SUISettings:set("simpleui_settings_migrated_v11", true)
+            SUISettings:flush()
+        end
+        -- -------------------------------------------------------------------
+
         Config.applyFirstRunDefaults()
         Config.migrateOldCustomSlots()
         -- Always run sanitizeQASlots: it cleans both custom QA slot references

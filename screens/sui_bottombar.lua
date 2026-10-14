@@ -281,9 +281,17 @@ function M.SEP_H()
     end)
 end
 
+-- Height the bar strip occupies when it is shown, whether or not it is
+-- enabled. Surfaces that keep clear of the bar's area regardless of its state
+-- (floating windows) use this one.
+function M.AREA_H()
+    return M.BAR_H() + M.TOP_SP() + M.BOT_SP()
+end
+
+-- Height the bar actually takes from the screen: 0 while it is disabled.
 function M.TOTAL_H()
     if not SUISettings:nilOrTrue("simpleui_bar_enabled") then return 0 end
-    return M.BAR_H() + M.TOP_SP() + M.BOT_SP()
+    return M.AREA_H()
 end
 
 -- ---------------------------------------------------------------------------

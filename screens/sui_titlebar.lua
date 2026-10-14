@@ -404,12 +404,11 @@ local function _resizeAndStrip(btn, new_w, keep_top_pad)
         if type(btn.image.icon) == "string" and btn.image.icon:match("^nerd:") then
             btn.image.icon = nil
         end
-        btn.image.width  = new_w
-        btn.image.height = new_w
-        if btn.image.is_sui_wrapper then
-            local font_size = math.floor(math.min(new_w, new_w) * 0.65)
-            local Font = require("ui/font")
-            btn.image.face = Font:getFace(SUIStyle().FACE_ICONS, font_size)
+        local box = math.floor(new_w * (btn.sui_icon_scale or 1))
+        btn.image.width  = box
+        btn.image.height = box
+        if btn.image.face then
+            btn.image.face = SUIStyle().glyphFace(box)
         else
             _reloadImage(btn.image)
         end
@@ -424,9 +423,7 @@ local function _resizeAndStrip(btn, new_w, keep_top_pad)
         btn.label_widget.width  = new_w
         btn.label_widget.height = new_w
         if btn.label_widget.is_sui_wrapper then
-            local font_size = math.floor(math.min(new_w, new_w) * 0.65)
-            local Font = require("ui/font")
-            btn.label_widget.face = Font:getFace(SUIStyle().FACE_ICONS, font_size)
+            btn.label_widget.face = SUIStyle().glyphFace(new_w)
         end
     end
     btn.padding_left   = 0
@@ -518,6 +515,12 @@ local function _layoutParams(tb)
     }
 end
 
+-- Icon / slot ratio of the search button in the tabs bar. The slot is only as
+-- tall as the text, so the icon is drawn larger than its slot to stay
+-- prominent next to the tab labels. It applies to symbol glyphs and image
+-- icons alike, which then render at the same visual size.
+local TABS_SEARCH_ICON_SCALE = 1.37
+
 -- Metrics of the compact tabs-style bar, scaled by the title-bar size. The
 -- icon size equals the text height and is also the menu icon size of the
 -- classic style.
@@ -539,16 +542,12 @@ local function _tabsMetrics()
     }
 end
 
--- Sizes the menu button like the tabs-style menu icon and centres it inside a
--- classic slot of width `slot_w` whose left edge is `x`.
+-- Sizes the menu button to the classic icon slot so it matches back, search
+-- and browse. `slot_w` is the classic icon size; `x` is the slot's left edge.
 local function _placeMenuButton(btn, slot_w, x)
-    local icon_w = _tabsMetrics().iw
-    local inset  = math.floor((slot_w - icon_w) / 2)
-    _resizeAndStrip(btn, icon_w)
-    btn.padding_top = math.max(inset, 0)
-    btn:update()
+    _resizeAndStrip(btn, slot_w)
     btn.overlap_align  = nil
-    btn.overlap_offset = { x + inset, 0 }
+    btn.overlap_offset = { x, 0 }
 end
 
 local function _hideOffset(sw)
@@ -619,7 +618,8 @@ local function _newBackButton(tb, parent, iw, back_icon)
 end
 
 -- Builds the injected search button; it opens the file search of the library.
-local function _newSearchButton(tb, fm_self, iw)
+-- `icon_scale` (optional) sets the icon / slot ratio, see SUIStyle.applyIconToBtn.
+local function _newSearchButton(tb, fm_self, iw, icon_scale)
     local IconButton = require("ui/widget/iconbutton")
     local btn = IconButton:new{
         icon        = "appbar.search",
@@ -632,6 +632,7 @@ local function _newSearchButton(tb, fm_self, iw)
             if fs and fs.onShowFileSearch then fs:onShowFileSearch() end
         end,
     }
+    btn.sui_icon_scale = icon_scale
     _resizeAndStrip(btn, iw)
     local S = SUIStyle()
     if S then S.applyIconToBtn("sui_search", btn) end
@@ -1268,7 +1269,7 @@ local function _applyTabs(fm_self, tb)
     local items, has_search = _stripItems(iw)
     local search_btn
     if has_search then
-        search_btn = _newSearchButton(tb, fm_self, iw)
+        search_btn = _newSearchButton(tb, fm_self, iw, TABS_SEARCH_ICON_SCALE)
         _padTapArea(search_btn, m)
         search_btn.overlap_offset = { _hideOffset(sw), 0 }
         table.insert(tb, search_btn)

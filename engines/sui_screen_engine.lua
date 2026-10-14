@@ -1587,6 +1587,7 @@ function ScreenWidget:_buildCtx()
                 thumb_scale   = Config.getThumbScale("coverdeck", self._pfx),
                 lbl_scale     = Config.getItemLabelScale("coverdeck", self._pfx),
                 source        = SUISettings:readSetting(self._pfx .. "coverdeck_source") or "recent",
+                style         = SUISettings:readSetting(self._pfx .. "coverdeck_style"),
                 show_finished = SUISettings:readSetting(self._pfx .. "coverdeck_show_finished") == true,
                 main_order    = SUISettings:readSetting(self._pfx .. "coverdeck_main_order"),
                 show = {
@@ -3423,6 +3424,13 @@ function ScreenWidget:_pauseBackgroundWork()
     end
     local ClockMod = Registry.get("clock")
     if ClockMod and ClockMod.cancelRefresh then ClockMod.cancelRefresh() end
+end
+
+-- Whether the screen is built and in front of the user: not closed, parked
+-- beneath the reader or suspended. Deferred background work checks this
+-- between its steps.
+function ScreenWidget:isActive()
+    return self._ctx_cache ~= nil and not (self._parked or self._suspended)
 end
 
 function ScreenWidget:onSuspend()

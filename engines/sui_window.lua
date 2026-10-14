@@ -352,13 +352,15 @@ function SUIWindow:show()
     local mf = self._modal_frame
 
     -- Compute the usable vertical area between the top inset and the navbar so
-    -- the modal is centred in that region and never overlaps either bar.
+    -- the modal is centred in that region and never overlaps either bar. The
+    -- navbar's area is reserved whether or not the bar is enabled, so the
+    -- modal keeps its position when the bar is toggled.
     local top_h = UI.getTopInset()
 
     local bot_h = 0
     local ok_bb_early, Bottombar_early = pcall(require, "screens/sui_bottombar")
-    if ok_bb_early and Bottombar_early and Bottombar_early.TOTAL_H then
-        bot_h = Bottombar_early.TOTAL_H()
+    if ok_bb_early and Bottombar_early and Bottombar_early.AREA_H then
+        bot_h = Bottombar_early.AREA_H()
     end
 
     -- Usable region: from top_h to (screen_h - bot_h).
@@ -1724,13 +1726,13 @@ function SUIWindow.Input.tapable(widget, handlers, dimen)
 end
 
 --- Creates a tappable icon button.
---- @param opts table  icon, size, color, on_tap, w, h
+--- @param opts table  icon, size (font size, unscaled), color, on_tap, w, h
 --- @return InputContainer
 function SUIWindow.Input.iconButton(opts)
-    local sz  = opts.size  or SZ(Screen:scaleBySize(SUIStyle.FS_DETAIL))
-    local w   = opts.w     or sz * 2
-    local h   = opts.h     or sz
-    local clr = opts.color or SUIStyle.COLOR.text_primary
+    local face = Font:getFace(SUIStyle.FACE_ICONS, opts.size or SZ(SUIStyle.FS_ICON))
+    local w    = opts.w     or face.size * 2
+    local h    = opts.h     or face.size
+    local clr  = opts.color or SUIStyle.COLOR.text_primary
 
     local ic = InputContainer:new{
         dimen = Geom:new{ w = w, h = h },
@@ -1738,7 +1740,7 @@ function SUIWindow.Input.iconButton(opts)
             dimen = Geom:new{ w = w, h = h },
             TextWidget:new{
                 text    = SUIStyle.icon(opts.icon),
-                face    = Font:getFace(SUIStyle.FACE_ICONS, sz),
+                face    = face,
                 fgcolor = clr,
             },
         },
@@ -1956,7 +1958,7 @@ function SUIWindow.ListRow(opts)
                     dimen = Geom:new{ w = _CHEVRON_W() * 2, h = left_h },
                     TextWidget:new{
                         text    = SUIStyle.icon("more"),
-                        face    = Font:getFace(SUIStyle.FACE_ICONS, SZ(Screen:scaleBySize(SUIStyle.FS_DETAIL))),
+                        face    = Font:getFace(SUIStyle.FACE_ICONS, SZ(SUIStyle.FS_ICON)),
                         fgcolor = _clrPrimary(),
                     },
                 },
@@ -3369,7 +3371,7 @@ local function _CardBase(opts)
                     dimen = Geom:new{ w = _CHEVRON_W() * 2, h = left_h },
                     TextWidget:new{
                         text    = SUIStyle.icon("more"),
-                        face    = Font:getFace(SUIStyle.FACE_ICONS, SZ(Screen:scaleBySize(SUIStyle.FS_DETAIL))),
+                        face    = Font:getFace(SUIStyle.FACE_ICONS, SZ(SUIStyle.FS_ICON)),
                         fgcolor = fg_color,
                     },
                 },

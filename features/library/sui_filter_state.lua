@@ -28,6 +28,7 @@
 --   FilterState.addFilter(state, dimension, value)   -- mutates + returns state
 --   FilterState.withoutDimension(state, dimension)   -- returns a new state
 --   FilterState.isEmpty(state)
+--   FilterState.entryDimension(state)                -- dimension of the view a state belongs to
 --   FilterState.subgroupDimension(state)             -- dimension a leaf is split by
 --   FilterState.selectGroups(sizes, total)           -- group keys shown as folders
 --   FilterState.parseSeries(raw)                     -- name, suffix index
@@ -207,6 +208,13 @@ end
 
 -- Smallest number of books worth a folder of their own.
 FilterState.MIN_GROUP_SIZE = 2
+
+-- Dimension of the view `state` was entered through: the first of its trail,
+-- which stays fixed while the state is narrowed further. nil for an empty state.
+function FilterState.entryDimension(state)
+    local first = state and state.trail[1]
+    return first and first.dimension
+end
 
 -- Dimension the leaf reached by `state` is split by, or nil when the leaf is
 -- not split: its last dimension defines no sub-grouping, or the trail already

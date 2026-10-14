@@ -527,9 +527,21 @@ local function _syncButtonRenderSlot(btn, w_key, new_w)
     end
 end
 
+-- Makes `widget` paint centered in a w x h slot whatever its own size, so an
+-- icon larger than its slot grows evenly on every side.
+local function _centerInSlot(widget, w, h)
+    local paint = widget.paintTo
+    widget.paintTo = function(self, bb, x, y)
+        local sz = self:getSize()
+        paint(self, bb, x + math.floor((w - sz.w) / 2), y + math.floor((h - sz.h) / 2))
+    end
+end
+
 --- Replaces image.file on a live button widget with the icon in effect for
 --- `id` (stored override or slot default).  Does nothing when neither is set
 --- or the button has no image.  Returns true when an icon was applied.
+--- `btn.sui_icon_scale` (default 1) sizes the icon relative to the button for
+--- symbol glyphs and image icons alike; the icon stays centered in its slot.
 function M.applyIconToBtn(id, btn)
     local raw = M.getEffectiveIcon(id)
     if not raw then return false end
@@ -544,34 +556,27 @@ function M.applyIconToBtn(id, btn)
         local w = btn[w_key]
         if not w then return end
 
+        local w_width  = btn.width  or w.width
+        local w_height = btn.height or w.height
+        local scale    = btn.sui_icon_scale or 1
+        local box      = math.floor(math.min(w_width, w_height) * scale)
+
         if is_nerd then
             local nerd_char = Config.nerdIconChar(path)
-            local Font = require("ui/font")
             local TextWidget = require("ui/widget/textwidget")
 
             pcall(w.free, w)
 
-            local w_width  = btn.width  or w.width
-            local w_height = btn.height or w.height
-            local font_size = math.floor(math.min(w_width, w_height) * 0.65)
-
             local new_w = TextWidget:new{
                 text    = nerd_char,
-                face    = Font:getFace(M.FACE_ICONS, font_size),
+                face    = M.glyphFace(box),
                 fgcolor = btn.icon_color or require("ffi/blitbuffer").COLOR_BLACK,
                 padding = 0,
             }
             new_w.width  = w_width
             new_w.height = w_height
             new_w.is_sui_wrapper = true
-
-            local orig_paintTo = new_w.paintTo
-            new_w.paintTo = function(self_w, bb, x, y)
-                local sz = self_w:getSize()
-                local ox = x + math.floor((w_width - sz.w) / 2)
-                local oy = y + math.floor((w_height - sz.h) / 2)
-                orig_paintTo(self_w, bb, ox, oy)
-            end
+            _centerInSlot(new_w, w_width, w_height)
 
             _syncButtonRenderSlot(btn, w_key, new_w)
 
@@ -580,14 +585,18 @@ function M.applyIconToBtn(id, btn)
                 bb_mod.patchDimmedIcon(btn)
             end
         else
-            if w.is_sui_wrapper then
+            if w.is_sui_wrapper or scale ~= 1 then
                 pcall(w.free, w)
                 local IconWidget = require("ui/widget/iconwidget")
                 local new_w = IconWidget:new{
                     file   = path,
-                    width  = btn.width,
-                    height = btn.height,
+                    width  = box,
+                    height = box,
                 }
+                if scale ~= 1 then
+                    new_w.is_sui_wrapper = true
+                    _centerInSlot(new_w, w_width, w_height)
+                end
                 _syncButtonRenderSlot(btn, w_key, new_w)
 
                 local bb_mod = package.loaded["screens/sui_bottombar"]
@@ -1195,82 +1204,7 @@ function M.makeMenuItems(plugin)
 end
 
 function M.sui_build_system_icons(plugin, ctx_menu, ctx)
-    local Device = require("device")
-    local Screen = Device.screen
-    local FrameContainer = require("ui/widget/container/framecontainer")
-    local CenterContainer = require("ui/widget/container/centercontainer")
-    local ImageWidget = require("ui/widget/imagewidget")
-    local TextWidget = require("ui/widget/textwidget")
-    local IconWidget = require("ui/widget/iconwidget")
-    local Font = require("ui/font")
-    local Geom = require("ui/geometry")
-    
-    local btn_size = Screen:scaleBySize(36)
-    local icon_size = math.floor(btn_size * 0.7)
-    local border_sz = Screen:scaleBySize(1)
-    
-    local function makeIconPreview(icon_path, ko_native, fallback_label)
-        local icon_widget
-        local Config = require("infra/sui_config")
-        local is_nerd = icon_path and Config.isNerdIcon(icon_path)
-        
-        if is_nerd then
-            local nerd_char = Config.nerdIconChar(icon_path)
-            if nerd_char then
-                icon_widget = TextWidget:new{
-                    text    = nerd_char,
-                    face    = Font:getFace(M.FACE_ICONS, math.floor(icon_size * 0.8)),
-                    fgcolor = M.COLOR.text_primary,
-                    padding = 0,
-                }
-            end
-        elseif icon_path then
-            local safe_path = M.safeIconPath(icon_path, nil)
-            if safe_path then
-                local iw = ImageWidget:new{
-                    file    = safe_path,
-                    width   = icon_size,
-                    height  = icon_size,
-                    is_icon = true,
-                    alpha   = true,
-                }
-                if pcall(function() iw:_render() end) then
-                    icon_widget = iw
-                else
-                    iw:free()
-                end
-            end
-        end
-        
-        if not icon_widget and ko_native then
-            icon_widget = IconWidget:new{
-                icon    = ko_native,
-                width   = icon_size,
-                height  = icon_size,
-            }
-        end
-
-        if not icon_widget then
-            icon_widget = TextWidget:new{
-                text    = fallback_label and fallback_label:sub(1, 1):upper() or "?",
-                face    = Font:getFace("cfont", math.floor(icon_size * 0.7)),
-                fgcolor = M.COLOR.text_primary,
-            }
-        end
-        
-        return FrameContainer:new{
-            dimen      = Geom:new{ w = btn_size, h = btn_size },
-            radius     = Screen:scaleBySize(8),
-            bordersize = border_sz,
-            background = M.COLOR.surface,
-            color      = M.COLOR.gray,
-            padding    = 0,
-            [1]        = CenterContainer:new{
-                dimen = Geom:new{ w = btn_size - border_sz * 2, h = btn_size - border_sz * 2 },
-                [1]   = icon_widget,
-            }
-        }
-    end
+    local preview_size = Screen:scaleBySize(36)
 
     local function get_rows()
         local rows = {}
@@ -1311,7 +1245,9 @@ function M.sui_build_system_icons(plugin, ctx_menu, ctx)
                     rows[#rows + 1] = {
                         text = label .. (path and "  \u{270E}" or ""),
                         show_chevron = true,
-                        right_widget = makeIconPreview(effective_path, ko_native, label),
+                        right_widget = M.buildIconPreview(preview_size, {
+                            icon = effective_path, ko_native = ko_native, label = label,
+                        }),
                         on_hold = function() end,
                         on_tap = function()
                             local QA = require("features/sui_quickactions")
@@ -1398,7 +1334,7 @@ end
 -- ---------------------------------------------------------------------------
 -- SUI Typographic Scale
 -- ---------------------------------------------------------------------------
--- Five semantic font-size levels used across all SimpleUI modules.
+-- Semantic font-size levels used across all SimpleUI modules.
 -- Change values only here — every module derives its sizes from these.
 --
 --  FS_TITLE    (22)  — primary title, placeholder, cover heading, dir label
@@ -1406,6 +1342,7 @@ end
 --  FS_BODY     (18)  — standard row text, quote body, section label
 --  FS_DETAIL   (15)  — metadata, percentages, collection labels, stats label
 --  FS_CAPTION  (12)  — minimum readable label, pagination xs, goal sub-label
+--  FS_ICON     (30)  — symbol-font action glyphs in window rows and headers
 --
 --  Badge overlays (module_collections, sui_foldercovers) are calculated
 --  proportionally to their container size and intentionally bypass this scale.
@@ -1435,6 +1372,7 @@ M.FS_SUBTITLE = _fs(20)
 M.FS_BODY     = _fs(18)
 M.FS_DETAIL   = _fs(15)
 M.FS_CAPTION  = _fs(12)
+M.FS_ICON     = _fs(30)
 
 -- ---------------------------------------------------------------------------
 -- SUI Color Palette
@@ -1521,6 +1459,116 @@ M.FACE_REGULAR = "cfont"
 M.FACE_BOLD    = "tfont"
 M.FACE_MONO    = "infont"
 M.FACE_ICONS   = "symbols"
+
+-- Fraction of its box that a symbol-font glyph's em square occupies. Glyph ink
+-- spans ~0.83 em (median) and bundled SVG icons ~0.81 of their box, so an em
+-- close to the box renders both at the same visual size.
+M.GLYPH_RATIO  = 0.95
+
+-- Fraction of its box that an initial-letter fallback's em square occupies.
+M.LETTER_RATIO = 0.65
+
+--- Returns a face whose em is `px` real pixels.
+--- Font:getFace() expects density-independent units and applies
+--- Screen:scaleBySize() itself, so the target size is converted back first.
+--- The unpatched getFace is used when available so the Global Text Size scale
+--- never resizes text that lives in a fixed box.
+--- @param face string  font alias (e.g. M.FACE_ICONS)
+--- @param px   number  em size in pixels
+--- @return table       font face
+function M.pxFace(face, px)
+    local Font    = require("ui/font")
+    local getFace = Font._simpleui_native_getface or Font.getFace
+    local unit    = Screen:scaleBySize(1000) / 1000
+    -- The half-pixel offset keeps the ceil() in scaleBySize() from rounding up.
+    return getFace(Font, face, (math.max(1, math.floor(px)) - 0.5) / unit)
+end
+
+--- Face for a symbol glyph drawn inside a square box of `box_px` pixels.
+function M.glyphFace(box_px)
+    return M.pxFace(M.FACE_ICONS, box_px * M.GLYPH_RATIO)
+end
+
+--- Face for an initial letter drawn inside a square box of `box_px` pixels.
+--- @param face string|nil  font alias, defaults to M.FACE_REGULAR
+function M.letterFace(box_px, face)
+    return M.pxFace(face or M.FACE_REGULAR, box_px * M.LETTER_RATIO)
+end
+
+-- Corner radius of an icon preview, relative to its side.
+local PREVIEW_RADIUS_RATIO = 0.22
+-- Icon side inside the preview frame, relative to the frame side.
+local PREVIEW_ICON_RATIO   = 0.7
+
+--- Framed square preview of an icon. The content is, in order of preference:
+--- the image file or symbol glyph `opts.icon` refers to, the native icon named
+--- by `opts.ko_native`, or the initial of `opts.label`.
+--- @param size number  frame side in pixels
+--- @param opts table   { icon, ko_native, label }
+--- @return table       widget
+function M.buildIconPreview(size, opts)
+    local Config          = require("infra/sui_config")
+    local FrameContainer  = require("ui/widget/container/framecontainer")
+    local CenterContainer = require("ui/widget/container/centercontainer")
+    local TextWidget      = require("ui/widget/textwidget")
+    local Geom            = require("ui/geometry")
+
+    local icon      = opts.icon
+    local icon_size = math.floor(size * PREVIEW_ICON_RATIO)
+    local inner     = size - M.BORDER_SZ * 2
+    local content
+
+    local glyph = Config.nerdIconChar(icon)
+    if glyph then
+        content = TextWidget:new{
+            text    = glyph,
+            face    = M.glyphFace(icon_size),
+            fgcolor = M.COLOR.text_primary,
+            padding = 0,
+        }
+    elseif icon then
+        local path = M.safeIconPath(icon, nil)
+        if path then
+            local iw = require("ui/widget/imagewidget"):new{
+                file    = path,
+                width   = icon_size,
+                height  = icon_size,
+                is_icon = true,
+                alpha   = true,
+            }
+            if pcall(iw._render, iw) then content = iw else iw:free() end
+        end
+    end
+
+    if not content and opts.ko_native then
+        content = require("ui/widget/iconwidget"):new{
+            icon   = opts.ko_native,
+            width  = icon_size,
+            height = icon_size,
+        }
+    end
+
+    if not content then
+        content = TextWidget:new{
+            text    = opts.label and opts.label:sub(1, 1):upper() or "?",
+            face    = M.letterFace(icon_size),
+            fgcolor = M.COLOR.text_primary,
+        }
+    end
+
+    return FrameContainer:new{
+        dimen      = Geom:new{ w = size, h = size },
+        radius     = math.floor(size * PREVIEW_RADIUS_RATIO + 0.5),
+        bordersize = M.BORDER_SZ,
+        background = M.COLOR.surface,
+        color      = M.COLOR.gray,
+        padding    = 0,
+        CenterContainer:new{
+            dimen = Geom:new{ w = inner, h = inner },
+            content,
+        },
+    }
+end
 
 -- ---------------------------------------------------------------------------
 -- SUI Icon Glyphs (Nerd Fonts / Material Symbols codepoints)

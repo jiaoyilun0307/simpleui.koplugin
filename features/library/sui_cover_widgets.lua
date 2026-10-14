@@ -12,7 +12,7 @@
 -- system and the monkeypatch machinery.
 --
 -- Cached state kept here: the raster cache (AA pentagon, checkmark, rotated
--- ribbon and shadow strips, built once per shape and blitted on every paint)
+-- ribbon sprites, built once per shape and blitted on every paint)
 -- and the label line-height memo. Both are cleared via the public clear*Cache()
 -- functions, which sui_foldercovers.lua calls from M.invalidateCache().
 --
@@ -20,6 +20,10 @@
 -- ----------
 --   CoverWidgets.buildProgressBadgeDesc(eff_size, status, percent_finished, border, dark)
 --   CoverWidgets.drawProgressBadge(bb, ox, oy, desc)
+--   CoverWidgets.progressBadgeSize(desc)  -- outer width, height (border included)
+--   CoverWidgets.progressBadgeKey(desc)
+--       -- Identifies the pixels drawProgressBadge paints, for caches that
+--       -- bake the badge into a bitmap.
 --   CoverWidgets.buildProgressBadgeWidget(desc)
 --       -- Widget wrapper (getSize/paintTo) around drawProgressBadge, for
 --       -- consumers that need it embedded in an OverlapGroup rather than
@@ -89,6 +93,7 @@ local UI              = require("infra/sui_core")
 local AAPaint         = require("infra/sui_aa_paint")
 local RasterCache     = require("infra/sui_raster_cache")
 local Backdrop        = require("infra/sui_backdrop")
+local CoverShadow     = require("engines/sui_cover_shadow")
 
 local CoverWidgets = {}
 
@@ -284,6 +289,22 @@ function CoverWidgets.drawProgressBadge(bb, ox, oy, desc)
     -- "not started": bare pentagon, no content drawn.
 end
 
+-- Outer size of the badge `desc` describes: its body plus the border all round.
+function CoverWidgets.progressBadgeSize(desc)
+    local border2 = 2 * desc.border
+    return desc.bw + border2, desc.bh + border2
+end
+
+-- Key of everything drawProgressBadge paints for `desc`: size, border, colour
+-- and the content shown (an end state, or the rounded percentage).
+function CoverWidgets.progressBadgeKey(desc)
+    local content = desc.status == "complete" and "complete"
+        or desc.status == "abandoned" and "abandoned"
+        or desc.percent_finished and math.floor(desc.percent_finished * 100 + 0.5)
+        or ""
+    return table.concat({ desc.eff_size, desc.border, desc.dark and 1 or 0, content }, "|")
+end
+
 -- Widget wrapper around buildProgressBadgeDesc/drawProgressBadge, for
 -- consumers that build a widget tree (OverlapGroup) instead of overriding
 -- MosaicMenuItem:paintTo() directly (e.g. engines/sui_book_grid.lua's
@@ -299,8 +320,8 @@ local ProgressBadgeWidget = {}
 ProgressBadgeWidget.__index = ProgressBadgeWidget
 
 function ProgressBadgeWidget:getSize()
-    local fr = self.desc.border
-    return Geom:new{ w = self.desc.bw + 2 * fr, h = self.desc.bh + 2 * fr }
+    local w, h = CoverWidgets.progressBadgeSize(self.desc)
+    return Geom:new{ w = w, h = h }
 end
 
 function ProgressBadgeWidget:paintTo(bb, x, y)
@@ -677,78 +698,17 @@ end
 
 -- ── Cover shadow ──────────────────────────────────────────────────────────────
 
--- A shadow is built from one-pixel bands that fade with their distance from
--- the card, which approximates a blurred edge. The bands are coverage masks
--- blended in black, which shades what is already painted instead of laying a
--- fixed grey, so the shadow reads on any background.
-local _SHADOW_PEAK         = 0.22   -- shading of the band touching the card
-local _SHADOW_MIN_STRENGTH = 0.02   -- fainter bands are not visible: skipped
-
--- Shading of the band `d` px away from the card (0 = touching it) in a shadow
--- `reach` px deep: a smoothstep from the peak down to nothing.
-local function shadowBandStrength(d, reach)
-    local t = 1 - d / reach
-    return _SHADOW_PEAK * t * t * (3 - 2 * t)
-end
-
--- Coverage masks of a shadow's right and bottom strips, cached by card size
--- and depth. The strips never overlap: right band `d` is the column `d` px
--- past the card, bottom band `d` the row `d` px below it, and the corner
--- belongs to whichever band is farther along its own axis.
-local function buildShadowMasks(w, h, offset)
-    local right  = Blitbuffer.new(offset, h, Blitbuffer.TYPE_BB8)
-    local bottom = Blitbuffer.new(w, offset, Blitbuffer.TYPE_BB8)
-    right:fill(Blitbuffer.Color8(0))
-    bottom:fill(Blitbuffer.Color8(0))
-    for d = 0, offset - 1 do
-        local strength = shadowBandStrength(d, offset)
-        if strength < _SHADOW_MIN_STRENGTH then break end
-        local coverage = Blitbuffer.Color8(math.floor(strength * 255 + 0.5))
-        right:paintRect(d, 0, 1, h - offset + d, coverage)
-        bottom:paintRect(0, d, w - offset + d + 1, 1, coverage)
-    end
-    return { right = right, bottom = bottom }
-end
-
--- Paints the part of a soft shadow that shows around a w × h card at (x, y),
--- `offset` px deep. The shadow is the card's rectangle shifted down-right by
--- `offset`, minus the card itself. Night frames are inverted after painting,
--- so blending towards white is what darkens the shadow on screen.
+-- Soft shadow around a w × h card at (x, y), cast down and to the right. The
+-- shadow itself lives in engines/sui_cover_shadow.
 function CoverWidgets.paintShadow(bb, x, y, w, h, offset)
-    if offset <= 0 then return end
-    local masks = RasterCache.get("shadow", (w * 4096 + h) * 64 + offset, buildShadowMasks, w, h, offset)
-    local color = Screen.night_mode and Blitbuffer.COLOR_WHITE or Blitbuffer.COLOR_BLACK
-    bb:colorblitFromRGB32(masks.right,  x + w,      y + offset, 0, 0, offset, h,      color)
-    bb:colorblitFromRGB32(masks.bottom, x + offset, y + h,      0, 0, w,      offset, color)
-end
-
-local ShadowWidget = {}
-ShadowWidget.__index = ShadowWidget
-
-function ShadowWidget:getSize()
-    return Geom:new{ w = self.w, h = self.h }
-end
-
-function ShadowWidget:paintTo(bb, x, y)
-    CoverWidgets.paintShadow(bb, x, y, self.card_w, self.card_h, self.offset)
-end
-
--- See ProgressBadgeWidget:handleEvent() above for why this is required —
--- same crash, same fix, same reasoning.
-function ShadowWidget:handleEvent()
-    return false
+    CoverShadow.paintRect(bb, x, y, w, h, offset)
 end
 
 -- Widget casting the shadow of a card_w × card_h card, `offset` px deep; nil
 -- when `offset` is 0. The card sits at the widget's top-left corner and the
 -- shadow falls down-right.
 function CoverWidgets.buildShadow(card_w, card_h, offset)
-    if offset <= 0 then return nil end
-    return setmetatable({
-        w = card_w + offset, h = card_h + offset,
-        card_w = card_w,     card_h = card_h,
-        offset = offset,
-    }, ShadowWidget)
+    return CoverShadow.buildWidget(card_w, card_h, offset)
 end
 
 -- What sits behind a cover and the room it takes, as

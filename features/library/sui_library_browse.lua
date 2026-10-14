@@ -35,6 +35,7 @@
 --   M.navigateToRoot(fc, fm, mode)
 --   M.activateMode(fm, mode, already_active) — single entry point for mode switchers
 --   M.MODES / M.getModeLabel(mode)           — ordered mode ids and their display labels
+--   M.SERIES_GROUPING_MODES                  — modes whose lists can be grouped by series
 --   M.getPathLabel(path)                     — display name of the innermost virtual level
 --   M.isAtVirtualRoot(fc, mode)
 --   M.getSavedMode() / M.setSavedMode(mode)
@@ -72,6 +73,16 @@ M.MODES = { "normal", "author", "series", "tags" }
 function M.getModeLabel(mode)
     if mode == "normal" then return _("Library") end
     return DIM_LABELS[mode]
+end
+
+-- Modes whose lists can be grouped by series: the filesystem view and every
+-- dimension that splits its leaves into sub-groups.
+M.SERIES_GROUPING_MODES = {}
+for _i, mode in ipairs(M.MODES) do
+    local definition = FilterState.DIMENSIONS[mode]
+    if mode == "normal" or (definition and definition.subgroup_by) then
+        M.SERIES_GROUPING_MODES[#M.SERIES_GROUPING_MODES + 1] = mode
+    end
 end
 
 -- ---------------------------------------------------------------------------
@@ -480,9 +491,10 @@ end
 -- folders (their books are not listed again), or nil when the leaf is not
 -- split.
 local function _appendSubgroupFolders(fc, bim, base_dir, filter_state, collate, dirs)
-    local dimension = FolderCovers.getSeriesGrouping()
-        and FilterState.subgroupDimension(filter_state)
-    if not dimension then return nil end
+    local dimension = FilterState.subgroupDimension(filter_state)
+    if not (dimension and FolderCovers.getSeriesGrouping(FilterState.entryDimension(filter_state))) then
+        return nil
+    end
 
     local variant, accept = _listingFilter(fc)
     local counts, firsts = MetadataSource.getValidFacetCounts(

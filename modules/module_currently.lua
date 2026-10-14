@@ -133,9 +133,10 @@ end
 local function applyProgressBadge(cover, bd, cw, ch, pfx)
     local SH = getSH()
     if not SH or not SH.applyProgressBadge then return cover end
-    return SH.applyProgressBadge(cover, bd, cw, ch,
-        getProgressBadgeColorOverride(pfx), nil, nil,
-        Config.getBadgeScalePct("currently", pfx))
+    return SH.applyProgressBadge(cover, bd, cw, ch, {
+        color     = getProgressBadgeColorOverride(pfx),
+        scale_pct = Config.getBadgeScalePct("currently", pfx),
+    })
 end
 
 -- Setting key for stats layout: "default" (one line per stat) or "compact" (single row with · separator + ETA)

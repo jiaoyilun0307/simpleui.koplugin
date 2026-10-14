@@ -24,7 +24,7 @@
 -- Books are grouped by FilterState's series key, so spelling variants of one
 -- series name (case, spacing, a trailing " #n") share a single group.
 --
--- Depends on sui_foldercovers for: isEnabled(), getSeriesGrouping(),
+-- Depends on sui_foldercovers for: isEnabled(), getSeriesGrouping(mode),
 -- resolveStyle(), invalidateItemTableCache() (the FileChooser item-table
 -- cache is a cross-cutting concern that lives with the strip-patch install).
 --
@@ -37,6 +37,7 @@
 --   SeriesGrouping.openCoverPicker(vpath, fc, BookInfoManager)
 --   SeriesGrouping.createCollection(vpath, series_name)
 --   SeriesGrouping.hasGroup(vpath)  -- true if vpath is a known series-group path
+--   SeriesGrouping.isEnabled()      -- true if grouping is on for the filesystem view
 
 local _             = require("infra/sui_i18n").translate
 local FileChooser    = require("ui/widget/filechooser")
@@ -48,6 +49,13 @@ local VirtualPath    = require("features/library/sui_virtual_path")
 local MetadataSource = require("features/library/sui_metadata_source")
 
 local SeriesGrouping = {}
+
+-- Browse mode of the real-folder view this module groups.
+local MODE = "normal"
+
+function SeriesGrouping.isEnabled()
+    return FolderCovers.getSeriesGrouping(MODE)
+end
 
 -- _sg_current holds state while the user is inside a virtual series folder:
 --   series_name:    used to re-find the group item on return to parent.
@@ -135,9 +143,9 @@ local function seriesPropsOf(BookInfoManager, folder_cache, item)
 end
 
 local function sgProcessItemTable(item_table, file_chooser)
-    if not FolderCovers.getSeriesGrouping()   then return end
-    if not file_chooser or not item_table     then return end
-    if item_table._sg_is_series_view          then return end
+    if not SeriesGrouping.isEnabled() then return end
+    if not file_chooser or not item_table then return end
+    if item_table._sg_is_series_view then return end
     if file_chooser.show_current_dir_for_hold then return end
     if VirtualPath.isVirtual(file_chooser.path) then return end
 
@@ -346,7 +354,7 @@ function SeriesGrouping.install()
     end
 
     FileChooser.onMenuSelect = function(fc, item)
-        if item and item.is_series_group and FolderCovers.getSeriesGrouping() then
+        if item and item.is_series_group and SeriesGrouping.isEnabled() then
             sgOpenGroup(fc, item)
             return true
         end
@@ -356,7 +364,7 @@ function SeriesGrouping.install()
     -- Long-press on a series-group shows a dialog with cover picker and
     -- "Create collection". Cover picker is hidden in quad mode.
     FileChooser.onMenuHold = function(fc, item)
-        if item and item.is_series_group and FolderCovers.getSeriesGrouping() then
+        if item and item.is_series_group and SeriesGrouping.isEnabled() then
             if not FolderCovers.isEnabled() then return true end
             local UIManager    = require("ui/uimanager")
             local ButtonDialog = require("ui/widget/buttondialog")
@@ -460,7 +468,7 @@ function SeriesGrouping.install()
         end
 
         _sg_orig_refreshPath(fc)
-        if FolderCovers.getSeriesGrouping() and _sg_current then
+        if SeriesGrouping.isEnabled() and _sg_current then
             local sname      = _sg_current.series_name
             local saved_page = _sg_current.parent_page
             for _, item in ipairs(fc.item_table or {}) do
@@ -477,7 +485,7 @@ function SeriesGrouping.install()
 
     -- Restore focus to the series group item when returning from a virtual folder.
     FileChooser.updateItems = function(fc, ...)
-        if not FolderCovers.getSeriesGrouping() then
+        if not SeriesGrouping.isEnabled() then
             _sg_current = nil
             return _sg_orig_updateItems(fc, ...)
         end
