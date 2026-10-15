@@ -14,12 +14,12 @@
 --
 -- Icon override mechanics
 -- ───────────────────────
--- Tab-bar icons: FileManagerMenu.onShowMenu and ReaderMenu.onShowMenu are
--- patched so every (re)open replaces tab icons with the user's choices
--- before TouchMenu is built. Matching uses `tab.id` (stamped by KOReader's
+-- Tab-bar icons: a step registered in the shared menu hooks
+-- (infra/sui_menu_hooks.lua) replaces tab icons with the user's choices every
+-- time a FileManagerMenu or ReaderMenu table is built or opened, before
+-- TouchMenu is created. Matching uses `tab.id` (stamped by KOReader's
 -- MenuSorter onto every tab entry) — NOT `tab.key`, which native tabs never
--- have. Patches are installed by installTabIconPatch()/
--- installReaderTabIconPatch() and removed on teardown.
+-- have. The step is registered by installTabIconPatch().
 --
 -- Titlebar / search / back icons: sui_titlebar.lua calls
 -- SUIStyle.getIcon(slot_id) when assigning image.file to each button, and
@@ -35,8 +35,7 @@
 --   SUIStyle.resetAll() / .performResetAllSystemIcons(plugin) — clear overrides
 --   SUIStyle.applyTabIcons(fm_or_ui_or_table)  — push overrides into a live
 --                                                 FM/Reader tab_item_table
---   SUIStyle.install/removeTabIconPatch()        — persistent FM-menu patch
---   SUIStyle.install/removeReaderTabIconPatch()  — persistent Reader-menu patch
+--   SUIStyle.installTabIconPatch()         — persistent FM/Reader menu step
 --   SUIStyle.refreshLiveTabBars()          — reapply + repaint any open
 --                                             FM/Reader tab bar right now
 --   SUIStyle.makeMenuItems(plugin)         — sub_item_table for the settings menu
@@ -53,6 +52,7 @@
 --               .applyPack(path)
 
 local SUISettings     = require("infra/sui_store")
+local MenuHooks       = require("infra/sui_menu_hooks")
 local logger          = require("logger")
 local _               = require("infra/sui_i18n").translate
 local Blitbuffer      = require("ffi/blitbuffer")
@@ -170,6 +170,16 @@ M.SLOTS = {
         label     = function() return _("Collections: Back Button") end,
         group     = "sui_coll_icons",
         default_ko = "appbar.back",
+    },
+    -- ── Quick Settings panel ─────────────────────────────────────────────
+    -- Icon of the Exit Book button of the reader's Book layout. Read each
+    -- time the panel is built through M.resolveIcon().
+    {
+        id        = "sui_qs_exit",
+        label     = function() return _("Exit Book Button") end,
+        group     = "sui_qs_icons",
+        default_ko = "exit",
+        default_icon = "nerd:F08B",
     },
     -- ── Quick Actions Defaults ───────────────────────────────────────────
     {
@@ -435,6 +445,15 @@ function M.safeIconPath(path, fallback, slot_id)
     end
 
     return path
+end
+
+--- Renderable icon reference for `id`: the stored override when it is valid,
+--- else the slot's `default_icon`. nil when the slot has no `default_icon`
+--- and no valid override. An invalid override is dropped from the settings.
+function M.resolveIcon(id)
+    local slot = _SLOT_BY_ID[id]
+    local default_icon = slot and slot.default_icon
+    return M.safeIconPath(M.getIcon(id), default_icon, id)
 end
 
 --- Clears every system icon override.
@@ -758,14 +777,9 @@ end
 -- Assigning a full custom path straight into `tab.icon` therefore always
 -- resolves to icon-not-found.
 --
--- The same trick sui_quicksettings_bar.lua already uses to make
--- "simpleui_settings" resolve applies here too: REGISTER the custom icon under
--- a stable bare name:
---   1. Copy the file to DataStorage/icons/<name>.<ext> (disk-based lookup;
---      ICONS_DIRS always searches the user icons dir first, so this alone
---      is enough, and survives restarts).
---   2. Also poke IconWidget's runtime ICONS_PATH cache so the change is
---      visible immediately, without waiting for a fresh process.
+-- The icon is therefore REGISTERED under a stable bare name through
+-- infra/sui_icon_registry.lua, which copies the file to the user icons
+-- directory and updates IconWidget's lookup so the change applies at once.
 -- Only .svg/.png are supported here because those are the only two
 -- extensions IconWidget's by-name search ever tries.
 local _TAB_ICON_NAME_CACHE = {} -- slot_id -> { src = last-registered source path, name = registered name }
@@ -800,41 +814,12 @@ function M.registerTabIconName(slot_id, path)
         return name -- already registered for this exact source
     end
 
-    local ok_ds, DataStorage = pcall(require, "datastorage")
-    local ok_lfs, lfs        = pcall(require, "libs/libkoreader-lfs")
-    local ok_fu, ffiutil     = pcall(require, "ffi/util")
-    if not (ok_ds and ok_lfs and ok_fu) then return nil end
-
-    local user_dir = DataStorage:getDataDir() .. "/icons"
-    if lfs.attributes(user_dir, "mode") ~= "directory" then
-        pcall(lfs.mkdir, user_dir)
-    end
-    local dst = user_dir .. "/" .. name .. "." .. ext
-
-    -- Always (re)copy — the user may have picked a different source file
-    -- for the same slot since the last time this ran.
-    local copy_ok = pcall(ffiutil.copyFile, path, dst)
-    if not copy_ok or lfs.attributes(dst, "mode") ~= "file" then
+    -- Always (re)copy: the user may have picked a different source file for
+    -- the same slot since the last time this ran.
+    if not require("infra/sui_icon_registry").register(name, path) then
         logger.warn("simpleui/style: failed to register tab icon for " .. slot_id)
         return nil
     end
-
-    -- Keep IconWidget's runtime name-cache in sync so the change applies
-    -- immediately, without a restart (same approach as
-    -- sui_quicksettings_bar.lua's icon-registration Layer 2).
-    pcall(function()
-        local iw = require("ui/widget/iconwidget")
-        local iw_init = iw._simpleui_orig_init_for_scan or rawget(iw, "init")
-        if type(iw_init) ~= "function" then return end
-        for i = 1, 64 do
-            local uname, uval = debug.getupvalue(iw_init, i)
-            if uname == nil then break end
-            if uname == "ICONS_PATH" and type(uval) == "table" then
-                uval[name] = dst
-                break
-            end
-        end
-    end)
 
     _TAB_ICON_NAME_CACHE[slot_id] = { src = path, name = name }
     return name
@@ -883,97 +868,19 @@ function M.applyTabIcons(fm_or_table)
 end
 
 -- ---------------------------------------------------------------------------
--- Persistent tab-bar icon patches (FileManagerMenu + ReaderMenu)
+-- Persistent tab-bar icon patch (FileManagerMenu + ReaderMenu)
 -- ---------------------------------------------------------------------------
--- Both patches hook `onShowMenu` rather than `setUpdateItemTable`.
---
--- Why onShowMenu: FileManagerMenu/ReaderMenu:onShowMenu only calls
--- setUpdateItemTable() when `self.tab_item_table == nil` (build-once, cache
--- forever per instance). Patching onShowMenu instead of setUpdateItemTable
--- guarantees our override runs on *every* menu opening, and — critically —
--- runs it by forcing the table to be built (via a dynamic `menu_self:
--- setUpdateItemTable()` call, which resolves to whatever version is
--- currently installed, including sui_quicksettings_bar's own tab-injection
--- wrap) *before* delegating to the untouched native onShowMenu that
--- actually constructs the TouchMenu widget. This sidesteps any ordering
--- dependency between this patch and sui_quicksettings_bar's own patches:
--- by the time TouchMenu:new{} runs, every tab (native + injected) already
--- has its final icon.
---
--- The SimpleUI-injected Quick Settings tab (_sui_qs_panel) is additionally
--- kept in sync directly by QSBar.refreshPanelTabIcon() (see
--- sui_quicksettings_bar.lua), since that tab is a single shared table
--- object reused by reference in both FM and Reader — mutating its `.icon`
--- field once is sufficient and avoids relying on injection-vs-override
--- ordering altogether. applyTabIcons() below still matches it too, as a
--- harmless no-op confirmation once it's present in a given tab_item_table.
+-- Registers a menu hook step that re-applies the icon overrides to the tab
+-- table whenever it is built or opened. Re-applying on every opening is
+-- required because the tab table is cached between openings.
 
--- Descriptors for the two patch targets: module path, the plugin-instance
--- flag name (read/cleared by sui_patches.lua on teardown), and a log label.
-local _TAB_PATCH_TARGETS = {
-    fm = {
-        module_path  = "apps/filemanager/filemanagermenu",
-        plugin_flag  = "_sysicon_fmmenu_patched",
-        log_label    = "FM",
-    },
-    reader = {
-        module_path  = "apps/reader/modules/readermenu",
-        plugin_flag  = "_sysicon_rdmenu_patched",
-        log_label    = "Reader",
-    },
-}
-
--- installed[target] tracks whether _installTabPatch has already run for
--- that target, so repeated calls (e.g. on plugin re-init) are no-ops.
-local _tab_patch_installed = { fm = false, reader = false }
-
-local function _installTabPatch(target, plugin)
-    if _tab_patch_installed[target] then return end
-    local t = _TAB_PATCH_TARGETS[target]
-    local Menu = package.loaded[t.module_path]
-    if not Menu then
-        local ok, m = pcall(require, t.module_path)
-        Menu = ok and m or nil
-    end
-    if not Menu then return end
-    if Menu._simpleui_sysicon_patched then return end
-
-    local orig = Menu.onShowMenu
-    Menu._simpleui_sysicon_orig    = orig
-    Menu._simpleui_sysicon_patched = true
-    if plugin then plugin[t.plugin_flag] = true end
-
-    Menu.onShowMenu = function(menu_self, ...)
-        if menu_self.tab_item_table == nil then
-            menu_self:setUpdateItemTable()
-        end
-        if menu_self.tab_item_table then
-            M.applyTabIcons(menu_self.tab_item_table)
-        end
-        return orig(menu_self, ...)
-    end
-
-    _tab_patch_installed[target] = true
-    logger.dbg("simpleui/style: " .. t.log_label .. " tab icon patch installed")
+function M.installTabIconPatch()
+    MenuHooks.register{
+        id      = "tab_icons",
+        order   = MenuHooks.ORDER.TAB_ICONS,
+        prepare = function(menu) M.applyTabIcons(menu.tab_item_table) end,
+    }
 end
-
-local function _removeTabPatch(target)
-    if not _tab_patch_installed[target] then return end
-    local t = _TAB_PATCH_TARGETS[target]
-    local Menu = package.loaded[t.module_path]
-    if Menu and Menu._simpleui_sysicon_patched then
-        Menu.onShowMenu                = Menu._simpleui_sysicon_orig
-        Menu._simpleui_sysicon_orig    = nil
-        Menu._simpleui_sysicon_patched = nil
-    end
-    _tab_patch_installed[target] = false
-    logger.dbg("simpleui/style: " .. t.log_label .. " tab icon patch removed")
-end
-
-function M.installTabIconPatch(plugin)       _installTabPatch("fm", plugin) end
-function M.removeTabIconPatch()              _removeTabPatch("fm") end
-function M.installReaderTabIconPatch(plugin) _installTabPatch("reader", plugin) end
-function M.removeReaderTabIconPatch()        _removeTabPatch("reader") end
 
 -- ---------------------------------------------------------------------------
 -- Live tab-bar icon refresh
@@ -1198,6 +1105,7 @@ function M.makeMenuItems(plugin)
     _addGroupRows("sui_pager_icons")
     _addGroupRows("sui_navpager_icons")
     _addGroupRows("sui_fc_icons")
+    _addGroupRows("sui_qs_icons")
     _addGroupRows("sui_tabbar_icons")
 
     return items
@@ -1307,6 +1215,7 @@ function M.sui_build_system_icons(plugin, ctx_menu, ctx)
         addGroup("sui_pager_icons", _("Pagination Bar"))
         addGroup("sui_navpager_icons", _("Navpager"))
         addGroup("sui_fc_icons", _("Folder Covers"))
+        addGroup("sui_qs_icons", _("Quick Settings"))
         addGroup("sui_tabbar_icons", _("Tab Bar"))
         return rows
     end
@@ -1420,6 +1329,9 @@ M.BORDER_SZ   = math.max(1, Screen:scaleBySize(1))
 -- Thinner border and specific color for library badges and book covers
 M.BADGE_BORDER_SZ  = require("ui/size").border.thin
 M.BADGE_BORDER_CLR = M.COLOR.gray_soft
+
+-- Height of the progress bars shown by the modules and the Quick Settings panel
+M.PROGRESS_BAR_H = Screen:scaleBySize(8)
 
 -- Global size trim applied on top of every corner-badge scale (progress
 -- pentagon, pages, series index, new book) — both the Library grid's own

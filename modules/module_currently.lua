@@ -1,11 +1,11 @@
 -- module_currently.lua — Simple UI
--- Currently Reading module: cover + title + author + progress bar + percentage.
+-- Currently Reading module: cover beside the title, author, series, description,
+-- progress bar and a statistics line.
 
 -- External dependencies
 local Device  = require("device")
 local Screen  = Device.screen
 local _ = require("infra/sui_i18n").translate
-local N_ = require("infra/sui_i18n").ngettext
 local logger  = require("logger")
 
 local Blitbuffer      = require("ffi/blitbuffer")
@@ -32,6 +32,7 @@ local SectionLabel = require("engines/sui_section_label")
 local UI           = require("infra/sui_core")
 local SUISettings  = require("infra/sui_store")
 local SUIStyle     = require("features/sui_style")
+local BookStats    = require("infra/sui_book_stats")
 local Chrome       = require("features/sui_module_chrome")
 local PAD          = UI.PAD
 local LABEL_H      = UI.LABEL_H
@@ -69,7 +70,7 @@ local _BASE_BAR_GAP_AFTER  = Screen:scaleBySize(10)  -- gap below the progress b
 local _BASE_PCT_GAP    = Screen:scaleBySize(3)   -- before percent / stats rows
 
 -- Progress bar dimensions
-local _BASE_BAR_H       = Screen:scaleBySize(8)   -- bar height (matches module_reading_goals)
+local _BASE_BAR_H       = SUIStyle.PROGRESS_BAR_H
 local _BASE_BAR_PCT_GAP = Screen:scaleBySize(6)   -- horizontal gap between bar and inline pct label
 local _BASE_STATS_SEP_W = Screen:scaleBySize(8)   -- horizontal gap between inline stats items
 local _BASE_PCT_W       = Screen:scaleBySize(32)  -- width reserved for inline pct label (e.g. "100%")
@@ -78,7 +79,6 @@ local _BASE_PCT_W       = Screen:scaleBySize(32)  -- width reserved for inline p
 -- Modules that have their own user-controlled scale multiply it on top.
 local _BASE_TITLE_FS     = SUIStyle.FS_TITLE     -- 22: title text
 local _BASE_AUTHOR_FS    = SUIStyle.FS_SUBTITLE   -- 20: author text
-local _BASE_PCT_FS       = SUIStyle.FS_DETAIL     -- 15: pct text
 local _BASE_STATS_FS     = SUIStyle.FS_DETAIL     -- 15: stats text
 local _BASE_INLINEPCT_FS = SUIStyle.FS_DETAIL     -- 15: pct label inside the bar
 local _BASE_DESC_FS      = SUIStyle.FS_DETAIL     -- 15: description text
@@ -90,6 +90,56 @@ local _BASE_SERIES_FS    = SUIStyle.FS_CAPTION    -- 12: series text (smaller th
 -- calculations stay a simple sum. The card itself grows to fit its
 -- elements, so a taller fixed value costs no layout risk — just card height.
 local DESC_MAX_LINES = 8
+
+-- Layout plans: the cover size, text width and description clamp resolved by
+-- the measuring passes of M.build(). A plan is reused while every input of
+-- those passes is unchanged, so repeat builds (page turns, refreshes) render
+-- the text column once. Weak-keyed by the settings bundle: replacing the
+-- bundle drops its plans. Keys carry the book content, so the per-bundle
+-- count is capped.
+local _layout_plans     = setmetatable({}, { __mode = "k" })
+local MAX_PLANS_PER_CFG = 8
+
+-- Appends the scalar fields of `t`, in key order, to `parts`. Returns false
+-- when `t` holds a non-scalar value, which cannot be part of a stable key.
+local function _appendScalars(parts, t)
+    if not t then return true end
+    local keys = {}
+    for k in pairs(t) do keys[#keys + 1] = k end
+    table.sort(keys)
+    for _i, k in ipairs(keys) do
+        local v = t[k]
+        local kind = type(v)
+        if kind ~= "string" and kind ~= "number" and kind ~= "boolean" then return false end
+        parts[#parts + 1] = k .. "=" .. tostring(v)
+    end
+    return true
+end
+
+-- Key of a layout plan: the geometry inputs in `parts` plus every field of
+-- the book data and book stats the text column is built from. nil when the
+-- inputs cannot be keyed.
+local function _layoutPlanKey(parts, book_data, book_stats)
+    if not _appendScalars(parts, book_data) or not _appendScalars(parts, book_stats) then
+        return nil
+    end
+    return table.concat(parts, "\31")
+end
+
+local function _findLayoutPlan(cfg, key)
+    local entry = _layout_plans[cfg]
+    return entry and entry.plans[key]
+end
+
+local function _storeLayoutPlan(cfg, key, plan)
+    local entry = _layout_plans[cfg]
+    if not entry or entry.count >= MAX_PLANS_PER_CFG then
+        entry = { count = 0, plans = {} }
+        _layout_plans[cfg] = entry
+    end
+    entry.plans[key] = plan
+    entry.count = entry.count + 1
+end
 
 -- Description text alignment. "justify" stretches word spacing to fill each
 -- line and keeps the last line of every paragraph left-aligned.
@@ -139,13 +189,6 @@ local function applyProgressBadge(cover, bd, cw, ch, pfx)
     })
 end
 
--- Setting key for stats layout: "default" (one line per stat) or "compact" (single row with · separator + ETA)
-local STATS_STYLE_KEY = "currently_stats_style"
-
-local function getStatsStyle(pfx)
-    return SUISettings:readSetting(pfx .. STATS_STYLE_KEY) or "compact"
-end
-
 local COVER_GAP_KEY = "currently_cover_gap"
 
 local function getCoverGapPct(pfx)
@@ -172,15 +215,6 @@ local LAYOUT_KEY = "currently_layout"
 local function getLayout(pfx)
     return SUISettings:readSetting(pfx .. LAYOUT_KEY) == "dynamic" and "dynamic" or "default"
 end
-
--- Caps per-page duration at 120 s when computing avg reading time,
--- matching KOReader's STATISTICS_SQL_BOOK_CAPPED_TOTALS_QUERY.
-local _MAX_SEC = 120
-
--- Per-book stats cache (md5 → { days, total_secs, avg_time }).
--- Cleared by invalidateCache(), called from main.lua:onCloseDocument.
-local _bstats_cache = {}
-
 
 -- Builds a progress bar with an inline percentage label: [▓▓▓░░░░] XX%
 -- Spacing below the bar is handled by gap_before() on the next element,
@@ -215,158 +249,79 @@ local function buildProgressBarWithPct(w, pct, bar_h, scale, lbl_scale, face_inl
 end
 
 
--- Formats a duration in seconds as "Xh Ym", "Xh", or "Ym".
-local function fmtTime(secs)
-    secs = math.floor(secs or 0)
-    if secs <= 0 then return "0m" end
-    local h = math.floor(secs / 3600)
-    local m = math.floor((secs % 3600) / 60)
-    if h > 0 and m > 0 then return string.format("%dh %dm", h, m)
-    elseif h > 0        then return string.format("%dh", h)
-    else                     return string.format("%dm", m) end
+local fetchBookStats = BookStats.fetch
+
+
+-- ---------------------------------------------------------------------------
+-- Items
+-- ---------------------------------------------------------------------------
+-- The text column is a list of items the user can hide and reorder; the
+-- "stats" item is one line made of the visible statistics, in their own order.
+-- Both orders go through Config.makeOrderedItems in the settings menu.
+
+local ITEM_IDS  = { "title", "author", "series", "description", "progress", "stats" }
+local STAT_IDS  = { "percent", "book_days", "book_time", "book_remaining" }
+local MAIN_ORDER_KEY  = "currently_main_order"   -- pfx .. this
+local STATS_ORDER_KEY = "currently_stats_order"  -- pfx .. this
+local STATS_STYLE_KEY = "currently_stats_style"  -- pfx .. this; "compact" | "default"
+
+-- "compact" joins the statistics into one line; "default" gives each its own.
+local function getStatsStyle(pfx)
+    return SUISettings:readSetting(pfx .. STATS_STYLE_KEY) == "default" and "default" or "compact"
 end
 
-
--- Fetches reading stats for a book from SQLite (days read, total time, avg time per page).
--- Results are cached by md5 for the duration of the homescreen session.
--- Cache is cleared by invalidateCache() (called from onCloseDocument) before
--- each post-reading rebuild, so data is always fresh when it matters.
--- Uses shared_conn when available to avoid opening a second DB connection.
--- ctx is optional: when provided and a fatal DB error occurs on the shared_conn,
--- ctx.db_conn_fatal is set to true so the homescreen can discard the connection.
-local function fetchBookStats(md5, shared_conn, ctx, force)
-    if not md5 then return nil end
-
-    if not force and _bstats_cache[md5] then
-        return _bstats_cache[md5]
-    end
-
-    local conn     = shared_conn or Config.openStatsDB()
-    local own_conn = not shared_conn
-    if not conn then return nil end
-
-    local result = nil
-    local ok, err = pcall(function()
-        -- ps_agg accumulates per-page totals; the outer SELECT aggregates them.
-        -- sum(page_dur) replaces a correlated subquery that caused a second
-        -- full scan of page_stat on every call.
-        -- Relies on idx_simpleui_book_md5 (created by openStatsDB()) for the
-        -- md5 lookup and on page_stat_data's (id_book, page, start_time) index
-        -- for the per-book scan.
-        local row = conn:exec(string.format([[
-            WITH b AS (
-                %s
-            ),
-            ps_agg AS (
-                SELECT ps.page,
-                       sum(ps.duration)   AS page_dur,
-                       min(ps.start_time) AS first_start
-                FROM page_stat ps
-                WHERE ps.id_book = (SELECT id FROM b)
-                GROUP BY ps.page
-            )
-            SELECT
-                count(DISTINCT date(first_start, 'unixepoch', 'localtime')),
-                sum(page_dur),
-                count(*),
-                sum(min(page_dur, %d))
-            FROM ps_agg;
-        ]], string.format(Config.BOOK_ID_BY_MD5_SQL, md5), _MAX_SEC))
-
-        if row and row[1] and row[1][1] then
-            local days   = tonumber(row[1][1]) or 0
-            local secs   = tonumber(row[2] and row[2][1]) or 0
-            local pages  = tonumber(row[3] and row[3][1]) or 0
-            local capped = tonumber(row[4] and row[4][1]) or 0
-            result = {
-                days       = days,
-                total_secs = secs,
-                avg_time   = (pages > 0 and capped > 0) and (capped / pages) or nil,
-            }
-        end
-    end)
-    if not ok then
-        logger.warn("simpleui: module_currently: fetchBookStats failed: " .. tostring(err))
-        -- Signal to the homescreen that the shared connection is unusable so it
-        -- can be discarded and reopened on the next render.
-        if shared_conn and ctx and Config.isFatalDbError(err) then
-            ctx.db_conn_fatal = true
-        end
-    end
-    if own_conn then pcall(function() conn:close() end) end
-    if result then _bstats_cache[md5] = result end
-    return result
+local function itemLabel(id)
+    if id == "title"       then return _("Title") end
+    if id == "author"      then return _("Author") end
+    if id == "series"      then return _("Series") end
+    if id == "description" then return _("Description") end
+    if id == "progress"    then return _("Progress bar") end
+    return _("Statistics")
 end
 
-
--- Returns true if the element with the given key is visible.
--- nilOrTrue() treats an unset key as true; that's a defensive fallback only —
--- the real shipped default for every currently_show_* key is written
--- explicitly by sui_config.lua's applyFirstRunDefaults() on first run. See
--- the def()/nilOrTrue() contract note there before relying on this fallback.
+-- Visibility of an item or statistic. The shipped default of every key is
+-- written by sui_config.lua's applyFirstRunDefaults().
 local function _showElem(pfx, key)
     return SUISettings:nilOrTrue(pfx .. "currently_show_" .. key)
 end
 
--- Toggles the visibility of an element.
-local function _toggleElem(pfx, key)
-    local cur = SUISettings:nilOrTrue(pfx .. "currently_show_" .. key)
-    SUISettings:saveSetting(pfx .. "currently_show_" .. key, not cur)
+local function _setElemVisible(pfx, key, visible)
+    SUISettings:saveSetting(pfx .. "currently_show_" .. key, visible)
 end
 
-
--- Element order and labels used by build() and the Arrange Items SortWidget.
-local ELEM_ORDER_KEY = "currently_elem_order"
-
-local _ELEM_DEFAULT_ORDER = {
-    "title", "author", "series", "description", "progress", "percent",
-    "book_days", "book_time", "book_remaining",
-}
-
-local _ELEM_LABELS = {
-    title          = _("Title"),
-    author         = _("Author"),
-    series         = _("Series"),
-    description    = _("Description"),
-    progress       = _("Progress bar"),
-    percent        = _("Percentage read"),
-    book_days      = _("Days of reading"),
-    book_time      = _("Time read"),
-    book_remaining = _("Time remaining"),
-}
-
--- Elements folded into the single "Stats" row/group when stats_style is "compact".
-local _STATS_ELEM_KEYS = { book_days = true, book_time = true, book_remaining = true }
-
--- The "percent" element is redundant (and hidden from Items/Arrange lists)
--- whenever the progress bar already shows the percentage inline.
-local function _percentHiddenByBar(key, bar_style)
-    return key == "percent" and bar_style == "with_pct"
-end
-
--- Returns the user-saved element order, falling back to the default.
--- Unknown keys are dropped; new keys are appended at the tail.
--- _resolveElemOrder accepts an already-read value (from ctx.cfg bundle or
--- a direct G_reader_settings read) so the caller controls when the read happens.
-local function _resolveElemOrder(saved)
-    if type(saved) ~= "table" or #saved == 0 then
-        return _ELEM_DEFAULT_ORDER
+-- Visibility of every item and statistic.
+local function _readShow(pfx)
+    local show = {}
+    for _i, ids in ipairs({ ITEM_IDS, STAT_IDS }) do
+        for _j, id in ipairs(ids) do show[id] = _showElem(pfx, id) end
     end
-    local seen, result = {}, {}
-    for _, v in ipairs(saved) do
-        if _ELEM_LABELS[v] and not seen[v] then
-            seen[v] = true
-            result[#result+1] = v
+    return show
+end
+
+-- The percentage is already part of the progress bar when it shows it inline.
+local function _statAvailable(id, bar_style)
+    return id ~= "percent" or bar_style ~= "with_pct"
+end
+
+-- Number of statistics the stats item shows.
+local function _visibleStatCount(show, bar_style)
+    local n = 0
+    if show.stats then
+        for _i, id in ipairs(STAT_IDS) do
+            if show[id] and _statAvailable(id, bar_style) then n = n + 1 end
         end
     end
-    for _, v in ipairs(_ELEM_DEFAULT_ORDER) do
-        if not seen[v] then result[#result+1] = v end
-    end
-    return result
+    return n
 end
 
-local function _getElemOrder(pfx)
-    return _resolveElemOrder(SUISettings:readSetting(pfx .. ELEM_ORDER_KEY))
+-- Saved orders (raw values, from the settings bundle or a direct read) merged
+-- with the defaults.
+local function _getItemOrder(saved)
+    return Config.mergeOrder(saved, ITEM_IDS)
+end
+
+local function _getStatsOrder(saved)
+    return Config.mergeOrder(saved, STAT_IDS)
 end
 
 -- ---------------------------------------------------------------------------
@@ -437,8 +392,6 @@ local function _scaledLayoutDims(scale, _lbl_scale, styles)
         author_fs = fs(_BASE_AUTHOR_FS, 8, styles.author),
         series_fs = fs(_BASE_SERIES_FS, 7, styles.series),
         desc_fs   = fs(_BASE_DESC_FS,   8, styles.description),
-        -- percent + stats share the Progress Text text style (family + scale).
-        pct_fs    = fs(_BASE_PCT_FS,    8, styles.stats),
         stats_fs  = fs(_BASE_STATS_FS,  7, styles.stats),
 
         bar_h          = math.max(1, math.floor(_BASE_BAR_H          * scale)),
@@ -455,18 +408,16 @@ end
 -- _resolveFaces — the font face of every text element, shared by build() and
 -- getHeight() for the same reason as _scaledLayoutDims. Each face follows the
 -- element's chosen family and variant. Returns the faces and, under the same
--- keys, whether the text widget must still embolden the face. The percentage
--- adds bold to the "stats" variant.
+-- keys, whether the text widget must still embolden the face.
 local function _resolveFaces(LD, styles)
     local faces, embolden = {}, {}
-    local function resolve(key, elem, size, add_bold)
-        faces[key], embolden[key] = SUIStyle.getTextFace(styles[elem], size, add_bold)
+    local function resolve(key, elem, size)
+        faces[key], embolden[key] = SUIStyle.getTextFace(styles[elem], size)
     end
     resolve("title",  "title",       LD.title_fs)
     resolve("author", "author",      LD.author_fs)
     resolve("series", "series",      LD.series_fs)
     resolve("desc",   "description", LD.desc_fs)
-    resolve("pct",    "stats",       LD.pct_fs, true)
     resolve("stats",  "stats",       LD.stats_fs)
     return faces, embolden
 end
@@ -496,7 +447,7 @@ end
 -- fallback when the closed book's md5 could not be resolved; safe since
 -- fetchBookStats() re-populates entries on demand.
 function M.invalidateCache()
-    _bstats_cache = {}
+    BookStats.invalidate()
 end
 
 -- Removes only the cache entry for the given md5, leaving stats cached for
@@ -504,7 +455,13 @@ end
 -- called from main.lua:onCloseDocument so the closed book's stats are fresh
 -- on the next render without discarding the rest of the cache.
 function M.invalidateCacheForMd5(md5)
-    if md5 then _bstats_cache[md5] = nil end
+    if md5 then BookStats.invalidate(md5) end
+end
+
+-- True when the visible statistics need the stats database. The percentage
+-- comes from the book's own data and never does.
+function M.needsDbStats(show)
+    return show.stats and (show.book_days or show.book_time or show.book_remaining) or false
 end
 
 -- Exposed for pre-computation in _buildCtx (sui_homescreen.lua).
@@ -583,21 +540,11 @@ function M.build(w, ctx)
     local raw_thumb_scale = c and c.thumb_scale or Config.getThumbScale("currently", pfx)
     local lbl_scale   = (c and c.lbl_scale   or Config.getItemLabelScale("currently", pfx)) * lf
     local bar_style   = c and c.bar_style   or getBarStyle(pfx)
-    local stats_style = c and c.stats_style or getStatsStyle(pfx)
     local layout = (c and c.layout) or getLayout(pfx)
-    local show        = c and c.show or {
-        title       = _showElem(pfx, "title"),
-        author      = _showElem(pfx, "author"),
-        series      = _showElem(pfx, "series"),
-        description = _showElem(pfx, "description"),
-        progress    = _showElem(pfx, "progress"),
-        percent     = _showElem(pfx, "percent"),
-        days        = _showElem(pfx, "book_days"),
-        time        = _showElem(pfx, "book_time"),
-        remain      = _showElem(pfx, "book_remaining"),
-    }
-    -- elem_order: use cached raw value from bundle; resolve lazily.
-    local elem_order  = _resolveElemOrder(c and c.elem_order or SUISettings:readSetting(pfx .. ELEM_ORDER_KEY))
+    local stats_style = c and c.stats_style or getStatsStyle(pfx)
+    local show        = c and c.show or _readShow(pfx)
+    local item_order  = _getItemOrder(c and c.main_order or SUISettings:readSetting(pfx .. MAIN_ORDER_KEY))
+    local stats_order = _getStatsOrder(c and c.stats_order or SUISettings:readSetting(pfx .. STATS_ORDER_KEY))
     local desc_align  = resolveDescAlign(c and c.desc_align or SUISettings:readSetting(pfx .. DESC_ALIGN_KEY))
 
     -- Base cover size, as a percentage of the module's own width `w` — see
@@ -624,8 +571,8 @@ function M.build(w, ctx)
 
     -- Resolve font faces once so they are not re-created per element.
     local FC, FB = _resolveFaces(LD, styles)
-    local face_title, face_author, face_series, face_desc, face_pct, face_s =
-        FC.title, FC.author, FC.series, FC.desc, FC.pct, FC.stats
+    local face_title, face_author, face_series, face_desc, face_s =
+        FC.title, FC.author, FC.series, FC.desc, FC.stats
 
     -- Use prefetched book data. After onCloseDocument, _cached_books_state is
     -- cleared and prefetchBooks() re-reads the sidecar, so this is always fresh.
@@ -664,9 +611,9 @@ function M.build(w, ctx)
     -- differ — see the two-pass layout below.
     local tw0 = w - D.COVER_W - cover_gap
 
-    -- Fetch stats once if any stats element is active.
+    -- Fetch stats once if any statistic that comes from the stats database is active.
     local bstats
-    if show.days or show.time or show.remain then
+    if M.needsDbStats(show) then
         local book_md5 = prefetched_entry and prefetched_entry.partial_md5_checksum
         if not book_md5 then
             logger.dbg("simpleui: module_currently: no md5 for "
@@ -721,10 +668,9 @@ function M.build(w, ctx)
         local desc_max_lines    = (opts and opts.desc_max_lines) or DESC_MAX_LINES
         local suppress_desc     = opts and opts.suppress_description
         local meta = VerticalGroup:new{ align = "left" }
+        -- Refresh closures fn(stats, data) run by updateStats; `stats` is nil
+        -- when the book has no recorded reading history.
         local _cr_update_funcs  = {}
-        -- Closures that only need bd (no bstats) — progress bar and percent.
-        -- Called unconditionally by updateStats, even when there is no SQLite history.
-        local _cr_bd_only_funcs = {}
         local function _updateColoredText(wgt, txt, fg)
             if wgt._inner and wgt._inner.setText then
                 wgt._inner:setText(txt)
@@ -735,10 +681,6 @@ function M.build(w, ctx)
                 wgt.fgcolor = fg
             end
         end
-
-        -- Flag to ensure the compact stats row is rendered only once,
-        -- at the position of the first visible stats element in the Arrange order.
-        local _compact_stats_rendered = false
 
         -- Adds a vertical gap before the next element, but not before the first one.
         -- _next_gap overrides the default size for exactly one call (used after the
@@ -753,7 +695,7 @@ function M.build(w, ctx)
         end
 
         -- Append each visible element to meta in user-configured order.
-        for _i, elem in ipairs(elem_order) do
+        for _i, elem in ipairs(item_order) do
         if elem == "title" and show.title then
             gap_before(title_gap)
 
@@ -876,7 +818,7 @@ function M.build(w, ctx)
                     bar_container[1] = buildProgressBarWithPct(
                         _bar_w, (nd and nd.percent or 0), _bar_h, _bar_sc, _bar_lbl, _bar_face, _bar_bold, _bar_fg)
                 end
-                table.insert(_cr_bd_only_funcs, _update_bar)
+                table.insert(_cr_update_funcs, _update_bar)
                 meta[#meta+1] = bar_container
             else
                 local _bar_w = tw
@@ -889,250 +831,158 @@ function M.build(w, ctx)
                 local function _update_bar(nb, nd)
                 bar_container[1] = UI.progressBar(_bar_w, (nd and nd.percent or 0), _bar_h)
                 end
-                table.insert(_cr_bd_only_funcs, _update_bar)
+                table.insert(_cr_update_funcs, _update_bar)
                 meta[#meta+1] = bar_container
             end
             meta_has_content = true
             _next_gap = bar_gap_after  -- next element uses the larger post-bar gap
 
-        elseif elem == "percent" and show.percent and bar_style ~= "with_pct" then
-            gap_before(pct_gap)
-            -- makeColoredText supports setText, so a stats refresh updates
-            -- just the string without rebuilding the widget tree.
-            local pct_w = UI.makeColoredText{
-                text    = string.format(_("%d%% Read"), math.floor((bd.percent or 0) * 100 + 0.5)),
-                face    = face_pct,
-                bold    = FB.pct,
-                fgcolor = _CLR_DARK_EFF,
-                width   = tw,
-            }
-            local _pct_fg = _CLR_DARK_EFF
-            local function _update_pct(nb, nd)
-                _updateColoredText(pct_w,
-                    string.format(_("%d%% Read"), math.floor((nd and nd.percent or 0) * 100 + 0.5)),
-                    _pct_fg)
-            end
-            table.insert(_cr_bd_only_funcs, _update_pct)
-            meta[#meta+1] = pct_w
-            meta_has_content = true
-
-        elseif elem == "book_days" and show.days and stats_style == "default" then
-            -- Shows a placeholder when stats are not yet available (no DB,
-            -- no md5, or zero days recorded) so the item is always visible
-            -- once activated, giving the user clear feedback that it exists.
-            local has_data = bstats and bstats.days and bstats.days > 0
-            gap_before(pct_gap)
-            local days_w = UI.makeColoredText{ text = "", face = face_s, bold = FB.stats, fgcolor = CLR_PH_EFF, width = tw }
-            local function _update(nb, nd)
-                local has_d = nb and nb.days and nb.days > 0
-                local days_lbl = has_d
-                    and string.format(N_("%d day of reading", "%d days of reading", nb.days), nb.days)
-                    or  string.format(N_("%d day of reading", "%d days of reading", 0), 0)
-                _updateColoredText(days_w, days_lbl, has_d and CLR_TEXT_SUB_EFF or CLR_PH_EFF)
-            end
-            _update(bstats, bd)
-            table.insert(_cr_update_funcs, _update)
-            meta[#meta+1] = days_w
-            meta_has_content = true
-
-        elseif elem == "book_time" and show.time and stats_style == "default" then
-            -- Placeholder when total time is not yet recorded.
-            local has_data = bstats and bstats.total_secs and bstats.total_secs > 0
-            gap_before(pct_gap)
-            local time_w = UI.makeColoredText{ text = "", face = face_s, bold = FB.stats, fgcolor = CLR_PH_EFF, width = tw }
-            local function _update(nb, nd)
-                local has_d = nb and nb.total_secs and nb.total_secs > 0
-                local text = has_d
-                             and string.format(_("%s read"), fmtTime(nb.total_secs))
-                             or  string.format(_("%s read"), "—")
-                _updateColoredText(time_w, text, has_d and CLR_TEXT_SUB_EFF or CLR_PH_EFF)
-            end
-            _update(bstats, bd)
-            table.insert(_cr_update_funcs, _update)
-            meta[#meta+1] = time_w
-            meta_has_content = true
-
-        elseif elem == "book_remaining" and show.remain and stats_style == "default" then
-            -- Symmetric guard mirroring book_days / book_time.
-            -- Prefer the capped avg_time from fetchBookStats to avoid over-estimating
-            -- remaining time when pages had long idle pauses.
-            local pct_done = bd.percent or 0
-            if pct_done < 1.0 then
-                gap_before(pct_gap)
-                local remain_w = UI.makeColoredText{ text = "", face = face_s, bold = FB.stats, fgcolor = CLR_PH_EFF, width = tw }
-                local function _update(nb, nd)
-                    local avg_t
-                    if nb and nb.avg_time and nb.avg_time > 0 then avg_t = nb.avg_time
-                    elseif nd.avg_time and nd.avg_time > 0 then avg_t = nd.avg_time end
-                    
-                    if not avg_t or not nd.pages or nd.pages <= 0 then
-                        _updateColoredText(remain_w, string.format(_("%s remaining"), "—"), CLR_PH_EFF)
-                    else
-                        local pages_left = nd.pages * (1 - (nd.percent or 0))
-                        local secs_left  = math.floor(avg_t * pages_left)
-                        if secs_left > 0 then _updateColoredText(remain_w, string.format(_("%s remaining"), fmtTime(secs_left)), CLR_TEXT_SUB_EFF)
-                        else _updateColoredText(remain_w, "", CLR_PH_EFF) end
-                    end
+        elseif elem == "stats" and _visibleStatCount(show, bar_style) > 0 then
+            -- Each row is capped to `tw` and truncated with an ellipsis. Rows
+            -- are shown even without data so their height stays reserved.
+            local function isShown(id) return show[id] and _statAvailable(id, bar_style) end
+            local rows = { stats_order }
+            if stats_style == "default" then
+                rows = {}
+                for _j, id in ipairs(stats_order) do
+                    if isShown(id) then rows[#rows+1] = { id } end
                 end
-                _update(bstats, bd)
-                table.insert(_cr_update_funcs, _update)
-                meta[#meta+1] = remain_w
+            end
+            for _j, row_ids in ipairs(rows) do
+                local function rowContent(nb, nd)
+                    local line = BookStats.line(row_ids, isShown,
+                        function(id) return BookStats.textFor(id, nb, nd) end)
+                    if line == "" then return "—", CLR_PH_EFF end
+                    return line, CLR_TEXT_SUB_EFF
+                end
+                local text0, fg0 = rowContent(bstats, bd)
+                local row_w = UI.makeColoredText{
+                    text                   = text0,
+                    face                   = face_s,
+                    bold                   = FB.stats,
+                    fgcolor                = fg0,
+                    max_width              = tw,
+                    truncate_with_ellipsis = true,
+                }
+                table.insert(_cr_update_funcs, function(nb, nd)
+                    local text, fg = rowContent(nb, nd)
+                    _updateColoredText(row_w, text, fg)
+                end)
+                gap_before(pct_gap)
+                meta[#meta+1] = row_w
                 meta_has_content = true
             end
-
-        elseif (elem == "book_days" or elem == "book_time" or elem == "book_remaining")
-               and stats_style == "compact" then
-            -- Compact mode: single row following the Arrange Items order.
-            -- Fires on the first visible stats element encountered; the others are
-            -- consumed here so they don't produce a second row when the loop reaches them.
-            if not _compact_stats_rendered then
-                _compact_stats_rendered = true
-
-                -- Rendered as a single TextWidget (not one widget per part +
-                -- separators) so the whole row can be capped to `tw` and
-                -- truncated with an ellipsis instead of stretching the
-                -- layout when the joined parts run long.
-                local function _composeText(nb, nd)
-                    local secs_left
-                    local avg_t = (nb and nb.avg_time and nb.avg_time > 0) and nb.avg_time or nd.avg_time
-                    if avg_t and avg_t > 0 and nd.pages and nd.pages > 0 then
-                        local sl = math.floor(avg_t * nd.pages * (1 - (nd.percent or 0)))
-                        if sl > 0 then secs_left = sl end
-                    end
-
-                    local parts = {}
-                    for _i, e in ipairs(elem_order) do
-                        if e == "book_time" and show.time and nb and nb.total_secs > 0 then
-                            parts[#parts+1] = string.format(_("%s read"), fmtTime(nb.total_secs))
-                        elseif e == "book_remaining" and show.remain and secs_left then
-                            parts[#parts+1] = string.format(_("%s left"), fmtTime(secs_left))
-                        elseif e == "book_days" and show.days and nb and nb.days > 0 then
-                            parts[#parts+1] = string.format(N_("%d day of reading", "%d days of reading", nb.days), nb.days)
-                        end
-                    end
-
-                    if #parts > 0 then
-                        return table.concat(parts, " · "), CLR_TEXT_SUB_EFF, true
-                    end
-
-                    local any_active = (show.days or show.time or show.remain)
-                    if any_active then
-                        return string.format(_("%s read"), "—"), CLR_PH_EFF, true
-                    end
-                    return "", CLR_PH_EFF, false
-                end
-
-                local text0, fg0, has_content0 = _composeText(bstats, bd)
-                local stats_w = UI.makeColoredText{
-                    text                    = text0,
-                    face                    = face_s,
-                    bold                    = FB.stats,
-                    fgcolor                 = fg0,
-                    max_width               = tw,
-                    truncate_with_ellipsis  = true,
-                }
-
-                local function _update(nb, nd)
-                    local text, fg = _composeText(nb, nd)
-                    _updateColoredText(stats_w, text, fg)
-                end
-                table.insert(_cr_update_funcs, _update)
-
-                if has_content0 then
-                    gap_before(pct_gap)
-                    meta[#meta+1] = stats_w
-                    meta_has_content = true
-                end
-            end
         end
-        end -- for _i, elem in ipairs(elem_order)
+        end -- for _i, elem in ipairs(item_order)
 
-        return meta, _cr_update_funcs, _cr_bd_only_funcs
+        return meta, _cr_update_funcs
     end
 
 
     -- Both layouts share the exact same single-column build path (see
     -- buildMetaColumn above); the only difference is whether the cover
     -- additionally grows to match the text column, below.
-    local cover_w, cover_h = D.COVER_W, D.COVER_H
-    local tw               = tw0
-
-    -- Pass 1: build at the base width to measure the text column's natural
-    -- height. Measuring by asking the VerticalGroup itself (rather than
-    -- summing known element heights) is the only reliable way, since
-    -- TextWidget line heights depend on font metrics, not just the font
-    -- size number.
-    local meta, _cr_update_funcs, _cr_bd_only_funcs = buildMetaColumn(tw0)
-    local meta_h = meta:getSize().h
-
     local dynamic_cover = (layout == "dynamic")
 
-    if dynamic_cover and meta_h > 0 then
-        -- Grow (or shrink) the cover so its height matches the text
-        -- column's height, preserving the cover's aspect ratio, then apply
-        -- the "Cover size" (raw_thumb_scale) setting as a multiplier ON TOP of
-        -- that dynamic height. This makes the Cover size stepper still do
-        -- something useful while Dynamic Cover Size is on: instead of being
-        -- ignored (thumb_scale used to only affect D.COVER_W/H, which this
-        -- branch overwrote entirely), each step grows/shrinks the cover
-        -- relative to whatever size the dynamic layout would otherwise pick
-        -- at that moment. cover_gap is untouched — only the cover's own box
-        -- changes size.
-        --
-        -- IMPORTANT (landscape): meta_h is the measured height of the text
-        -- column, which was already built using `scale`/`lbl_scale` — both
-        -- of which have `lf` (landscape_factor) folded in. Multiplying
-        -- meta_h by the lf-inclusive `thumb_scale` would apply lf a SECOND
-        -- time (effectively lf² instead of lf), collapsing the dynamic
-        -- cover far more than intended in landscape. Use the RAW thumb
-        -- scale (the user's Cover size % on its own) instead — same "RAW
-        -- getters, value already narrowed upstream" pattern documented in
-        -- sui_book_grid.lua's build() for the same reason.
-        --
-        -- A floor is applied so the cover can never shrink below its base
-        -- 100%-cover-size (the size used when Dynamic Cover Size is off and
-        -- Cover size = 100%), no matter how little vertical space the text
-        -- column ends up needing. min_cover_h uses the same percentage-of-`w`
-        -- formula as the base size, with thumb_scale pinned to 1.0 (100%).
-        local ratio        = D.COVER_W / D.COVER_H  -- scale-invariant aspect ratio
-        local _, min_cover_h = _computeCoverDims(w, 1.0, _cover_ratio)
-        local new_cover_h  = math.max(min_cover_h, math.floor(meta_h * raw_thumb_scale))
-        local new_cover_w  = math.max(1, math.floor(new_cover_h * ratio))
-        if new_cover_w ~= cover_w or new_cover_h ~= cover_h then
-            cover_w, cover_h = new_cover_w, new_cover_h
-            tw = math.max(1, w - cover_w - cover_gap)
-            -- Pass 2: rebuild the text column at the corrected width now
-            -- that the cover (and thus the space left for text) changed
-            -- size. Height cannot change between passes (see comment on
-            -- buildMetaColumn above), so meta_h from pass 1 stays valid —
-            -- no further passes or re-measuring needed.
-            meta, _cr_update_funcs, _cr_bd_only_funcs = buildMetaColumn(tw)
+    -- Resolves the final cover size and text column. Pass 1 builds at the base
+    -- width to measure the text column's natural height. Measuring by asking
+    -- the VerticalGroup itself (rather than summing known element heights) is
+    -- the only reliable way, since TextWidget line heights depend on font
+    -- metrics, not just the font size number.
+    -- Returns the plan (see _layout_plans) followed by the built column.
+    local function resolveLayout()
+        local cover_w, cover_h = D.COVER_W, D.COVER_H
+        local tw               = tw0
+        local meta_opts
+        local meta, update_funcs = buildMetaColumn(tw0)
+        local meta_h = meta:getSize().h
+
+        if dynamic_cover and meta_h > 0 then
+            -- Grow (or shrink) the cover so its height matches the text
+            -- column's height, preserving the cover's aspect ratio, then apply
+            -- the "Cover size" (raw_thumb_scale) setting as a multiplier ON TOP of
+            -- that dynamic height. This makes the Cover size stepper still do
+            -- something useful while Dynamic Cover Size is on: instead of being
+            -- ignored (thumb_scale used to only affect D.COVER_W/H, which this
+            -- branch overwrote entirely), each step grows/shrinks the cover
+            -- relative to whatever size the dynamic layout would otherwise pick
+            -- at that moment. cover_gap is untouched — only the cover's own box
+            -- changes size.
+            --
+            -- IMPORTANT (landscape): meta_h is the measured height of the text
+            -- column, which was already built using `scale`/`lbl_scale` — both
+            -- of which have `lf` (landscape_factor) folded in. Multiplying
+            -- meta_h by the lf-inclusive `thumb_scale` would apply lf a SECOND
+            -- time (effectively lf² instead of lf), collapsing the dynamic
+            -- cover far more than intended in landscape. Use the RAW thumb
+            -- scale (the user's Cover size % on its own) instead — same "RAW
+            -- getters, value already narrowed upstream" pattern documented in
+            -- sui_book_grid.lua's build() for the same reason.
+            --
+            -- A floor is applied so the cover can never shrink below its base
+            -- 100%-cover-size (the size used when Dynamic Cover Size is off and
+            -- Cover size = 100%), no matter how little vertical space the text
+            -- column ends up needing. min_cover_h uses the same percentage-of-`w`
+            -- formula as the base size, with thumb_scale pinned to 1.0 (100%).
+            local ratio        = D.COVER_W / D.COVER_H  -- scale-invariant aspect ratio
+            local _, min_cover_h = _computeCoverDims(w, 1.0, _cover_ratio)
+            local new_cover_h  = math.max(min_cover_h, math.floor(meta_h * raw_thumb_scale))
+            local new_cover_w  = math.max(1, math.floor(new_cover_h * ratio))
+            if new_cover_w ~= cover_w or new_cover_h ~= cover_h then
+                cover_w, cover_h = new_cover_w, new_cover_h
+                tw = math.max(1, w - cover_w - cover_gap)
+                -- Pass 2: rebuild the text column at the corrected width now
+                -- that the cover (and thus the space left for text) changed
+                -- size. Height cannot change between passes (see comment on
+                -- buildMetaColumn above), so meta_h from pass 1 stays valid —
+                -- no further passes or re-measuring needed.
+                meta, update_funcs = buildMetaColumn(tw)
+            end
+
+        elseif not dynamic_cover and meta_h > cover_h then
+            -- Anchor the text column to the cover's height in "default": the
+            -- cover's own size is authoritative and the text column must
+            -- never grow taller than it. The description is the sole elastic
+            -- element (title/author/series/progress/stats keep their natural
+            -- size); it shrinks to whatever room is left, or is omitted
+            -- entirely if there isn't enough room for even one line.
+            if show.description and bd.description and bd.description ~= "" then
+                -- Measure every OTHER element's height first (description
+                -- suppressed), so we know exactly how much room is left for it.
+                local other_h = buildMetaColumn(tw0, { suppress_description = true }):getSize().h
+                local breath  = math.max(1, desc_gap)
+                local available = cover_h - other_h - breath
+                local desc_line_h = math.floor(1.3 * face_desc.size + 0.5)
+                local new_desc_lines = (available >= face_desc.size)
+                    and math.max(1, math.floor(available / desc_line_h)) or 0
+                meta_opts = { desc_max_lines = new_desc_lines }
+                meta, update_funcs = buildMetaColumn(tw0, meta_opts)
+                meta_h = meta:getSize().h
+            end
+            -- If there's no description to shrink (or it's disabled/empty),
+            -- meta_h simply stays as measured — the module falls back to
+            -- growing past the cover rather than clipping fixed-size content.
         end
 
-    elseif not dynamic_cover and meta_h > cover_h then
-        -- Anchor the text column to the cover's height in "default": the
-        -- cover's own size is authoritative and the text column must
-        -- never grow taller than it. The description is the sole elastic
-        -- element (title/author/series/progress/stats keep their natural
-        -- size); it shrinks to whatever room is left, or is omitted
-        -- entirely if there isn't enough room for even one line.
-        if show.description and bd.description and bd.description ~= "" then
-            -- Measure every OTHER element's height first (description
-            -- suppressed), so we know exactly how much room is left for it.
-            local other_h = buildMetaColumn(tw0, { suppress_description = true }):getSize().h
-            local breath  = math.max(1, desc_gap)
-            local available = cover_h - other_h - breath
-            local desc_line_h = math.floor(1.3 * face_desc.size + 0.5)
-            local new_desc_lines = (available >= face_desc.size)
-                and math.max(1, math.floor(available / desc_line_h)) or 0
-            meta, _cr_update_funcs, _cr_bd_only_funcs =
-                buildMetaColumn(tw0, { desc_max_lines = new_desc_lines })
-            meta_h = meta:getSize().h
-        end
-        -- If there's no description to shrink (or it's disabled/empty),
-        -- meta_h simply stays as measured — the module falls back to
-        -- growing past the cover rather than clipping fixed-size content.
+        return { cover_w = cover_w, cover_h = cover_h, tw = tw, meta_h = meta_h, meta_opts = meta_opts },
+               meta, update_funcs
     end
+
+    -- A plan is only valid for identical inputs: the settings bundle (its
+    -- identity), the geometry below, and the book data and stats scalars.
+    local plan_key = c and _layoutPlanKey({
+        w, lf, raw_scale, raw_thumb_scale, lbl_scale, layout, cover_gap,
+        _cover_ratio, ctx.has_wallpaper and 1 or 0, series_text,
+    }, bd, bstats)
+    local plan = plan_key and _findLayoutPlan(c, plan_key)
+    local meta, _cr_update_funcs
+    if plan then
+        meta, _cr_update_funcs = buildMetaColumn(plan.tw, plan.meta_opts)
+    else
+        plan, meta, _cr_update_funcs = resolveLayout()
+        if plan_key then _storeLayoutPlan(c, plan_key, plan) end
+    end
+    local cover_w, cover_h, tw, meta_h = plan.cover_w, plan.cover_h, plan.tw, plan.meta_h
 
     local content_h = math.max(cover_h, meta_h)
 
@@ -1235,8 +1085,7 @@ function M.build(w, ctx)
         end
     end
 
-    tappable._cr_update_funcs  = _cr_update_funcs
-    tappable._cr_bd_only_funcs = _cr_bd_only_funcs
+    tappable._cr_update_funcs = _cr_update_funcs
 
     -- Keyboard focus: overlay a black rectangular border on the tappable when
     -- this book is the currently selected keyboard-navigation item.
@@ -1322,20 +1171,9 @@ function M.getHeight(_ctx)
     local cover_w, cover_h = _computeCoverDims(w_estimate, raw_thumb_scale * raw_scale, _cover_ratio)
     local D = { COVER_W = cover_w, COVER_H = cover_h }
 
-    local stats_style = c and c.stats_style or getStatsStyle(pfx)
     local bar_style    = c and c.bar_style   or getBarStyle(pfx)
-
-    local show = c and c.show or {
-        title       = _showElem(pfx, "title"),
-        author      = _showElem(pfx, "author"),
-        series      = _showElem(pfx, "series"),
-        description = _showElem(pfx, "description"),
-        progress    = _showElem(pfx, "progress"),
-        percent     = _showElem(pfx, "percent"),
-        days        = _showElem(pfx, "book_days"),
-        time        = _showElem(pfx, "book_time"),
-        remain      = _showElem(pfx, "book_remaining"),
-    }
+    local stats_style  = c and c.stats_style or getStatsStyle(pfx)
+    local show = c and c.show or _readShow(pfx)
 
     -- Measure real line heights using the same font faces as build().
     -- See _scaledLayoutDims for the shared formulas (also used by build()).
@@ -1349,7 +1187,6 @@ function M.getHeight(_ctx)
     local author_lh = SUIStyle.faceHeight(FC.author)
     local series_lh = SUIStyle.faceHeight(FC.series)
     local desc_lh   = SUIStyle.faceHeight(FC.desc)
-    local pct_lh    = SUIStyle.faceHeight(FC.pct)
     local stats_lh  = SUIStyle.faceHeight(FC.stats)
 
     -- Build the element list using real (measured) line heights, mirroring
@@ -1381,20 +1218,11 @@ function M.getHeight(_ctx)
     if show.progress then
         elems[#elems+1] = { bar_gap_b, bar_h + bar_gap_a }
     end
-    if show.percent and bar_style ~= "with_pct" then
-        elems[#elems+1] = { pct_gap, pct_lh }
-    end
-    -- Stats: conservative — always reserve height for every active stats item
-    -- (placeholder rows are rendered when data is absent, so height is always
-    -- consumed; under-allocating here would cause overlap below the module).
-    -- Exception: book_remaining is suppressed only when the book is 100% done,
-    -- but getHeight has no percent data, so we keep the conservative assumption.
-    local n_stats = (show.days and 1 or 0) + (show.time and 1 or 0) + (show.remain and 1 or 0)
-    if n_stats > 0 then
-        local lines = stats_style == "compact" and 1 or n_stats
-        for _ = 1, lines do
-            elems[#elems+1] = { pct_gap, stats_lh }
-        end
+    -- The stats rows always reserve their height: they are rendered even for
+    -- a book without recorded history.
+    local n_stats = _visibleStatCount(show, bar_style)
+    for _ = 1, stats_style == "default" and n_stats or math.min(n_stats, 1) do
+        elems[#elems+1] = { pct_gap, stats_lh }
     end
 
     -- Sums the element list; skip_desc=true excludes the description entry
@@ -1524,421 +1352,46 @@ function M.getMenuItems(ctx_menu)
     local refresh = ctx_menu.refresh
     local _lc     = ctx_menu._
 
-    local function toggle_item(label, key)
-        return {
-            text_func    = function() return _lc(label) end,
-            checked_func = function() return _showElem(pfx, key) end,
-            keep_menu_open = true,
-            callback     = function()
-                _toggleElem(pfx, key)
-                refresh()
-            end,
-        }
-    end
-
-    local _UIManager  = ctx_menu.UIManager
-    local SortWidget  = ctx_menu.SortWidget
-
     local thumb = _makeThumbScaleItem(ctx_menu)
 
     local gap_item = _makeCoverGapItem(ctx_menu)
 
-    local items_submenu = {
-        -- Arrange Items: drag-to-reorder the visible elements. Disabled when fewer than 2 are active.
-        {
-            text           = _lc("Arrange Items"),
-            keep_menu_open = true,
-            separator      = true,
-            enabled_func   = function()
-                local active = 0
-                local bar_style = getBarStyle(pfx)
-                for _, key in ipairs(_ELEM_DEFAULT_ORDER) do
-                    if _percentHiddenByBar(key, bar_style) then
-                        -- skip
-                    elseif _showElem(pfx, key) then
-                        active = active + 1
-                        if active >= 2 then return true end
-                    end
-                end
-                return false
-            end,
-            callback = function()
-                local sort_items = {}
-                local bar_style = getBarStyle(pfx)
-                for _, key in ipairs(_getElemOrder(pfx)) do
-                    if _percentHiddenByBar(key, bar_style) then
-                        -- skip
-                    elseif _showElem(pfx, key) then
-                        sort_items[#sort_items+1] = {
-                            text      = _lc(_ELEM_LABELS[key]),
-                            orig_item = key,
-                        }
-                    end
-                end
-                local function on_save()
-                    local new_order = {}
-                    for _, item in ipairs(sort_items) do
-                        new_order[#new_order+1] = item.orig_item
-                    end
-                    local active_set = {}
-                    for _, k in ipairs(new_order) do active_set[k] = true end
-                    for _, k in ipairs(_getElemOrder(pfx)) do
-                        if not active_set[k] then new_order[#new_order+1] = k end
-                    end
-                    SUISettings:saveSetting(pfx .. ELEM_ORDER_KEY, new_order)
-                    refresh()
-                end
-                _UIManager:show(SortWidget:new{
-                    title = _lc("Arrange Items"), item_table = sort_items,
-                    covers_fullscreen = true, callback = on_save,
-                })
-            end,
-            sui_build = ctx_menu.is_sui and function(ctx, _item)
-                local sort_items = {}
-                for _, key in ipairs(_getElemOrder(pfx)) do
-                    if _showElem(pfx, key) then
-                        sort_items[#sort_items+1] = {
-                            text      = _lc(_ELEM_LABELS[key]),
-                            orig_item = key,
-                        }
-                    end
-                end
-                local function on_save()
-                    local new_order = {}
-                    for _, item in ipairs(sort_items) do
-                        new_order[#new_order+1] = item.orig_item
-                    end
-                    local active_set = {}
-                    for _, k in ipairs(new_order) do active_set[k] = true end
-                    for _, k in ipairs(_getElemOrder(pfx)) do
-                        if not active_set[k] then new_order[#new_order+1] = k end
-                    end
-                    SUISettings:saveSetting(pfx .. ELEM_ORDER_KEY, new_order)
-                    refresh()
-                end
-                local SUIWindow = require("engines/sui_window")
-                return SUIWindow.ArrangeList{ inner_w = ctx.inner_w, items = sort_items, on_change = on_save }
-            end or nil,
-        },
-        -- Visibility toggles (alphabetical order).
-        toggle_item("Author",          "author"),
-        toggle_item("Days of reading", "book_days"),
-        toggle_item("Description",     "description"),
-        {
-            text_func      = function() return _lc("Percentage read") end,
-            -- Greyed out when with_pct bar style is active (percentage is already in the bar).
-            enabled_func   = function() return getBarStyle(pfx) == "simple" end,
-            checked_func   = function() return _showElem(pfx, "percent") end,
-            sui_hidden     = function() return getBarStyle(pfx) == "with_pct" end,
-            keep_menu_open = true,
-            callback       = function()
-                _toggleElem(pfx, "percent")
-                refresh()
-            end,
-        },
-        toggle_item("Progress bar", "progress"),
-        toggle_item("Series",         "series"),
-        toggle_item("Time read",      "book_time"),
-        toggle_item("Time remaining", "book_remaining"),
-        toggle_item("Title",          "title"),
+    -- Items and statistics share one visibility and order model. Changes also
+    -- drop the settings snapshot the screens build from.
+    local function itemList(opts)
+        opts.ctx         = ctx_menu
+        opts.refresh     = refresh
+        opts.is_visible  = function(key) return _showElem(pfx, key) end
+        opts.set_visible = function(key, visible) _setElemVisible(pfx, key, visible) end
+        return Config.makeOrderedItems(opts)
+    end
+    local stats_list = itemList{
+        ids          = STAT_IDS,
+        order_key    = pfx .. STATS_ORDER_KEY,
+        label        = BookStats.statLabel,
+        is_available = function(id) return _statAvailable(id, getBarStyle(pfx)) end,
+        title        = _lc("Statistics"),
+        text         = _lc("Arrange Statistics"),
+        empty_text   = _lc("No statistics selected."),
+    }
+    local main_list = itemList{
+        ids       = ITEM_IDS,
+        order_key = pfx .. MAIN_ORDER_KEY,
+        label     = itemLabel,
+        title     = _lc("Items"),
+        text      = _lc("Arrange Items"),
+        nested    = { stats = stats_list },
     }
 
-    local items_entry = {
-            text           = _lc("Items"),
-            sub_item_table = items_submenu,
-            sui_build = ctx_menu.is_sui and function(ctx, _item)
-                local SUIWindow = require("engines/sui_window")
-                return SUIWindow.ListRow{
-                    title        = _lc("Items"),
-                    subtitle     = function()
-                        local names = {}
-                        local bar_style = getBarStyle(pfx)
-                        local is_compact = getStatsStyle(pfx) == "compact"
-                        local stats_added = false
-                        for _, key in ipairs(_getElemOrder(pfx)) do
-                            if _percentHiddenByBar(key, bar_style) then
-                                -- skip
-                            elseif _showElem(pfx, key) then
-                                if is_compact and (_STATS_ELEM_KEYS[key]) then
-                                    if not stats_added then names[#names + 1] = _lc("Stats"); stats_added = true end
-                                else
-                                    names[#names + 1] = _lc(_ELEM_LABELS[key])
-                                end
-                            end
-                        end
-                        return #names > 0 and table.concat(names, "  ·  ") or _lc("No items selected.")
-                    end,
-                    inner_w      = ctx.inner_w,
-                    show_chevron = true,
-                    on_tap       = function()
-                        ctx.push("nested_menu", {
-                            title = _lc("Items"),
-                            footer_text = _lc("Add Item"),
-                    footer_enabled = function()
-                                local bar_style = getBarStyle(pfx)
-                                for _, key in ipairs(_getElemOrder(pfx)) do
-                                    if _percentHiddenByBar(key, bar_style) then
-                                        -- skip
-                                    elseif not _showElem(pfx, key) then return true end
-                                end
-                                return false
-                            end,
-                            footer_action = function(ctx2)
-                                local bar_style = getBarStyle(pfx)
-                                local picker_items = {}
-                                for _, key in ipairs(_getElemOrder(pfx)) do
-                                    if _percentHiddenByBar(key, bar_style) then
-                                        -- skip
-                                    elseif not _showElem(pfx, key) then
-                                        local _key   = key
-                                        local _label = _lc(_ELEM_LABELS[key])
-                                        picker_items[#picker_items + 1] = {
-                                            text   = _label,
-                                            on_tap = function(picker_ctx)
-                                                _toggleElem(pfx, _key)
-                                                local new_order = {}
-                                                local active_set = {}
-                                                for _, k in ipairs(_getElemOrder(pfx)) do
-                                                    if _showElem(pfx, k) and k ~= _key then
-                                                        new_order[#new_order + 1] = k
-                                                        active_set[k] = true
-                                                    end
-                                                end
-                                                new_order[#new_order + 1] = _key
-                                                active_set[_key] = true
-                                                for _, k in ipairs(_getElemOrder(pfx)) do
-                                                    if not active_set[k] then
-                                                        new_order[#new_order + 1] = k
-                                                    end
-                                                end
-                                                SUISettings:saveSetting(pfx .. ELEM_ORDER_KEY, new_order)
-                                                refresh()
-                                                picker_ctx.pop()
-                                                ctx2.repaint()
-                                            end,
-                                        }
-                                    end
-                                end
-                                ctx2.push("item_picker", {
-                                    title = _lc("Add Item"),
-                                    items = picker_items,
-                                })
-                            end,
-                            items_func = function()
-                                return {
-                                    {
-                                        text = "Items List",
-                                        sui_build = function(ctx2)
-                                            local SUIWindow = require("engines/sui_window")
-                                            local is_compact = getStatsStyle(pfx) == "compact"
-                                            local function make_sort_items()
-                                                local t = {}
-                                                local stats_added = false
-                                                local bar_style = getBarStyle(pfx)
-                                                for _, key in ipairs(_getElemOrder(pfx)) do
-                                                    if _percentHiddenByBar(key, bar_style) then
-                                                        -- skip
-                                                    elseif _showElem(pfx, key) then
-                                                        if is_compact and (_STATS_ELEM_KEYS[key]) then
-                                                            if not stats_added then
-                                                                t[#t + 1] = {
-                                                                    text = _lc("Stats"),
-                                                                    subtitle = function()
-                                                                        local names = {}
-                                                                        for _, k in ipairs(_getElemOrder(pfx)) do
-                                                                            if _showElem(pfx, k) and (_STATS_ELEM_KEYS[k]) then
-                                                                                names[#names + 1] = _lc(_ELEM_LABELS[k])
-                                                                            end
-                                                                        end
-                                                                        return #names > 0 and table.concat(names, "  ·  ") or _lc("No items selected.")
-                                                                    end,
-                                                                    orig_item = "stats_group",
-                                                                    is_stats_group = true
-                                                                }
-                                                                stats_added = true
-                                                            end
-                                                        else
-                                                            t[#t + 1] = { text = _lc(_ELEM_LABELS[key]), orig_item = key }
-                                                        end
-                                                    end
-                                                end
-                                                return t
-                                            end
-                                            local sort_items = make_sort_items()
-                                            local function save_order(items_to_save)
-                                                local new_order  = {}
-                                                local active_set = {}
-                                                local active_stats_in_order = {}
-                                                for _, k in ipairs(_getElemOrder(pfx)) do
-                                                    if _showElem(pfx, k) and (_STATS_ELEM_KEYS[k]) then
-                                                        table.insert(active_stats_in_order, k)
-                                                    end
-                                                end
-                                                for _, it in ipairs(items_to_save) do
-                                                    if it.is_stats_group then
-                                                        for _, stat_key in ipairs(active_stats_in_order) do
-                                                            new_order[#new_order + 1] = stat_key
-                                                            active_set[stat_key] = true
-                                                        end
-                                                    else
-                                                        new_order[#new_order + 1] = it.orig_item
-                                                        active_set[it.orig_item]  = true
-                                                    end
-                                                end
-                                                for _, k in ipairs(_getElemOrder(pfx)) do
-                                                    if not active_set[k] then new_order[#new_order + 1] = k end
-                                                end
-                                                SUISettings:saveSetting(pfx .. ELEM_ORDER_KEY, new_order)
-                                            end
-                                            
-                                            local cards = {}
-                                            for i, item in ipairs(sort_items) do
-                                                local _i   = i
-                                                local _key = item.orig_item
-                                                local _is_sg = item.is_stats_group == true
-                                                cards[#cards + 1] = SUIWindow.ArrangeCard{
-                                                    inner_w      = ctx2.inner_w,
-                                                    title        = item.text,
-                                                subtitle     = item.subtitle,
-                                                    show_chevron = _is_sg,
-                                                    on_tap       = _is_sg and function()
-                                                        ctx.push("nested_menu", {
-                                                            title = _lc("Stats"),
-                                                            items_func = function()
-                                                                return {
-                                                                    {
-                                                                        text = "Stats Sub-Items List",
-                                                                        sui_build = function(ctx3)
-                                                                            local SUIWindow2 = require("engines/sui_window")
-                                                                            local function make_sub_items()
-                                                                                local st = {}
-                                                                                for _, k in ipairs(_getElemOrder(pfx)) do
-                                                                                    if _showElem(pfx, k) and (_STATS_ELEM_KEYS[k]) then
-                                                                                        st[#st + 1] = { text = _lc(_ELEM_LABELS[k]), orig_item = k }
-                                                                                    end
-                                                                                end
-                                                                                return st
-                                                                            end
-                                                                            local sub_items = make_sub_items()
-                                                                            
-                                                                            local function save_sub_order(new_sub)
-                                                                                local n_ord = {}
-                                                                                local s_idx = 1
-                                                                                local active_stats = {}
-                                                                                for _, it in ipairs(new_sub) do active_stats[it.orig_item] = true end
-                                                                                
-                                                                                for _, k in ipairs(_getElemOrder(pfx)) do
-                                                                                    if _showElem(pfx, k) and (_STATS_ELEM_KEYS[k]) then
-                                                                                        if new_sub[s_idx] then
-                                                                                            table.insert(n_ord, new_sub[s_idx].orig_item)
-                                                                                            s_idx = s_idx + 1
-                                                                                        end
-                                                                                    else
-                                                                                        table.insert(n_ord, k)
-                                                                                    end
-                                                                                end
-                                                                                for _, k in ipairs({"book_days", "book_time", "book_remaining"}) do
-                                                                                    if not active_stats[k] then
-                                                                                        local found = false
-                                                                                        for _, x in ipairs(n_ord) do if x == k then found = true; break end end
-                                                                                        if not found then table.insert(n_ord, k) end
-                                                                                    end
-                                                                                end
-                                                                                SUISettings:saveSetting(pfx .. ELEM_ORDER_KEY, n_ord)
-                                                                            end
-                                                                            
-                                                                            local scards = {}
-                                                                            for si, sitem in ipairs(sub_items) do
-                                                                                local _si = si
-                                                                                local _skey = sitem.orig_item
-                                                                                scards[#scards + 1] = SUIWindow2.ArrangeCard{
-                                                                                    inner_w      = ctx3.inner_w,
-                                                                                    title        = sitem.text,
-                                                                                    on_delete    = function()
-                                                                                        _toggleElem(pfx, _skey)
-                                                                                        table.remove(sub_items, _si)
-                                                                                        save_sub_order(sub_items)
-                                                                                        refresh()
-                                                                                        if #sub_items == 0 then
-                                                                                            ctx.pop()
-                                                                                            ctx.repaint()
-                                                                                        else
-                                                                                            ctx.repaint()
-                                                                                        end
-                                                                                    end,
-                                                                                    on_move_up   = (_si > 1) and function()
-                                                                                        sub_items[_si], sub_items[_si-1] = sub_items[_si-1], sub_items[_si]
-                                                                                        save_sub_order(sub_items)
-                                                                                        refresh()
-                                                                                        ctx.repaint()
-                                                                                    end or nil,
-                                                                                    on_move_down = (_si < #sub_items) and function()
-                                                                                        sub_items[_si], sub_items[_si+1] = sub_items[_si+1], sub_items[_si]
-                                                                                        save_sub_order(sub_items)
-                                                                                        refresh()
-                                                                                        ctx.repaint()
-                                                                                    end or nil,
-                                                                                }
-                                                                            end
-                                                                    if #scards == 0 then
-                                                                        scards[#scards + 1] = SUIWindow2.ListRow{
-                                                                            title   = _lc("No items selected."),
-                                                                            inner_w = ctx3.inner_w,
-                                                                        }
-                                                                    end
-                                                                            return scards
-                                                                        end
-                                                                    }
-                                                                }
-                                                            end
-                                                        })
-                                                    end or nil,
-                                                    on_delete    = function()
-                                                        if _is_sg then
-                                                            for _, stat_key in ipairs({"book_days", "book_time", "book_remaining"}) do
-                                                                if _showElem(pfx, stat_key) then
-                                                                    _toggleElem(pfx, stat_key)
-                                                                end
-                                                            end
-                                                        else
-                                                            _toggleElem(pfx, _key)
-                                                        end
-                                                        table.remove(sort_items, _i)
-                                                        save_order(sort_items)
-                                                        refresh()
-                                                        ctx2.repaint()
-                                                    end,
-                                                    on_move_up   = (_i > 1) and function()
-                                                        sort_items[_i], sort_items[_i-1] = sort_items[_i-1], sort_items[_i]
-                                                        save_order(sort_items)
-                                                        refresh()
-                                                        ctx2.repaint()
-                                                    end or nil,
-                                                    on_move_down = (_i < #sort_items) and function()
-                                                        sort_items[_i], sort_items[_i+1] = sort_items[_i+1], sort_items[_i]
-                                                        save_order(sort_items)
-                                                        refresh()
-                                                        ctx2.repaint()
-                                                    end or nil,
-                                                }
-                                            end
-                                            
-                                            if #cards == 0 then
-                                                cards[#cards + 1] = SUIWindow.ListRow{
-                                                    title   = _lc("No items selected."),
-                                                    inner_w = ctx2.inner_w,
-                                                }
-                                            end
-                                            return cards
-                                        end
-                                    }
-                                }
-                            end
-                        })
-                    end
-                }
-            end or nil,
-    }
+    -- The SUI menu reaches the statistics from the Items screen; the classic
+    -- menu lists them in a submenu of their own.
+    local rows = main_list.rows()
+    local items_entry = rows[1]
+    if not ctx_menu.is_sui then
+        rows[1].separator = true
+        rows[#rows + 1] = { text = _lc("Statistics"), sub_item_table = stats_list.rows() }
+        items_entry = { text = _lc("Items"), sub_item_table = rows }
+    end
 
     local size_items = {
         _makeScaleItem(ctx_menu),
@@ -2010,8 +1463,8 @@ function M.getMenuItems(ctx_menu)
                 Config.makeRadioSubmenuItem{
                     text    = _lc("Stats layout"),
                     options = {
-                        { value = "default", label = _lc("Detailed") },
-                        { value = "compact", label = _lc("Compact") },
+                        { value = "default",  label = _lc("Detailed") },
+                        { value = "compact",  label = _lc("Compact") },
                     },
                     get     = function() return getStatsStyle(pfx) end,
                     set     = function(v) SUISettings:saveSetting(pfx .. STATS_STYLE_KEY, v) end,
@@ -2129,27 +1582,11 @@ function M.updateStats(widget, ctx)
         end
     end
     
-    if bstats then
-        local SH = getSH()
+    local SH = getSH()
+    if SH then
         local bd = SH.getBookData(fp, prefetched_entry)
         for _, fn in ipairs(actual_widget._cr_update_funcs) do
             fn(bstats, bd)
-        end
-        -- Also update bd-only widgets (progress bar, percent) in the same pass.
-        if actual_widget._cr_bd_only_funcs then
-            for _, fn in ipairs(actual_widget._cr_bd_only_funcs) do
-                fn(nil, bd)
-            end
-        end
-    elseif actual_widget._cr_bd_only_funcs then
-        -- Progress bar and percent only need bd (no bstats).
-        -- Call them even when there are no DB stats yet (new book, no history).
-        local SH = getSH()
-        if SH then
-            local bd = SH.getBookData(fp, prefetched_entry)
-            for _, fn in ipairs(actual_widget._cr_bd_only_funcs) do
-                fn(nil, bd)
-            end
         end
     end
     return true

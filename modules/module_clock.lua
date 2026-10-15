@@ -203,10 +203,6 @@ local function getItemOrder(pfx)
     return Config.mergeOrder(SUISettings:readSetting(pfx .. SETTING_ORDER), DEFAULT_ORDER)
 end
 
-local function saveItemOrder(pfx, order)
-    SUISettings:saveSetting(pfx .. SETTING_ORDER, order)
-end
-
 -- Visible items in the current manual order (the sequence the layout uses).
 local function getVisibleItems(pfx)
     local out = {}
@@ -1047,11 +1043,6 @@ function M.getMenuItems(ctx_menu)
     local refresh = ctx_menu.refresh
     local _lc     = ctx_menu._
 
-    local function toggle(key, current)
-        SUISettings:saveSetting(pfx .. key, not current)
-        refresh()
-    end
-
     -- Scale + per-element Size are grouped into a single "Size" submenu,
     -- mirroring sui_book_grid.lua's size_group pattern.
     local size_group = {}
@@ -1066,109 +1057,21 @@ function M.getMenuItems(ctx_menu)
         refresh      = refresh,
     }
     
-    local items = {
-        {
-            -- Arrange row: manual order (SUI ArrangeList with eye toggle;
-            -- classic SortWidget for reorder plus checklist rows).
-            text = _lc("Arrange"),
-            keep_menu_open = true,
-            callback = function()
-                local order = getItemOrder(pfx)
-                if #order < 2 then return end
-                local sort_items = {}
-                for _, key in ipairs(order) do
-                    sort_items[#sort_items + 1] = {
-                        text      = itemLabel(key, _lc),
-                        orig_item = key,
-                    }
-                end
-                local function on_save()
-                    local new_order = {}
-                    for _, item in ipairs(sort_items) do
-                        new_order[#new_order + 1] = item.orig_item
-                    end
-                    saveItemOrder(pfx, new_order)
-                    refresh()
-                end
-                local SortWidget = ctx_menu.SortWidget or require("ui/widget/sortwidget")
-                local uim = ctx_menu.UIManager or UIManager
-                uim:show(SortWidget:new{
-                    title             = _lc("Items"),
-                    item_table        = sort_items,
-                    covers_fullscreen = true,
-                    callback          = on_save,
-                })
-            end,
-            sui_build = ctx_menu.is_sui and function(ctx, _item)
-                local SUIWindow = require("engines/sui_window")
-                return SUIWindow.ListRow{
-                    title        = _lc("Items"),
-                    subtitle     = function()
-                        local vis = getVisibleItems(pfx)
-                        if #vis == 0 then return _lc("No items selected.") end
-                        local names = {}
-                        for _, key in ipairs(vis) do
-                            names[#names + 1] = itemLabel(key, _lc)
-                        end
-                        return table.concat(names, "  ·  ")
-                    end,
-                    inner_w      = ctx.inner_w,
-                    item_count   = function() return #getVisibleItems(pfx) end,
-                    show_chevron = true,
-                    on_tap       = function()
-                        local sort_items = {}
-                        for _, key in ipairs(getItemOrder(pfx)) do
-                            sort_items[#sort_items + 1] = Config.applyVisibilityToggle({
-                                text      = itemLabel(key, _lc),
-                                orig_item = key,
-                            }, {
-                                is_visible  = function() return isItemVisible(pfx, key) end,
-                                set_visible = function(visible) setItemVisible(pfx, key, visible) end,
-                                on_change   = refresh,
-                                repaint     = ctx.repaint,
-                            })
-                        end
-                        ctx.push("arrange", {
-                            title      = _lc("Items"),
-                            items      = sort_items,
-                            empty_text = _lc("No items."),
-                            on_change  = function(items_to_save)
-                                local new_order = {}
-                                for _, it in ipairs(items_to_save) do
-                                    new_order[#new_order + 1] = it.orig_item
-                                end
-                                saveItemOrder(pfx, new_order)
-                                refresh()
-                            end,
-                        })
-                    end,
-                }
-            end or nil,
-        },
+    local TOGGLE_LABELS = {
+        clock   = _lc("Show Clock"),
+        date    = _lc("Show Date"),
+        battery = _lc("Show Battery"),
     }
-
-    -- Classic menu only: checklist for show/hide (SUI uses the eye toggle
-    -- on the Arrange screen above).
-    if not ctx_menu.is_sui then
-        items[#items + 1] = {
-            text           = _lc("Show Clock"),
-            checked_func   = function() return isClockEnabled(pfx) end,
-            keep_menu_open = true,
-            callback       = function() toggle(SETTING_ON, isClockEnabled(pfx)) end,
-        }
-        items[#items + 1] = {
-            text           = _lc("Show Date"),
-            checked_func   = function() return isDateEnabled(pfx) end,
-            keep_menu_open = true,
-            callback       = function() toggle(SETTING_DATE, isDateEnabled(pfx)) end,
-        }
-        items[#items + 1] = {
-            text           = _lc("Show Battery"),
-            checked_func   = function() return isBattEnabled(pfx) end,
-            keep_menu_open = true,
-            callback       = function() toggle(SETTING_BATTERY, isBattEnabled(pfx)) end,
-        }
-    end
+    local items = Config.makeOrderedItems{
+        ids          = DEFAULT_ORDER,
+        order_key    = pfx .. SETTING_ORDER,
+        label        = function(key) return itemLabel(key, _lc) end,
+        toggle_label = function(key) return TOGGLE_LABELS[key] end,
+        is_visible   = function(key) return isItemVisible(pfx, key) end,
+        set_visible  = function(key, visible) setItemVisible(pfx, key, visible) end,
+        refresh      = refresh,
+        ctx          = ctx_menu,
+    }.rows()
 
     local text_opts = {
         mod_id  = M.id,

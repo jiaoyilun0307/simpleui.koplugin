@@ -77,11 +77,6 @@ local function _inZone(z, x, y, sw, sh)
        and y >= z.ratio_y * sh and y < (z.ratio_y + z.ratio_h) * sh
 end
 
--- Reusable candidate buffer for _fmGestureAction.
--- Avoids allocating a new table on every gesture event.
--- Entries 1..n are valid after a call; the rest are nil-cleared before returning.
-local _candidates = {}
-
 
 -- Lazy-loaded module references — loaded once on first use.
 local _SH = nil
@@ -674,6 +669,241 @@ local function _hasModalOnTop(screen_widget)
     return top and top.widget ~= screen_widget
 end
 
+-- ---------------------------------------------------------------------------
+-- Gesture routing
+--
+-- Every handler is a shared ScreenWidget method. Per-instance state is limited
+-- to the gesture ranges, the touch-zone bindings and the cached gesture zones.
+-- ---------------------------------------------------------------------------
+
+-- Full-screen gesture events, in registration order. Entries flagged `strip`
+-- are also registered as priority zones over the top and bottom strips.
+local SCREEN_GESTURE_EVENTS = {
+    { event = "BlockNavbarTap",       ges = "tap"                            },
+    { event = "BlockNavbarHold",      ges = "hold"                           },
+    { event = "ScreenSwipe",          ges = "swipe"                          },
+    { event = "ScreenDoubleTap",      ges = "double_tap",       strip = true },
+    { event = "ScreenTwoFingerTap",   ges = "two_finger_tap",   strip = true },
+    { event = "ScreenTwoFingerSwipe", ges = "two_finger_swipe", strip = true },
+    { event = "ScreenMultiswipe",     ges = "multiswipe",       strip = true },
+    { event = "ScreenSpread",         ges = "spread",           strip = true },
+    { event = "ScreenPinch",          ges = "pinch",            strip = true },
+    { event = "ScreenRotate",         ges = "rotate",           strip = true },
+    { event = "ScreenHold",           ges = "hold",             strip = true },
+}
+
+-- G_defaults keys of the zones used to map a touch onto a gesture action.
+local GESTURE_ZONE_KEYS = {
+    top_left     = "DTAP_ZONE_TOP_LEFT",
+    top_right    = "DTAP_ZONE_TOP_RIGHT",
+    bottom_left  = "DTAP_ZONE_BOTTOM_LEFT",
+    bottom_right = "DTAP_ZONE_BOTTOM_RIGHT",
+    left_edge    = "DSWIPE_ZONE_LEFT_EDGE",
+    right_edge   = "DSWIPE_ZONE_RIGHT_EDGE",
+    top_edge     = "DSWIPE_ZONE_TOP_EDGE",
+    bottom_edge  = "DSWIPE_ZONE_BOTTOM_EDGE",
+    left_side    = "DDOUBLE_TAP_ZONE_PREV_CHAPTER",
+    right_side   = "DDOUBLE_TAP_ZONE_NEXT_CHAPTER",
+}
+
+-- Gesture-action names per gesture type as { zone, name } pairs. The first
+-- zone containing the touch decides the action.
+local ZONE_GESTURES = {
+    tap = {
+        { "top_left",     "tap_top_left_corner"     },
+        { "top_right",    "tap_top_right_corner"    },
+        { "bottom_left",  "tap_left_bottom_corner"  },
+        { "bottom_right", "tap_right_bottom_corner" },
+    },
+    hold = {
+        { "top_left",     "hold_top_left_corner"     },
+        { "top_right",    "hold_top_right_corner"    },
+        { "bottom_left",  "hold_bottom_left_corner"  },
+        { "bottom_right", "hold_bottom_right_corner" },
+    },
+    double_tap = {
+        { "left_side",    "double_tap_left_side"           },
+        { "right_side",   "double_tap_right_side"          },
+        { "top_left",     "double_tap_top_left_corner"     },
+        { "top_right",    "double_tap_top_right_corner"    },
+        { "bottom_left",  "double_tap_bottom_left_corner"  },
+        { "bottom_right", "double_tap_bottom_right_corner" },
+    },
+    two_finger_tap = {
+        { "top_left",     "two_finger_tap_top_left_corner"     },
+        { "top_right",    "two_finger_tap_top_right_corner"    },
+        { "bottom_left",  "two_finger_tap_bottom_left_corner"  },
+        { "bottom_right", "two_finger_tap_bottom_right_corner" },
+    },
+}
+
+-- One-finger swipes starting in an edge zone, keyed by swipe direction.
+local EDGE_SWIPES = {
+    { zone = "left_edge",   south = "one_finger_swipe_left_edge_down",
+                            north = "one_finger_swipe_left_edge_up" },
+    { zone = "right_edge",  south = "one_finger_swipe_right_edge_down",
+                            north = "one_finger_swipe_right_edge_up" },
+    { zone = "top_edge",    east  = "one_finger_swipe_top_edge_right",
+                            west  = "one_finger_swipe_top_edge_left" },
+    { zone = "bottom_edge", east  = "one_finger_swipe_bottom_edge_right",
+                            west  = "one_finger_swipe_bottom_edge_left" },
+}
+
+local DIAGONAL_DIRECTIONS = {
+    northeast = true, northwest = true, southeast = true, southwest = true,
+}
+
+local TWO_FINGER_SWIPES = {}
+for _, dir in ipairs({ "east", "west", "north", "south",
+                       "northeast", "northwest", "southeast", "southwest" }) do
+    TWO_FINGER_SWIPES[dir] = "two_finger_swipe_" .. dir
+end
+
+local ROTATE_GESTURES = { cw = "rotate_cw", ccw = "rotate_ccw" }
+
+local CHEVRON_BUTTONS = { "btn_first", "btn_prev", "btn_next", "btn_last" }
+
+-- Reads the gesture zones as ratio tables. Missing defaults are omitted.
+local function _readGestureZones()
+    local zones = {}
+    for name, key in pairs(GESTURE_ZONE_KEYS) do
+        local d = G_defaults:readSetting(key)
+        if d then
+            zones[name] = { ratio_x = d.x, ratio_y = d.y, ratio_w = d.w, ratio_h = d.h }
+        end
+    end
+    return zones
+end
+
+-- Horizontal-only zone test, used for the side swipe edges.
+local function _inXRange(z, x, sw)
+    if not z then return false end
+    return x >= z.ratio_x * sw and x < (z.ratio_x + z.ratio_w) * sw
+end
+
+-- True when the gesture starts inside the bottom navigation bar.
+-- Evaluated per event so it follows orientation changes.
+local function _inNavbar(ges)
+    if not (ges and ges.pos) then return false end
+    return ges.pos.y >= Screen:getHeight() - Bottombar.TOTAL_H()
+end
+
+-- Maps a gesture onto the name of a file-manager gesture action, or nil.
+local function _resolveGestureName(zones, ges)
+    local x, y = ges.pos.x, ges.pos.y
+    local gt, dir = ges.ges, ges.direction
+    local sw, sh = Screen:getWidth(), Screen:getHeight()
+
+    if gt == "swipe" then
+        if DIAGONAL_DIRECTIONS[dir] then
+            local distance = ges.distance
+            if distance and distance <= Screen:scaleBySize(300) then
+                return "short_diagonal_swipe"
+            end
+            return nil
+        end
+        for _, edge in ipairs(EDGE_SWIPES) do
+            if _inZone(zones[edge.zone], x, y, sw, sh) then
+                return edge[dir]
+            end
+        end
+        return nil
+    end
+
+    local zone_gestures = ZONE_GESTURES[gt]
+    if zone_gestures then
+        for _, pair in ipairs(zone_gestures) do
+            if _inZone(zones[pair[1]], x, y, sw, sh) then
+                return pair[2]
+            end
+        end
+        return nil
+    end
+
+    if gt == "two_finger_swipe" then return TWO_FINGER_SWIPES[dir] end
+    if gt == "spread"           then return "spread_gesture" end
+    if gt == "pinch"            then return "pinch_gesture" end
+    if gt == "rotate"           then return ROTATE_GESTURES[dir] end
+end
+
+local function _broadcastSend(_, event)
+    return UIManager:broadcastEvent(event)
+end
+
+-- Calls fn(...) in protected mode with UIManager.sendEvent routed through
+-- broadcastEvent, so events emitted by a gesture action reach every listener.
+local function _pcallBroadcasting(fn, ...)
+    local orig_sendEvent = UIManager.sendEvent
+    UIManager.sendEvent = _broadcastSend
+    local ok, err = pcall(fn, ...)
+    UIManager.sendEvent = orig_sendEvent
+    return ok, err
+end
+
+-- Returns the file manager's top menu, or nil when it is not available.
+local function _getFMMenu()
+    local FM = package.loaded["apps/filemanager/filemanager"]
+    local fm = FM and FM.instance
+    return fm and fm.menu or nil
+end
+
+-- Depth-first search for the first widget (self included) exposing its own
+-- onSwipe handler. Locates the swipeable widget nested inside a book module.
+local function _findSwipeWidget(w, maxdepth)
+    if not w or maxdepth <= 0 or type(w) ~= "table" then return nil end
+    if type(w.onSwipe) == "function" then return w end
+    for i = 1, #w do
+        local found = _findSwipeWidget(w[i], maxdepth - 1)
+        if found then return found end
+    end
+    return nil
+end
+
+local function _pageHasMod(mods, mod_id)
+    for _, m in ipairs(mods) do
+        if m.id == mod_id then return true end
+    end
+    return false
+end
+
+-- Vertical extent, as screen ratios, of the navbar plus pagination footer.
+local function _footerZoneRatios()
+    local sh         = Screen:getHeight()
+    local combined_h = Bottombar.TOTAL_H()
+        + Bottombar.getPaginationIconSize() + Screen:scaleBySize(8)
+    return (sh - combined_h) / sh, combined_h / sh
+end
+
+-- Height ratio of the top strip that opens the main menu: it spans the top
+-- bar when that is enabled, and the default menu zone otherwise.
+local function _menuZoneHeightRatio(menu_zone)
+    if SUISettings:nilOrTrue("simpleui_topbar_enabled") then
+        local ok, Topbar = pcall(require, "screens/sui_topbar")
+        if ok then
+            return (Topbar.TOTAL_TOP_H() + MOD_GAP) / Screen:getHeight()
+        end
+    end
+    return menu_zone.h
+end
+
+-- Physical-key bindings for this device.
+local function _buildKeyEvents()
+    local keys = {}
+    if Device:hasDPad() then
+        keys.ScreenFocusUp    = { { "Up"    } }
+        keys.ScreenFocusDown  = { { "Down"  } }
+        keys.ScreenFocusLeft  = { { "Left"  } }
+        keys.ScreenFocusRight = { { "Right" } }
+        keys.ScreenKbPress    = { { "Press" } }
+    end
+    if Device:hasKeys() then
+        keys.ScreenOpenMenu = { { "Menu" } }
+        keys.PrevPage       = { { Device.input.group.PgBack } }
+        keys.NextPage       = { { Device.input.group.PgFwd } }
+    end
+    return keys
+end
+
 function ScreenWidget:init()
     -- ---------------------------------------------------------------------
     -- Instance parametrisation.
@@ -707,484 +937,16 @@ function ScreenWidget:init()
     local sh = Screen:getHeight()
     self.dimen = Geom:new{ w = sw, h = sh }
 
-    -- Computed at hit-test time so a soft-parked instance raised after an
-    -- orientation change still blocks the bar correctly (init-time bar_y
-    -- would stay frozen at the pre-reader height).
-    local function _in_bar(ges)
-        if not (ges and ges.pos) then return false end
-        return ges.pos.y >= Screen:getHeight() - Bottombar.TOTAL_H()
-    end
-
-    self.ges_events = {
-        BlockNavbarTap = {
-            GestureRange:new{ ges = "tap",            range = function() return self.dimen end },
-        },
-        BlockNavbarHold = {
-            GestureRange:new{ ges = "hold",           range = function() return self.dimen end },
-        },
-        ScreenSwipe = {
-            GestureRange:new{ ges = "swipe",          range = function() return self.dimen end },
-        },
-        ScreenDoubleTap = {
-            GestureRange:new{ ges = "double_tap",     range = function() return self.dimen end },
-        },
-        ScreenTwoFingerTap = {
-            GestureRange:new{ ges = "two_finger_tap", range = function() return self.dimen end },
-        },
-        ScreenTwoFingerSwipe = {
-            GestureRange:new{ ges = "two_finger_swipe", range = function() return self.dimen end },
-        },
-        ScreenMultiswipe = {
-            GestureRange:new{ ges = "multiswipe",     range = function() return self.dimen end },
-        },
-        ScreenHold = {
-            GestureRange:new{ ges = "hold",           range = function() return self.dimen end },
-        },
-        ScreenSpread = {
-            GestureRange:new{ ges = "spread",         range = function() return self.dimen end },
-        },
-        ScreenPinch = {
-            GestureRange:new{ ges = "pinch",          range = function() return self.dimen end },
-        },
-        ScreenRotate = {
-            GestureRange:new{ ges = "rotate",         range = function() return self.dimen end },
-        },
-    }
-
-    -- Zone data from G_defaults is immutable during a session — read once here
-    -- and reused on every gesture event to avoid per-call table allocations.
-    local function _readZone(key)
-        local d = G_defaults:readSetting(key)
-        if not d then return nil end
-        return { ratio_x = d.x, ratio_y = d.y, ratio_w = d.w, ratio_h = d.h }
-    end
-    local _gz_top_left   = _readZone("DTAP_ZONE_TOP_LEFT")
-    local _gz_top_right  = _readZone("DTAP_ZONE_TOP_RIGHT")
-    local _gz_bot_left   = _readZone("DTAP_ZONE_BOTTOM_LEFT")
-    local _gz_bot_right  = _readZone("DTAP_ZONE_BOTTOM_RIGHT")
-    local _gz_left_edge  = _readZone("DSWIPE_ZONE_LEFT_EDGE")
-    local _gz_right_edge = _readZone("DSWIPE_ZONE_RIGHT_EDGE")
-    local _gz_top_edge   = _readZone("DSWIPE_ZONE_TOP_EDGE")
-    local _gz_bot_edge   = _readZone("DSWIPE_ZONE_BOTTOM_EDGE")
-    local _gz_left_side  = _readZone("DDOUBLE_TAP_ZONE_PREV_CHAPTER")
-    local _gz_right_side = _readZone("DDOUBLE_TAP_ZONE_NEXT_CHAPTER")
-
-    -- Dispatches a gesture event to the FM gestures plugin (same gesture set
-    -- as docless file-manager mode). sendEvent is temporarily redirected to
-    -- broadcastEvent so UIManager events reach all listeners.
-    local function _fmGestureAction(ges_event)
-        local FileManager = require("apps/filemanager/filemanager")
-        local g = FileManager.instance and FileManager.instance.gestures
-        if not g then return end
-
-        local sw = Screen:getWidth()
-        local sh = Screen:getHeight()
-        local pos = ges_event.pos
-        if not pos then return end
-        local x, y = pos.x, pos.y
-        local gt  = ges_event.ges
-        local dir = ges_event.direction
-
-        -- Use the module-level reusable buffer; reset it for this call.
-        local n = 0
-
-        if gt == "swipe" then
-            local is_diag = dir == "northeast" or dir == "northwest"
-                         or dir == "southeast" or dir == "southwest"
-            if is_diag then
-                local short_thresh = Screen:scaleBySize(300)
-                if ges_event.distance and ges_event.distance <= short_thresh then
-                    n = n + 1; _candidates[n] = "short_diagonal_swipe"
-                end
-            elseif _inZone(_gz_left_edge, x, y, sw, sh) then
-                if     dir == "south" then n = n + 1; _candidates[n] = "one_finger_swipe_left_edge_down"
-                elseif dir == "north" then n = n + 1; _candidates[n] = "one_finger_swipe_left_edge_up"
-                end
-            elseif _inZone(_gz_right_edge, x, y, sw, sh) then
-                if     dir == "south" then n = n + 1; _candidates[n] = "one_finger_swipe_right_edge_down"
-                elseif dir == "north" then n = n + 1; _candidates[n] = "one_finger_swipe_right_edge_up"
-                end
-            elseif _inZone(_gz_top_edge, x, y, sw, sh) then
-                if     dir == "east" then n = n + 1; _candidates[n] = "one_finger_swipe_top_edge_right"
-                elseif dir == "west" then n = n + 1; _candidates[n] = "one_finger_swipe_top_edge_left"
-                end
-            elseif _inZone(_gz_bot_edge, x, y, sw, sh) then
-                if     dir == "east" then n = n + 1; _candidates[n] = "one_finger_swipe_bottom_edge_right"
-                elseif dir == "west" then n = n + 1; _candidates[n] = "one_finger_swipe_bottom_edge_left"
-                end
-            end
-
-        elseif gt == "tap" then
-            if     _inZone(_gz_top_left,  x, y, sw, sh) then n = n + 1; _candidates[n] = "tap_top_left_corner"
-            elseif _inZone(_gz_top_right, x, y, sw, sh) then n = n + 1; _candidates[n] = "tap_top_right_corner"
-            elseif _inZone(_gz_bot_left,  x, y, sw, sh) then n = n + 1; _candidates[n] = "tap_left_bottom_corner"
-            elseif _inZone(_gz_bot_right, x, y, sw, sh) then n = n + 1; _candidates[n] = "tap_right_bottom_corner"
-            end
-
-        elseif gt == "hold" then
-            if     _inZone(_gz_top_left,  x, y, sw, sh) then n = n + 1; _candidates[n] = "hold_top_left_corner"
-            elseif _inZone(_gz_top_right, x, y, sw, sh) then n = n + 1; _candidates[n] = "hold_top_right_corner"
-            elseif _inZone(_gz_bot_left,  x, y, sw, sh) then n = n + 1; _candidates[n] = "hold_bottom_left_corner"
-            elseif _inZone(_gz_bot_right, x, y, sw, sh) then n = n + 1; _candidates[n] = "hold_bottom_right_corner"
-            end
-
-        elseif gt == "double_tap" then
-            if     _inZone(_gz_left_side,  x, y, sw, sh) then n = n + 1; _candidates[n] = "double_tap_left_side"
-            elseif _inZone(_gz_right_side, x, y, sw, sh) then n = n + 1; _candidates[n] = "double_tap_right_side"
-            elseif _inZone(_gz_top_left,   x, y, sw, sh) then n = n + 1; _candidates[n] = "double_tap_top_left_corner"
-            elseif _inZone(_gz_top_right,  x, y, sw, sh) then n = n + 1; _candidates[n] = "double_tap_top_right_corner"
-            elseif _inZone(_gz_bot_left,   x, y, sw, sh) then n = n + 1; _candidates[n] = "double_tap_bottom_left_corner"
-            elseif _inZone(_gz_bot_right,  x, y, sw, sh) then n = n + 1; _candidates[n] = "double_tap_bottom_right_corner"
-            end
-
-        elseif gt == "two_finger_tap" then
-            if     _inZone(_gz_top_left,  x, y, sw, sh) then n = n + 1; _candidates[n] = "two_finger_tap_top_left_corner"
-            elseif _inZone(_gz_top_right, x, y, sw, sh) then n = n + 1; _candidates[n] = "two_finger_tap_top_right_corner"
-            elseif _inZone(_gz_bot_left,  x, y, sw, sh) then n = n + 1; _candidates[n] = "two_finger_tap_bottom_left_corner"
-            elseif _inZone(_gz_bot_right, x, y, sw, sh) then n = n + 1; _candidates[n] = "two_finger_tap_bottom_right_corner"
-            end
-
-        elseif gt == "two_finger_swipe" then
-            local map = {
-                east = "two_finger_swipe_east",   west  = "two_finger_swipe_west",
-                north = "two_finger_swipe_north",  south = "two_finger_swipe_south",
-                northeast = "two_finger_swipe_northeast", northwest = "two_finger_swipe_northwest",
-                southeast = "two_finger_swipe_southeast", southwest = "two_finger_swipe_southwest",
-            }
-            if map[dir] then n = n + 1; _candidates[n] = map[dir] end
-
-        elseif gt == "multiswipe" then
-            local orig_sendEvent = UIManager.sendEvent
-            UIManager.sendEvent = function(um, ev) return UIManager:broadcastEvent(ev) end
-            local ok, err = pcall(g.multiswipeAction, g, ges_event.multiswipe_directions, ges_event)
-            UIManager.sendEvent = orig_sendEvent
-            if not ok then logger.warn("simpleui screen gesture multiswipe:", err) end
-            return true
-
-        elseif gt == "spread" then
-            n = n + 1; _candidates[n] = "spread_gesture"
-        elseif gt == "pinch" then
-            n = n + 1; _candidates[n] = "pinch_gesture"
-        elseif gt == "rotate" then
-            if     dir == "cw"  then n = n + 1; _candidates[n] = "rotate_cw"
-            elseif dir == "ccw" then n = n + 1; _candidates[n] = "rotate_ccw"
-            end
-        end
-
-        if n == 0 then return end
-
-        local gestures_fm = g.gestures
-        local ges_name
-        for i = 1, n do
-            local name = _candidates[i]
-            if gestures_fm and gestures_fm[name] ~= nil then
-                ges_name = name
-                break
-            end
-        end
-        -- Fall back to the first candidate; gestureAction() is a no-op when
-        -- no action is configured, preserving future default-action support.
-        if not ges_name then
-            ges_name = _candidates[1]
-        end
-
-        -- Clear the reusable buffer so stale entries never leak into the next call.
-        for i = 1, n do _candidates[i] = nil end
-
-        if ges_name then
-            local orig_sendEvent = UIManager.sendEvent
-            UIManager.sendEvent = function(um, ev) return UIManager:broadcastEvent(ev) end
-            local ok, err = pcall(g.gestureAction, g, ges_name, ges_event)
-            UIManager.sendEvent = orig_sendEvent
-            if not ok then
-                logger.warn("simpleui screen gesture:", ges_name, err)
-            end
-            if gestures_fm and gestures_fm[ges_name] ~= nil then
-                return true
-            end
-        end
-    end
-
-    -- Returns true when the gesture originates from a side-edge zone.
-    local function _isSideEdge(ges)
-        if not ges or not ges.pos then return false end
-        local x  = ges.pos.x
-        local sw = Screen:getWidth()
-        local function _in(z)
-            if not z then return false end
-            return x >= z.ratio_x * sw and x < (z.ratio_x + z.ratio_w) * sw
-        end
-        return _in(_gz_left_edge) or _in(_gz_right_edge)
-    end
-
-    -- Depth-first search for the first descendant (or self) exposing its own
-    -- onSwipe(self, ges) handler. Used to locate the tappable/paged widget
-    -- nested inside a book_mod's built widget tree (coverdeck's carousel,
-    -- Featured Collection's paginated swipe_area, ...) without needing to know
-    -- that module's internal widget structure ahead of time.
-    local function _findSwipeWidget(w, maxdepth)
-        if not w or maxdepth <= 0 or type(w) ~= "table" then return nil end
-        if type(w.onSwipe) == "function" then return w end
-        for i = 1, #w do
-            local found = _findSwipeWidget(w[i], maxdepth - 1)
-            if found then return found end
-        end
-        return nil
-    end
-
-    function self:onScreenSwipe(_args, ges)
-        if ges then
-            local dir = ges.direction
-            if (dir == "west" or dir == "east") and not _isSideEdge(ges) then
-                -- Delegate horizontal swipes that land inside a currently
-                -- visible is_book_mod widget's area (coverdeck's carousel,
-                -- a paginated Featured Collection, ...) to that widget's own
-                -- onSwipe, instead of turning the homescreen page. Generic
-                -- over mod.id via _book_mod_slots — not hardcoded to any
-                -- single module.
-                if ges.pos and self._book_mod_slots then
-                    local on_current_page
-                    do
-                        local pom = self._enabled_mods_cache and self._enabled_mods_cache.pages_of_mods
-                        local cur = self._current_page or 1
-                        local is_ls = _isLandscape()
-                        local pages_to_check = { pom and pom[cur] }
-                        if is_ls and pom and pom[cur + 1] then
-                            pages_to_check[2] = pom[cur + 1]
-                        end
-                        on_current_page = {}
-                        for _, cur_mods in ipairs(pages_to_check) do
-                            if cur_mods then
-                                for _, m in ipairs(cur_mods) do on_current_page[m.id] = true end
-                            end
-                        end
-                    end
-                    for mod_id, slot in pairs(self._book_mod_slots) do
-                        if on_current_page[mod_id] then
-                            -- Hit-test against the layout wrapper when present: the raw
-                            -- build() result sits inside the module chrome (frame &
-                            -- background) and may not carry absolute screen dimen. The
-                            -- pooled wrapper always does — it is what the body lays out
-                            -- and paints.
-                            local hit_dimen
-                            if slot.has_menu and self._wrapper_pool then
-                                local wrap = self._wrapper_pool[mod_id]
-                                hit_dimen = wrap and wrap.dimen
-                            end
-                            if not hit_dimen then
-                                hit_dimen = slot.widget and slot.widget.dimen
-                            end
-                            if hit_dimen and ges.pos:intersectWith(hit_dimen) then
-                                local sw = _findSwipeWidget(slot.widget, 8)
-                                if sw and sw:onSwipe(nil, ges) then
-                                    return true
-                                end
-                                break  -- touch point belongs to this widget; don't test siblings
-                            end
-                        end
-                    end
-                end
-
-                local cur   = self._current_page or 1
-                local total = self._total_pages  or 1
-                local new_page = _resolveSwipeNav(cur, total, dir)
-                if new_page ~= cur or total == 1 then
-                    self._current_page = new_page
-                    self.page          = new_page
-                    self:_refresh(true)
-                end
-                return true
-            end
-        end
-        return _fmGestureAction(ges)
-    end
-    function self:onScreenTwoFingerSwipe(_args, ges) return _fmGestureAction(ges) end
-    function self:onScreenDoubleTap(_args, ges)    return _fmGestureAction(ges) end
-    function self:onScreenTwoFingerTap(_args, ges) return _fmGestureAction(ges) end
-    function self:onScreenMultiswipe(_args, ges)   return _fmGestureAction(ges) end
-    function self:onScreenSpread(_args, ges)       return _fmGestureAction(ges) end
-    function self:onScreenPinch(_args, ges)        return _fmGestureAction(ges) end
-    function self:onScreenRotate(_args, ges)       return _fmGestureAction(ges) end
-
-    -- Physical D-pad navigation (Kindle and similar devices).
-    self.key_events = {}
-    if Device:hasDPad() then
-        self.key_events.ScreenFocusUp    = { { "Up"    } }
-        self.key_events.ScreenFocusDown  = { { "Down"  } }
-        self.key_events.ScreenFocusLeft  = { { "Left"  } }
-        self.key_events.ScreenFocusRight = { { "Right" } }
-        self.key_events.ScreenKbPress    = { { "Press" } }
-    end
-    if Device:hasKeys() then
-        self.key_events.ScreenOpenMenu = { { "Menu"  } }
-        self.key_events.PrevPage   = { { Device.input.group.PgBack } }
-        self.key_events.NextPage   = { { Device.input.group.PgFwd } }
-    end
-
-    function self:onScreenOpenMenu()
-        local FileManager = require("apps/filemanager/filemanager")
-        local fm = FileManager.instance
-        if fm and fm.menu then fm.menu:onTapShowMenu() end
-        return true
-    end
-
-    local self_ref = self
-
-    function self:onScreenFocusUp()
-        local books = self._kb_book_items_fp
-        if not books or #books == 0 then return end
-        local frec = self._kb_first_rec_idx
-        if self._kb_focus_idx == nil then
-            self._kb_focus_idx = frec or 1
-        elseif frec and self._kb_focus_idx >= frec then
-            self._kb_focus_idx = 1
-        else
-            self._kb_focus_idx = frec or 1
-        end
-        self:_refresh(true)
-        return true
-    end
-
-    function self:onScreenFocusDown()
-        local books = self._kb_book_items_fp
-        local frec  = self._kb_first_rec_idx
-        local on_recent = frec and self._kb_focus_idx and self._kb_focus_idx >= frec
-        if on_recent then
-            self._kb_focus_idx = nil
-            self:_refresh(true)
-            local Patches = require("infra/sui_patches")
-            Patches.enterNavbarKbFocus(function()
-                self_ref._kb_focus_idx = frec
-                self_ref:_refresh(true)
-            end)
-            return true
-        end
-        if self._kb_focus_idx == nil then
-            self._kb_focus_idx = 1
-        elseif frec then
-            self._kb_focus_idx = frec
-        else
-            self._kb_focus_idx = nil
-            self:_refresh(true)
-            local Patches = require("infra/sui_patches")
-            Patches.enterNavbarKbFocus(function()
-                self_ref._kb_focus_idx = 1
-                self_ref:_refresh(true)
-            end)
-            return true
-        end
-        self:_refresh(true)
-        return true
-    end
-
-    function self:onScreenFocusLeft()
-        local frec = self._kb_first_rec_idx
-        if not frec or not self._kb_focus_idx then return end
-        if self._kb_focus_idx < frec then return end
-        if self._kb_focus_idx > frec then
-            self._kb_focus_idx = self._kb_focus_idx - 1
-            self:_refresh(true)
-        end
-        return true
-    end
-
-    function self:onScreenFocusRight()
-        local frec  = self._kb_first_rec_idx
-        local books = self._kb_book_items_fp
-        if not frec or not self._kb_focus_idx or not books then return end
-        if self._kb_focus_idx < frec then return end
-        if self._kb_focus_idx < #books then
-            self._kb_focus_idx = self._kb_focus_idx + 1
-            self:_refresh(true)
-        end
-        return true
-    end
-
-    function self:onScreenKbPress()
-        if self._kb_focus_idx == nil then return end
-        local books = self._kb_book_items_fp
-        if not books then return end
-        local fp = books[self._kb_focus_idx]
-        if fp then
-            self._kb_focus_idx = nil
-            local open_fn = self._ctx_cache and self._ctx_cache.open_fn
-            if open_fn then open_fn(fp) end
-        end
-        return true
-    end
-
-    -- Navpager compatibility — sui_bottombar looks for these methods and the
-    -- page/page_num fields on the topmost pageable widget.
-    function self:onPrevPage()
-        local cur   = self._current_page or 1
-        local total = self._total_pages  or 1
-        local new_page = _resolvePageNav(cur, total, "prev")
-        if new_page ~= cur then
-            self._current_page = new_page
-            self.page          = new_page
-            self:_refresh(true)
-        end
-        return true
-    end
-
-    function self:onNextPage()
-        local cur   = self._current_page or 1
-        local total = self._total_pages  or 1
-        local new_page = _resolvePageNav(cur, total, "next")
-        if new_page ~= cur then
-            self._current_page = new_page
-            self.page          = new_page
-            self:_refresh(true)
-        end
-        return true
-    end
-
-    function self:onGotoPage(page)
-        local total = self._total_pages or 1
-        local new_page = _resolvePageNav(1, total, page)  -- page is a spread index
-        self._current_page = new_page
-        self.page          = new_page
-        self:_refresh(true)
-        return true
-    end
-
-    -- Tap forwarding: FM corner gestures have priority over the navbar guard.
-    function self:onBlockNavbarTap(_args, ges)
-        if _hasModalOnTop(self) then return false end
-        if _fmGestureAction(ges) then return true end
-        if ges and ges.pos then
-            local x, y = ges.pos.x, ges.pos.y
-            local sw = Screen:getWidth()
-            local sh = Screen:getHeight()
-            local function _inRaw(z)
-                if not z then return false end
-                return x >= z.ratio_x * sw and x < (z.ratio_x + z.ratio_w) * sw
-                   and y >= z.ratio_y * sh and y < (z.ratio_y + z.ratio_h) * sh
-            end
-            if _inRaw(_gz_bot_left) or _inRaw(_gz_bot_right) then
-                return  -- let it through
-            end
-        end
-        if _in_bar(ges) then return true end
-    end
-    function self:onScreenHold(_args, ges)
-        if _hasModalOnTop(self) then return false end
-        if _in_bar(ges) then return true end
-        return _fmGestureAction(ges)
-    end
-    function self:onBlockNavbarHold(_args, ges)
-        if _hasModalOnTop(self) then return false end
-        if _in_bar(ges) then return true end
-    end
+    self.ges_events     = self:_buildGestureEvents()
+    self.key_events     = _buildKeyEvents()
+    self._gesture_zones = _readGestureZones()
 
     -- title/left_icon are optional instance_cfg fields (see the contract
-    -- comment above ScreenWidget:init()): a Custom Screen supplies its
-    -- own name/icon so its title bar — including the text the KOReader
-    -- screen reader announces on open — matches what the user actually
-    -- opened, instead of always reading "Home Screen"/house icon. The
-    -- fallbacks below preserve the exact previous behaviour for the
-    -- built-in Homescreen, which relies on them rather than passing the
-    -- fields explicitly.
+    -- comment above): a Custom Screen supplies its own name/icon so its
+    -- title bar — including the text the KOReader screen reader announces on
+    -- open — matches what the user actually opened. The fallbacks preserve
+    -- the built-in Homescreen's identity, which relies on them rather than
+    -- passing the fields explicitly.
     self.title_bar = TitleBar:new{
         show_parent             = self,
         fullscreen              = true,
@@ -1225,163 +987,422 @@ function ScreenWidget:init()
         VerticalSpan:new{ width = sh },
     }
 
-    -- Register top-of-screen tap/swipe zones to open the KOReader main menu,
-    -- mirroring what FileManagerMenu:initGesListener does for the library.
-    local DTAP_ZONE_MENU     = G_defaults:readSetting("DTAP_ZONE_MENU")
-    local DTAP_ZONE_MENU_EXT = G_defaults:readSetting("DTAP_ZONE_MENU_EXT")
-    if DTAP_ZONE_MENU and DTAP_ZONE_MENU_EXT then
-        local function _fmMenu()
-            local FM = package.loaded["apps/filemanager/filemanager"]
-            local inst = FM and FM.instance
-            if inst and inst.menu then return inst.menu end
-            return nil
-        end
+    self:_registerMenuZones()
+    self:_registerFooterZones()
+    self:_registerStripZones()
+end
 
-        local topbar_on  = SUISettings:nilOrTrue("simpleui_topbar_enabled")
-        local zone_ratio_h
-        if topbar_on then
-            local ok_tb, Topbar   = pcall(require, "screens/sui_topbar")
-            local ok_ui, UI_core  = pcall(require, "infra/sui_core")
-            if ok_tb and ok_ui then
-                zone_ratio_h = (Topbar.TOTAL_TOP_H() + UI_core.MOD_GAP) / sh
-            else
-                zone_ratio_h = DTAP_ZONE_MENU.h
-            end
-        else
-            zone_ratio_h = DTAP_ZONE_MENU.h
-        end
+-- ---------------------------------------------------------------------------
+-- Gesture events and touch zones
+-- ---------------------------------------------------------------------------
 
-        self:registerTouchZones({
-            {
-                id          = self._pfx .. "menu_tap",
-                ges         = "tap",
-                screen_zone = { ratio_x = 0, ratio_y = 0, ratio_w = 1, ratio_h = zone_ratio_h },
-                handler = function(ges)
-                    if _hasModalOnTop(self) then return false end
-                    local m = _fmMenu()
-                    if m then return m:onTapShowMenu(ges) end
-                end,
-            },
-            {
-                id          = self._pfx .. "menu_swipe",
-                ges         = "swipe",
-                screen_zone = { ratio_x = 0, ratio_y = 0, ratio_w = 1, ratio_h = zone_ratio_h },
-                handler = function(ges)
-                    if _hasModalOnTop(self) then return false end
-                    local m = _fmMenu()
-                    if m and m:onSwipeShowMenu(ges) then return true end
-                    return _fmGestureAction(ges)
-                end,
-            },
-        })
+-- Builds one full-screen gesture range per SCREEN_GESTURE_EVENTS entry. The
+-- range is resolved at match time because the widget's dimen is resized and
+-- positioned after construction.
+function ScreenWidget:_buildGestureEvents()
+    local function fullRange() return self.dimen end
+    local events = {}
+    for _, def in ipairs(SCREEN_GESTURE_EVENTS) do
+        events[def.event] = { GestureRange:new{ ges = def.ges, range = fullRange } }
     end
+    return events
+end
 
-    -- Footer touch zones override BlockNavbarTap/ScreenSwipe for gestures landing
-    -- in the combined navbar + pagination footer strip.
-    local pag_footer_h   = Bottombar.getPaginationIconSize() + Screen:scaleBySize(8)
-    local combined_h     = Bottombar.TOTAL_H() + pag_footer_h
-    local footer_ratio_y = (sh - combined_h) / sh
-    local footer_ratio_h = combined_h / sh
-    local self_ref_fc    = self
+-- Top strip that opens the KOReader main menu, mirroring what
+-- FileManagerMenu:initGesListener does for the library.
+function ScreenWidget:_registerMenuZones()
+    local menu_zone     = G_defaults:readSetting("DTAP_ZONE_MENU")
+    local menu_zone_ext = G_defaults:readSetting("DTAP_ZONE_MENU_EXT")
+    if not (menu_zone and menu_zone_ext) then return end
 
+    local screen_zone = {
+        ratio_x = 0, ratio_y = 0, ratio_w = 1,
+        ratio_h = _menuZoneHeightRatio(menu_zone),
+    }
+    self:registerTouchZones({
+        {
+            id          = self._pfx .. "menu_tap",
+            ges         = "tap",
+            screen_zone = screen_zone,
+            handler     = function(ges) return self:_onMenuTap(ges) end,
+        },
+        {
+            id          = self._pfx .. "menu_swipe",
+            ges         = "swipe",
+            screen_zone = screen_zone,
+            handler     = function(ges) return self:_onMenuSwipe(ges) end,
+        },
+    })
+end
+
+-- Combined navbar + pagination footer strip. These zones take precedence over
+-- the full-screen tap and swipe events for gestures landing inside it.
+function ScreenWidget:_registerFooterZones()
+    local ratio_y, ratio_h = _footerZoneRatios()
+    local screen_zone = { ratio_x = 0, ratio_y = ratio_y, ratio_w = 1, ratio_h = ratio_h }
     self:registerTouchZones({
         {
             id          = self._pfx .. "footer_tap",
             ges         = "tap",
-            screen_zone = { ratio_x = 0, ratio_y = footer_ratio_y, ratio_w = 1, ratio_h = footer_ratio_h },
-            overrides = { "BlockNavbarTap" },
-            handler = function(ges)
-                if _hasModalOnTop(self_ref_fc) then return false end
-                if _fmGestureAction(ges) then return true end
-
-                local footer_bc = self_ref_fc._footer_bc
-                if not footer_bc or footer_bc.dimen.h == 0 then return false end
-
-                local navpager_on  = Config.isNavpagerEnabled()
-                local dot_pager_on = Config.isDotPagerEnabled()
-                if navpager_on or dot_pager_on then
-                    local fd = self_ref_fc._footer_dot
-                    if fd and fd.bar_input then
-                        return fd.bar_input:handleEvent(Event:new("Gesture", ges))
-                    end
-                    return false
-                end
-
-                local fc = self_ref_fc._footer_chevron
-                if fc then
-                    local buttons = { fc.btn_first, fc.btn_prev, fc.btn_next, fc.btn_last }
-                    for _, btn in ipairs(buttons) do
-                        local d = btn.dimen
-                        if d and ges.pos and ges.pos:intersectWith(d) then
-                            if btn.enabled ~= false then btn.callback() end
-                            return true
-                        end
-                    end
-                end
-                return false
-            end,
+            screen_zone = screen_zone,
+            overrides   = { "BlockNavbarTap" },
+            handler     = function(ges) return self:_onFooterTap(ges) end,
         },
         {
             id          = self._pfx .. "footer_swipe",
             ges         = "swipe",
-            screen_zone = { ratio_x = 0, ratio_y = footer_ratio_y, ratio_w = 1, ratio_h = footer_ratio_h },
-            overrides = { "ScreenSwipe" },
-            handler = function(ges)
-                if _hasModalOnTop(self_ref_fc) then return false end
-                if _fmGestureAction(ges) then return true end
-
-                local footer_bc = self_ref_fc._footer_bc
-                if not footer_bc or footer_bc.dimen.h == 0 then return false end
-
-                local dir   = ges and ges.direction
-                local cur   = self_ref_fc._current_page or 1
-                local total = self_ref_fc._total_pages  or 1
-                if total <= 1 then return false end
-                if dir ~= "west" and dir ~= "east" then return false end
-
-                local new_page = _resolveSwipeNav(cur, total, dir)
-                if new_page ~= cur then
-                    self_ref_fc._current_page = new_page
-                    self_ref_fc.page          = new_page
-                    self_ref_fc:_refresh(true)
-                end
-                return true
-            end,
+            screen_zone = screen_zone,
+            overrides   = { "ScreenSwipe" },
+            handler     = function(ges) return self:_onFooterSwipe(ges) end,
         },
     })
+end
 
-    -- Priority gesture zones for top and bottom strips — these fire before
-    -- the fullscreen ges_events handlers for double-tap, two-finger, etc.
-    local top_ratio_h    = (DTAP_ZONE_MENU and DTAP_ZONE_MENU.h) or 0.1
-    local _gesture_types = {
-        { ges = "double_tap",       id_suffix = "double_tap",        override = "ScreenDoubleTap"      },
-        { ges = "two_finger_tap",   id_suffix = "two_finger_tap",    override = "ScreenTwoFingerTap"   },
-        { ges = "two_finger_swipe", id_suffix = "two_finger_swipe",  override = "ScreenTwoFingerSwipe" },
-        { ges = "multiswipe",       id_suffix = "multiswipe",        override = "ScreenMultiswipe"     },
-        { ges = "spread",           id_suffix = "spread",            override = "ScreenSpread"         },
-        { ges = "pinch",            id_suffix = "pinch",             override = "ScreenPinch"          },
-        { ges = "rotate",           id_suffix = "rotate",            override = "ScreenRotate"         },
-        { ges = "hold",             id_suffix = "hold",              override = "ScreenHold"           },
-    }
+-- Top and bottom strips that forward multi-touch and hold gestures to the
+-- file-manager gesture actions before the full-screen events see them.
+function ScreenWidget:_registerStripZones()
+    local menu_zone = G_defaults:readSetting("DTAP_ZONE_MENU")
+    local footer_y, footer_h = _footerZoneRatios()
+    local top_zone    = { ratio_x = 0, ratio_y = 0,        ratio_w = 1,
+                          ratio_h = (menu_zone and menu_zone.h) or 0.1 }
+    local bottom_zone = { ratio_x = 0, ratio_y = footer_y, ratio_w = 1, ratio_h = footer_h }
+    local handler     = function(ges) return self:_fmGestureAction(ges) end
 
-    local priority_zones = {}
-    for _, gt in ipairs(_gesture_types) do
-        priority_zones[#priority_zones + 1] = {
-            id          = self._pfx .. "top_" .. gt.id_suffix,
-            ges         = gt.ges,
-            screen_zone = { ratio_x = 0, ratio_y = 0, ratio_w = 1, ratio_h = top_ratio_h },
-            overrides = { gt.override },
-            handler   = function(ges) return _hasModalOnTop(self) and false or _fmGestureAction(ges) end,
-        }
-        priority_zones[#priority_zones + 1] = {
-            id          = self._pfx .. "bottom_" .. gt.id_suffix,
-            ges         = gt.ges,
-            screen_zone = { ratio_x = 0, ratio_y = footer_ratio_y, ratio_w = 1, ratio_h = footer_ratio_h },
-            overrides = { gt.override },
-            handler   = function(ges) return _hasModalOnTop(self) and false or _fmGestureAction(ges) end,
-        }
+    local zones = {}
+    for _, def in ipairs(SCREEN_GESTURE_EVENTS) do
+        if def.strip then
+            local overrides = { def.event }
+            zones[#zones + 1] = {
+                id          = self._pfx .. "top_" .. def.ges,
+                ges         = def.ges,
+                screen_zone = top_zone,
+                overrides   = overrides,
+                handler     = handler,
+            }
+            zones[#zones + 1] = {
+                id          = self._pfx .. "bottom_" .. def.ges,
+                ges         = def.ges,
+                screen_zone = bottom_zone,
+                overrides   = overrides,
+                handler     = handler,
+            }
+        end
     end
-    self:registerTouchZones(priority_zones)
+    self:registerTouchZones(zones)
+end
+
+function ScreenWidget:_onMenuTap(ges)
+    if _hasModalOnTop(self) then return false end
+    local menu = _getFMMenu()
+    if menu then return menu:onTapShowMenu(ges) end
+end
+
+function ScreenWidget:_onMenuSwipe(ges)
+    if _hasModalOnTop(self) then return false end
+    local menu = _getFMMenu()
+    if menu and menu:onSwipeShowMenu(ges) then return true end
+    return self:_fmGestureAction(ges)
+end
+
+function ScreenWidget:_onFooterTap(ges)
+    if _hasModalOnTop(self) then return false end
+    if self:_fmGestureAction(ges) then return true end
+
+    local footer_bc = self._footer_bc
+    if not footer_bc or footer_bc.dimen.h == 0 then return false end
+
+    if Config.isNavpagerEnabled() or Config.isDotPagerEnabled() then
+        local dots = self._footer_dot
+        if dots and dots.bar_input then
+            return dots.bar_input:handleEvent(Event:new("Gesture", ges))
+        end
+        return false
+    end
+
+    local chevrons = self._footer_chevron
+    if chevrons and ges.pos then
+        for _, name in ipairs(CHEVRON_BUTTONS) do
+            local btn = chevrons[name]
+            local d   = btn and btn.dimen
+            if d and ges.pos:intersectWith(d) then
+                if btn.enabled ~= false then btn.callback() end
+                return true
+            end
+        end
+    end
+    return false
+end
+
+function ScreenWidget:_onFooterSwipe(ges)
+    if _hasModalOnTop(self) then return false end
+    if self:_fmGestureAction(ges) then return true end
+
+    local footer_bc = self._footer_bc
+    if not footer_bc or footer_bc.dimen.h == 0 then return false end
+
+    local dir = ges and ges.direction
+    if (self._total_pages or 1) <= 1 then return false end
+    if dir ~= "west" and dir ~= "east" then return false end
+
+    self:_swipePage(dir)
+    return true
+end
+
+-- ---------------------------------------------------------------------------
+-- Gesture handlers
+-- ---------------------------------------------------------------------------
+
+-- Forwards a gesture to the file-manager gesture actions (the same gesture
+-- set as docless file-manager mode). Returns true when an action is bound to
+-- the resolved gesture, nil otherwise.
+function ScreenWidget:_fmGestureAction(ges)
+    local FileManager = require("apps/filemanager/filemanager")
+    local fm_gestures = FileManager.instance and FileManager.instance.gestures
+    if not fm_gestures then return end
+    if not ges.pos then return end
+
+    if ges.ges == "multiswipe" then
+        local ok, err = _pcallBroadcasting(
+            fm_gestures.multiswipeAction, fm_gestures, ges.multiswipe_directions, ges)
+        if not ok then logger.warn("simpleui screen gesture multiswipe:", err) end
+        return true
+    end
+
+    local name = _resolveGestureName(self._gesture_zones, ges)
+    if not name then return end
+
+    -- gestureAction() is a no-op when the gesture has no action configured.
+    local configured = fm_gestures.gestures
+    local ok, err = _pcallBroadcasting(fm_gestures.gestureAction, fm_gestures, name, ges)
+    if not ok then logger.warn("simpleui screen gesture:", name, err) end
+    if configured and configured[name] ~= nil then return true end
+end
+
+-- True when the gesture starts in the left or right swipe-edge zone.
+function ScreenWidget:_isSideEdge(ges)
+    if not (ges and ges.pos) then return false end
+    local x, sw = ges.pos.x, Screen:getWidth()
+    local zones = self._gesture_zones
+    return _inXRange(zones.left_edge, x, sw) or _inXRange(zones.right_edge, x, sw)
+end
+
+-- True when module `mod_id` is laid out on the visible page (or, in landscape,
+-- on either page of the visible spread).
+function ScreenWidget:_isModOnVisiblePage(mod_id)
+    local pages = self._enabled_mods_cache and self._enabled_mods_cache.pages_of_mods
+    local cur   = self._current_page or 1
+    local mods  = pages and pages[cur]
+    if not mods then return false end
+    if _pageHasMod(mods, mod_id) then return true end
+    local next_mods = _isLandscape() and pages[cur + 1]
+    return next_mods and _pageHasMod(next_mods, mod_id) or false
+end
+
+-- Screen-space area a book module occupies. The pooled layout wrapper is
+-- preferred when present: the raw build() result sits inside the module chrome
+-- and may not carry absolute dimensions, while the wrapper always does.
+function ScreenWidget:_bookModHitDimen(mod_id, slot)
+    local wrapper = slot.has_menu and self._wrapper_pool and self._wrapper_pool[mod_id]
+    return (wrapper and wrapper.dimen) or (slot.widget and slot.widget.dimen)
+end
+
+-- Hands a horizontal swipe to the swipeable widget of the visible book module
+-- under the touch point (a carousel, a paginated collection, ...) instead of
+-- turning the screen page. Returns true when that widget consumed the swipe.
+function ScreenWidget:_swipeBookMod(ges)
+    local slots = self._book_mod_slots
+    if not (ges.pos and slots) then return false end
+
+    for mod_id, slot in pairs(slots) do
+        if self:_isModOnVisiblePage(mod_id) then
+            local hit_dimen = self:_bookModHitDimen(mod_id, slot)
+            if hit_dimen and ges.pos:intersectWith(hit_dimen) then
+                local swipe_widget = _findSwipeWidget(slot.widget, 8)
+                if swipe_widget and swipe_widget:onSwipe(nil, ges) then
+                    return true
+                end
+                -- The touch belongs to this module; siblings are not tested.
+                return false
+            end
+        end
+    end
+    return false
+end
+
+function ScreenWidget:onScreenSwipe(_args, ges)
+    if ges then
+        local dir = ges.direction
+        if (dir == "west" or dir == "east") and not self:_isSideEdge(ges) then
+            if not self:_swipeBookMod(ges) then self:_swipePage(dir) end
+            return true
+        end
+    end
+    return self:_fmGestureAction(ges)
+end
+
+-- Gestures forwarded verbatim to the file-manager gesture actions.
+local function onForwardedGesture(self, _args, ges)
+    return self:_fmGestureAction(ges)
+end
+ScreenWidget.onScreenTwoFingerSwipe = onForwardedGesture
+ScreenWidget.onScreenDoubleTap      = onForwardedGesture
+ScreenWidget.onScreenTwoFingerTap   = onForwardedGesture
+ScreenWidget.onScreenMultiswipe     = onForwardedGesture
+ScreenWidget.onScreenSpread         = onForwardedGesture
+ScreenWidget.onScreenPinch          = onForwardedGesture
+ScreenWidget.onScreenRotate         = onForwardedGesture
+
+-- Forwarded file-manager corner gestures take priority over the navbar guard.
+function ScreenWidget:onBlockNavbarTap(_args, ges)
+    if _hasModalOnTop(self) then return false end
+    if self:_fmGestureAction(ges) then return true end
+    if ges and ges.pos then
+        local zones  = self._gesture_zones
+        local x, y   = ges.pos.x, ges.pos.y
+        local sw, sh = Screen:getWidth(), Screen:getHeight()
+        if _inZone(zones.bottom_left, x, y, sw, sh)
+                or _inZone(zones.bottom_right, x, y, sw, sh) then
+            return  -- let the corner tap through
+        end
+    end
+    if _inNavbar(ges) then return true end
+end
+
+function ScreenWidget:onScreenHold(_args, ges)
+    if _hasModalOnTop(self) then return false end
+    if _inNavbar(ges) then return true end
+    return self:_fmGestureAction(ges)
+end
+
+function ScreenWidget:onBlockNavbarHold(_args, ges)
+    if _hasModalOnTop(self) then return false end
+    if _inNavbar(ges) then return true end
+end
+
+function ScreenWidget:onScreenOpenMenu()
+    local menu = _getFMMenu()
+    if menu then menu:onTapShowMenu() end
+    return true
+end
+
+-- ---------------------------------------------------------------------------
+-- Physical D-pad navigation (Kindle and similar devices)
+-- ---------------------------------------------------------------------------
+
+-- Moves keyboard focus off the screen into the navbar. `restore_idx` is the
+-- book focus re-applied when focus returns from the navbar.
+function ScreenWidget:_focusNavbar(restore_idx)
+    self._kb_focus_idx = nil
+    self:_refresh(true)
+    require("infra/sui_patches").enterNavbarKbFocus(function()
+        self._kb_focus_idx = restore_idx
+        self:_refresh(true)
+    end)
+    return true
+end
+
+function ScreenWidget:onScreenFocusUp()
+    local books = self._kb_book_items_fp
+    if not books or #books == 0 then return end
+    local frec = self._kb_first_rec_idx
+    if self._kb_focus_idx == nil then
+        self._kb_focus_idx = frec or 1
+    elseif frec and self._kb_focus_idx >= frec then
+        self._kb_focus_idx = 1
+    else
+        self._kb_focus_idx = frec or 1
+    end
+    self:_refresh(true)
+    return true
+end
+
+function ScreenWidget:onScreenFocusDown()
+    local frec = self._kb_first_rec_idx
+    if frec and self._kb_focus_idx and self._kb_focus_idx >= frec then
+        return self:_focusNavbar(frec)
+    end
+    if self._kb_focus_idx == nil then
+        self._kb_focus_idx = 1
+    elseif frec then
+        self._kb_focus_idx = frec
+    else
+        return self:_focusNavbar(1)
+    end
+    self:_refresh(true)
+    return true
+end
+
+function ScreenWidget:onScreenFocusLeft()
+    local frec = self._kb_first_rec_idx
+    if not frec or not self._kb_focus_idx then return end
+    if self._kb_focus_idx < frec then return end
+    if self._kb_focus_idx > frec then
+        self._kb_focus_idx = self._kb_focus_idx - 1
+        self:_refresh(true)
+    end
+    return true
+end
+
+function ScreenWidget:onScreenFocusRight()
+    local frec  = self._kb_first_rec_idx
+    local books = self._kb_book_items_fp
+    if not frec or not self._kb_focus_idx or not books then return end
+    if self._kb_focus_idx < frec then return end
+    if self._kb_focus_idx < #books then
+        self._kb_focus_idx = self._kb_focus_idx + 1
+        self:_refresh(true)
+    end
+    return true
+end
+
+function ScreenWidget:onScreenKbPress()
+    if self._kb_focus_idx == nil then return end
+    local books = self._kb_book_items_fp
+    if not books then return end
+    local fp = books[self._kb_focus_idx]
+    if fp then
+        self._kb_focus_idx = nil
+        local open_fn = self._ctx_cache and self._ctx_cache.open_fn
+        if open_fn then open_fn(fp) end
+    end
+    return true
+end
+
+-- ---------------------------------------------------------------------------
+-- Page navigation
+--
+-- The navbar pager looks for onPrevPage/onNextPage/onGotoPage and the
+-- page/page_num fields on the topmost pageable widget.
+-- ---------------------------------------------------------------------------
+
+function ScreenWidget:_setPage(page)
+    self._current_page = page
+    self.page          = page
+    self:_refresh(true)
+end
+
+-- Turns to the previous or next page (or spread) without wrapping.
+function ScreenWidget:_stepPage(dir)
+    local cur      = self._current_page or 1
+    local new_page = _resolvePageNav(cur, self._total_pages or 1, dir)
+    if new_page ~= cur then self:_setPage(new_page) end
+    return true
+end
+
+-- Turns the page for a horizontal swipe, wrapping around at either end.
+function ScreenWidget:_swipePage(swipe_dir)
+    local cur, total = self._current_page or 1, self._total_pages or 1
+    local new_page   = _resolveSwipeNav(cur, total, swipe_dir)
+    if new_page ~= cur or total == 1 then self:_setPage(new_page) end
+end
+
+function ScreenWidget:onPrevPage() return self:_stepPage("prev") end
+function ScreenWidget:onNextPage() return self:_stepPage("next") end
+
+-- `spread` is a spread index, not a raw page number.
+function ScreenWidget:onGotoPage(spread)
+    self:_setPage(_resolvePageNav(1, self._total_pages or 1, spread))
+    return true
 end
 
 -- ---------------------------------------------------------------------------
@@ -1568,18 +1589,20 @@ function ScreenWidget:_buildCtx()
                 bar_style   = SUISettings:readSetting(self._pfx .. "currently_bar_style"),
                 stats_style = SUISettings:readSetting(self._pfx .. "currently_stats_style"),
                 layout      = SUISettings:readSetting(self._pfx .. "currently_layout") == "dynamic" and "dynamic" or "default",
-                elem_order  = SUISettings:readSetting(self._pfx .. "currently_elem_order"),
+                main_order  = SUISettings:readSetting(self._pfx .. "currently_main_order"),
+                stats_order = SUISettings:readSetting(self._pfx .. "currently_stats_order"),
                 desc_align  = SUISettings:readSetting(self._pfx .. "currently_description_align"),
                 show = {
-                    title    = SUISettings:nilOrTrue(self._pfx .. "currently_show_title"),
-                    author   = SUISettings:nilOrTrue(self._pfx .. "currently_show_author"),
-                    progress = SUISettings:nilOrTrue(self._pfx .. "currently_show_progress"),
-                    percent  = SUISettings:nilOrTrue(self._pfx .. "currently_show_percent"),
-                    days     = SUISettings:nilOrTrue(self._pfx .. "currently_show_book_days"),
-                    time     = SUISettings:nilOrTrue(self._pfx .. "currently_show_book_time"),
-                    remain   = SUISettings:nilOrTrue(self._pfx .. "currently_show_book_remaining"),
+                    title       = SUISettings:nilOrTrue(self._pfx .. "currently_show_title"),
+                    author      = SUISettings:nilOrTrue(self._pfx .. "currently_show_author"),
                     series      = SUISettings:nilOrTrue(self._pfx .. "currently_show_series"),
                     description = SUISettings:nilOrTrue(self._pfx .. "currently_show_description"),
+                    progress    = SUISettings:nilOrTrue(self._pfx .. "currently_show_progress"),
+                    stats       = SUISettings:nilOrTrue(self._pfx .. "currently_show_stats"),
+                    percent        = SUISettings:nilOrTrue(self._pfx .. "currently_show_percent"),
+                    book_days      = SUISettings:nilOrTrue(self._pfx .. "currently_show_book_days"),
+                    book_time      = SUISettings:nilOrTrue(self._pfx .. "currently_show_book_time"),
+                    book_remaining = SUISettings:nilOrTrue(self._pfx .. "currently_show_book_remaining"),
                 },
             },
             coverdeck = {
@@ -1765,13 +1788,7 @@ function ScreenWidget:_buildCtx()
     -- hot paint path (md5 is already in prefetched_data — no extra IO).
     local currently_book_stats = nil
     if mod_c and Registry.isEnabled(mod_c, self._pfx) and self._db_conn and bs.current_fp then
-        local c_cfg = cfg and cfg.currently
-        local needs_bstats = (c_cfg and (c_cfg.show.days or c_cfg.show.time or c_cfg.show.remain))
-            or (not c_cfg and (
-                SUISettings:nilOrTrue(self._pfx .. "currently_show_book_days") or
-                SUISettings:nilOrTrue(self._pfx .. "currently_show_book_time") or
-                SUISettings:nilOrTrue(self._pfx .. "currently_show_book_remaining")))
-        if needs_bstats then
+        if mod_c.needsDbStats(cfg.currently.show) then
             local pe_c  = bs.prefetched_data and bs.prefetched_data[bs.current_fp]
             local c_md5 = type(pe_c) == "table" and pe_c.partial_md5_checksum
             if c_md5 then
@@ -2681,6 +2698,190 @@ function ScreenWidget:_setSlotDirty(mod_id, slot)
 end
 
 -- ---------------------------------------------------------------------------
+-- _scheduleDataRefresh — queues the deferred data pass that follows a paint:
+-- authoritative book list, stats and in-place module updates. Calls made
+-- while a pass is already queued merge into it, so it runs once.
+-- ---------------------------------------------------------------------------
+function ScreenWidget:_scheduleDataRefresh(stats_only)
+    if self._refresh_scheduled then
+        -- A deferred refresh is already queued and will run once,
+        -- acting on self._refresh_pending_stats_only. Two call sites
+        -- can race for this same slot on device resume
+        -- (SimpleUIPlugin:onResume wants the full refresh;
+        -- ScreenWidget:onResume wants stats_only) — upgrading the
+        -- pending flag in place, only ever from true to false, means
+        -- the callback always does at least as much work as the
+        -- strongest caller seen before it fires, regardless of
+        -- arrival order.
+        if not stats_only then
+            self._refresh_pending_stats_only = false
+        end
+        return
+    end
+    self._refresh_scheduled = true
+    self._refresh_pending_stats_only = stats_only
+    local token = {}
+    self._pending_refresh_token = token
+
+    UIManager:scheduleIn(0.05, function()
+        if self._pending_refresh_token ~= token then return end
+        if _sget(self._id, "_instance") ~= self then return end
+        self._refresh_scheduled = false
+        -- Read live rather than the closed-over parameter: a later
+        -- caller may have upgraded this pending refresh (see above).
+        local pending_stats_only = self._refresh_pending_stats_only
+        local books_fresh = self._books_fresh
+        self._books_fresh = nil
+
+        if not self._db_conn then
+            self._db_conn = Config.openStatsDB()
+        end
+
+        if self._ctx_cache then
+            -- 1. Get new book metadata (prefetchBooks). Skipped when
+            -- onShow() already resolved it for this open.
+            if not pending_stats_only and not (books_fresh and self._cached_books_state) then
+                local new_bs = self:_prefetchBooks()
+                if new_bs then
+                    self._cached_books_state = new_bs
+                    self._ctx_cache.prefetched = new_bs.prefetched_data
+                    self._ctx_cache.current_fp = new_bs.current_fp
+                    self._ctx_cache.recent_fps = new_bs.recent_fps
+
+                    -- self._ctx_cache is reused (mutated), not
+                    -- rebuilt, on this debounced path. GridRenderer.
+                    -- build() memoizes each row module's file list
+                    -- into ctx[cache_key] on first build() and never
+                    -- re-reads getFileList() again for that same ctx
+                    -- object, so any row module without its own
+                    -- updateStats (Recent Books, New Books, TBR,
+                    -- Collections, ...) needs its row cache cleared
+                    -- here before the fallback mod.build() call in
+                    -- step 3 below, or it would keep serving the file
+                    -- list from before this prefetchBooks() pass.
+                    -- Currently Reading is unaffected: module_currently
+                    -- reads ctx.current_fp directly with no
+                    -- intermediate cache. Same treatment as
+                    -- _refreshImmediate's keep_cache=true path.
+                    -- clearRowCaches() also invalidates the
+                    -- section-label header cache (page/npages
+                    -- indicator + chevrons) for the same paginated
+                    -- rows — see its doc comment in sui_book_grid.lua.
+                    local ok_gr, GR = pcall(require, "engines/sui_book_grid")
+                    if ok_gr and GR then GR.clearRowCaches(self._ctx_cache) end
+                end
+            end
+
+            -- onShow() seeds _cached_books_state with a best-effort
+            -- stub via SH.getStaleBooks() so the first paint can
+            -- already show real covers/titles. That stub can be
+            -- incomplete or missing (e.g. the very first run ever),
+            -- so an is_book_mod module (currently, coverdeck, recent)
+            -- can return nil/empty from build() on that first pass
+            -- and never get a slot in _book_mod_slots. Now that the
+            -- authoritative prefetchBooks() data has landed above,
+            -- check for any such module and force a full rebuild so
+            -- build() runs again with complete data — the in-place
+            -- updateStats path below only touches slots that already
+            -- exist. Cheap to check unconditionally: just an
+            -- iteration over the small set of registered modules.
+            do
+                local missing_slot = false
+                for _, mod in ipairs(Registry.list()) do
+                    if mod.is_book_mod
+                       and not self._book_mod_slots[mod.id]
+                       and Registry.isEnabled(mod, self._pfx) then
+                        missing_slot = true
+                        break
+                    end
+                end
+                if missing_slot then
+                    self:_updatePage(false)
+                    UIManager:setDirty(self, "ui")
+                end
+            end
+
+            -- 2. Get new global stats
+            local SP = _getStatsProvider()
+            if SP then
+                local new_stats = SP.get(self._db_conn, self._ctx_cache.year_str, self._ctx_cache._needs_books)
+                if new_stats then self._ctx_cache.stats = new_stats end
+                if self._ctx_cache._needs_status and SP.getStatusCounts then
+                    self._ctx_cache.status_counts = SP.getStatusCounts()
+                end
+            end
+
+            local MC = package.loaded["modules/module_currently"]
+            if MC and MC.fetchBookStatsForCtx and self._ctx_cache.current_fp then
+                local pe = self._ctx_cache.prefetched and self._ctx_cache.prefetched[self._ctx_cache.current_fp]
+                local md5 = pe and pe.partial_md5_checksum
+                if md5 then
+                    self._ctx_cache.currently_book_stats = {
+                        fp = self._ctx_cache.current_fp,
+                        stats = MC.fetchBookStatsForCtx(md5, self._db_conn, true)
+                    }
+                end
+            end
+
+            local MCD = package.loaded["modules/module_coverdeck"]
+            if MCD and MCD.fetchBookStatsForCtx
+                    and (self._ctx_cache.current_fp or self._ctx_cache.recent_fps) then
+                local center_fp = _coverdeckDefaultCenterFp(
+                    self._ctx_cache.current_fp, self._ctx_cache.recent_fps)
+                local pe = center_fp and self._ctx_cache.prefetched and self._ctx_cache.prefetched[center_fp]
+                local md5 = pe and pe.partial_md5_checksum
+                if md5 then
+                    self._ctx_cache.coverdeck_center_stats = {
+                        fp = center_fp,
+                        stats = MCD.fetchBookStatsForCtx(md5, self._db_conn, true)
+                    }
+                end
+            end
+
+            -- 3. Update Book Modules
+            -- Try updateStats in-place first (O(1), zero alloc).
+            -- Only rebuilds the full widget if the module doesn't have updateStats
+            -- (fallback for modules that don't support in-place update).
+            if not pending_stats_only then
+                for id, slot in pairs(self._book_mod_slots or {}) do
+                    local updated_in_place = false
+                    if type(slot.mod.updateStats) == "function" then
+                        local ok, result = pcall(slot.mod.updateStats, slot.content, self._ctx_cache)
+                        updated_in_place = ok and result
+                    end
+
+                    if updated_in_place then
+                        self:_setSlotDirty(id, slot)
+                        -- An in-place update can shift npages without the
+                        -- current page's own slice changing (see
+                        -- GridRenderer.updateStats), so the header follows.
+                        self:_syncBookModLabel(id)
+                    else
+                        -- Full rebuild (module has no updateStats, or it
+                        -- returned false because the book's identity changed).
+                        -- _refreshBookModSlot is the single path that also
+                        -- keeps the cover-poll slot on the mounted widget,
+                        -- flushes newly queued covers and syncs the header.
+                        self:_refreshBookModSlot(id)
+                    end
+                end
+            end
+
+            -- 4. Update Stats Modules
+            -- Each slot uses setDirty targeted at its own dimen,
+            -- avoiding a global repaint of the entire screen.
+            -- updateStats() returns false when _changed flags show none of the
+            -- module's fields were re-fetched — skip setDirty entirely in that case.
+            for id, slot in pairs(self._stats_mod_slots or {}) do
+                if slot.mod.updateStats(slot.content, self._ctx_cache) then
+                    self:_setSlotDirty(id, slot)
+                end
+            end
+        end
+    end)
+end
+
+-- ---------------------------------------------------------------------------
 -- _refresh — debounced rebuild. Page turns call _updatePage directly.
 -- ---------------------------------------------------------------------------
 function ScreenWidget:_refresh(keep_cache, books_only, stats_only)
@@ -2694,184 +2895,7 @@ function ScreenWidget:_refresh(keep_cache, books_only, stats_only)
         self:_updatePage(true)
         UIManager:setDirty(self, "ui")
 
-        if defer_async then
-            if self._refresh_scheduled then
-                -- A deferred refresh is already queued and will run once,
-                -- acting on self._refresh_pending_stats_only. Two call sites
-                -- can race for this same slot on device resume
-                -- (SimpleUIPlugin:onResume wants the full refresh;
-                -- ScreenWidget:onResume wants stats_only) — upgrading the
-                -- pending flag in place, only ever from true to false, means
-                -- the callback always does at least as much work as the
-                -- strongest caller seen before it fires, regardless of
-                -- arrival order.
-                if not stats_only then
-                    self._refresh_pending_stats_only = false
-                end
-                return
-            end
-            self._refresh_scheduled = true
-            self._refresh_pending_stats_only = stats_only
-            local token = {}
-            self._pending_refresh_token = token
-
-            UIManager:scheduleIn(0.05, function()
-                if self._pending_refresh_token ~= token then return end
-                if _sget(self._id, "_instance") ~= self then return end
-                self._refresh_scheduled = false
-                -- Read live rather than the closed-over parameter: a later
-                -- caller may have upgraded this pending refresh (see above).
-                local stats_only = self._refresh_pending_stats_only
-                local books_fresh = self._books_fresh
-                self._books_fresh = nil
-
-                if not self._db_conn then
-                    self._db_conn = Config.openStatsDB()
-                end
-
-                if self._ctx_cache then
-                    -- 1. Get new book metadata (prefetchBooks). Skipped when
-                    -- onShow() already resolved it for this open.
-                    if not stats_only and not (books_fresh and self._cached_books_state) then
-                        local new_bs = self:_prefetchBooks()
-                        if new_bs then
-                            self._cached_books_state = new_bs
-                            self._ctx_cache.prefetched = new_bs.prefetched_data
-                            self._ctx_cache.current_fp = new_bs.current_fp
-                            self._ctx_cache.recent_fps = new_bs.recent_fps
-
-                            -- self._ctx_cache is reused (mutated), not
-                            -- rebuilt, on this debounced path. GridRenderer.
-                            -- build() memoizes each row module's file list
-                            -- into ctx[cache_key] on first build() and never
-                            -- re-reads getFileList() again for that same ctx
-                            -- object, so any row module without its own
-                            -- updateStats (Recent Books, New Books, TBR,
-                            -- Collections, ...) needs its row cache cleared
-                            -- here before the fallback mod.build() call in
-                            -- step 3 below, or it would keep serving the file
-                            -- list from before this prefetchBooks() pass.
-                            -- Currently Reading is unaffected: module_currently
-                            -- reads ctx.current_fp directly with no
-                            -- intermediate cache. Same treatment as
-                            -- _refreshImmediate's keep_cache=true path.
-                            -- clearRowCaches() also invalidates the
-                            -- section-label header cache (page/npages
-                            -- indicator + chevrons) for the same paginated
-                            -- rows — see its doc comment in sui_book_grid.lua.
-                            local ok_gr, GR = pcall(require, "engines/sui_book_grid")
-                            if ok_gr and GR then GR.clearRowCaches(self._ctx_cache) end
-                        end
-                    end
-
-                    -- onShow() seeds _cached_books_state with a best-effort
-                    -- stub via SH.getStaleBooks() so the first paint can
-                    -- already show real covers/titles. That stub can be
-                    -- incomplete or missing (e.g. the very first run ever),
-                    -- so an is_book_mod module (currently, coverdeck, recent)
-                    -- can return nil/empty from build() on that first pass
-                    -- and never get a slot in _book_mod_slots. Now that the
-                    -- authoritative prefetchBooks() data has landed above,
-                    -- check for any such module and force a full rebuild so
-                    -- build() runs again with complete data — the in-place
-                    -- updateStats path below only touches slots that already
-                    -- exist. Cheap to check unconditionally: just an
-                    -- iteration over the small set of registered modules.
-                    do
-                        local missing_slot = false
-                        for _, mod in ipairs(Registry.list()) do
-                            if mod.is_book_mod
-                               and not self._book_mod_slots[mod.id]
-                               and Registry.isEnabled(mod, self._pfx) then
-                                missing_slot = true
-                                break
-                            end
-                        end
-                        if missing_slot then
-                            self:_updatePage(false)
-                            UIManager:setDirty(self, "ui")
-                        end
-                    end
-
-                    -- 2. Get new global stats
-                    local SP = _getStatsProvider()
-                    if SP then
-                        local new_stats = SP.get(self._db_conn, self._ctx_cache.year_str, self._ctx_cache._needs_books)
-                        if new_stats then self._ctx_cache.stats = new_stats end
-                        if self._ctx_cache._needs_status and SP.getStatusCounts then
-                            self._ctx_cache.status_counts = SP.getStatusCounts()
-                        end
-                    end
-
-                    local MC = package.loaded["modules/module_currently"]
-                    if MC and MC.fetchBookStatsForCtx and self._ctx_cache.current_fp then
-                        local pe = self._ctx_cache.prefetched and self._ctx_cache.prefetched[self._ctx_cache.current_fp]
-                        local md5 = pe and pe.partial_md5_checksum
-                        if md5 then
-                            self._ctx_cache.currently_book_stats = {
-                                fp = self._ctx_cache.current_fp,
-                                stats = MC.fetchBookStatsForCtx(md5, self._db_conn, true)
-                            }
-                        end
-                    end
-
-                    local MCD = package.loaded["modules/module_coverdeck"]
-                    if MCD and MCD.fetchBookStatsForCtx
-                            and (self._ctx_cache.current_fp or self._ctx_cache.recent_fps) then
-                        local center_fp = _coverdeckDefaultCenterFp(
-                            self._ctx_cache.current_fp, self._ctx_cache.recent_fps)
-                        local pe = center_fp and self._ctx_cache.prefetched and self._ctx_cache.prefetched[center_fp]
-                        local md5 = pe and pe.partial_md5_checksum
-                        if md5 then
-                            self._ctx_cache.coverdeck_center_stats = {
-                                fp = center_fp,
-                                stats = MCD.fetchBookStatsForCtx(md5, self._db_conn, true)
-                            }
-                        end
-                    end
-
-                    -- 3. Update Book Modules
-                    -- Try updateStats in-place first (O(1), zero alloc).
-                    -- Only rebuilds the full widget if the module doesn't have updateStats
-                    -- (fallback for modules that don't support in-place update).
-                    if not stats_only then
-                        for id, slot in pairs(self._book_mod_slots or {}) do
-                            local updated_in_place = false
-                            if type(slot.mod.updateStats) == "function" then
-                                local ok, result = pcall(slot.mod.updateStats, slot.content, self._ctx_cache)
-                                updated_in_place = ok and result
-                            end
-
-                            if updated_in_place then
-                                self:_setSlotDirty(id, slot)
-                                -- An in-place update can shift npages without the
-                                -- current page's own slice changing (see
-                                -- GridRenderer.updateStats), so the header follows.
-                                self:_syncBookModLabel(id)
-                            else
-                                -- Full rebuild (module has no updateStats, or it
-                                -- returned false because the book's identity changed).
-                                -- _refreshBookModSlot is the single path that also
-                                -- keeps the cover-poll slot on the mounted widget,
-                                -- flushes newly queued covers and syncs the header.
-                                self:_refreshBookModSlot(id)
-                            end
-                        end
-                    end
-
-                    -- 4. Update Stats Modules
-                    -- Each slot uses setDirty targeted at its own dimen,
-                    -- avoiding a global repaint of the entire screen.
-                    -- updateStats() returns false when _changed flags show none of the
-                    -- module's fields were re-fetched — skip setDirty entirely in that case.
-                    for id, slot in pairs(self._stats_mod_slots or {}) do
-                        if slot.mod.updateStats(slot.content, self._ctx_cache) then
-                            self:_setSlotDirty(id, slot)
-                        end
-                    end
-                end
-            end)
-        end
+        if defer_async then self:_scheduleDataRefresh(stats_only) end
         return
     end
 
@@ -3341,7 +3365,7 @@ function ScreenWidget:onShow()
         
         if need_async and not is_app_cold_boot then
             self._defer_stats = false
-            self:_refresh(false)
+            self:_scheduleDataRefresh(false)
         end
     end
 end
@@ -3452,11 +3476,12 @@ function ScreenWidget:onResume()
     -- reflected immediately on wakeup.  We use invalidateTimeSeries rather than
     -- invalidate so that the expensive sidecar-scan (books_year/books_total) is
     -- preserved when the book's completion status has not changed — matching the
-    -- same optimisation applied in onCloseDocument.
+    -- same optimisation applied in onCloseDocument. The cache is kept as is
+    -- when the statistics database did not change since it was built.
     -- stats_only=true keeps _cached_books_state intact (no sidecar I/O needed).
     local SP = package.loaded["modules/module_stats_provider"]
-    if SP and SP.invalidateTimeSeries then
-        SP.invalidateTimeSeries()
+    if SP and SP.invalidateTimeSeriesIfDbChanged then
+        SP.invalidateTimeSeriesIfDbChanged()
     elseif SP and SP.invalidate then
         SP.invalidate()
     end

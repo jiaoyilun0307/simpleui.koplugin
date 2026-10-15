@@ -774,7 +774,7 @@ end
 -- KOReader's TextWidget silently ignores the `fgcolor` parameter on many
 -- device builds (it was not wired through to RenderText in older versions).
 -- TextBoxWidget does honour fgcolor, but TextWidget is preferred for single-
--- line text because it auto-sizes and supports truncation / max_width.
+-- line text because it auto-sizes and truncates at max_width.
 --
 -- This helper:
 --   1. Creates an inner TextWidget with all the caller-supplied params.
@@ -785,13 +785,14 @@ end
 --      target framebuffer using colorblitFromRGB32, which correctly applies
 --      arbitrary Blitbuffer colours on all KOReader builds.
 --
--- Drop-in for TextWidget:new when you need fgcolor to work:
+-- Drop-in for TextWidget:new when you need fgcolor to work. Accepts the same
+-- fields as TextWidget; fields TextWidget does not define are ignored.
 --   local w = UI.makeColoredText{
---       text    = "hello",
---       face    = Font:getFace("cfont", SUIStyle.FS_CAPTION),
---       bold    = true,
---       fgcolor = SUIStyle.COLOR.text_primary,  -- any colour
---       width   = 200,                     -- optional, as with TextWidget
+--       text      = "hello",
+--       face      = Font:getFace("cfont", SUIStyle.FS_CAPTION),
+--       bold      = true,
+--       fgcolor   = SUIStyle.COLOR.text_primary,  -- any colour
+--       max_width = 200,  -- optional; longer text is cut with an ellipsis
 --   }
 -- ---------------------------------------------------------------------------
 -- Shared lazy loader for makeColoredText and makeAlphaTextBox.

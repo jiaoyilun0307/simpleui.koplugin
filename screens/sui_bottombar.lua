@@ -6,7 +6,7 @@
 -- Each accessor caches its result in a module-local upvalue; subsequent calls
 -- are a single nil-check + table field read, with zero I/O.
 local _FrameContainer, _CenterContainer, _HorizontalGroup, _VerticalGroup
-local _VerticalSpan, _LineWidget, _OverlapGroup, _TextWidget, _ImageWidget
+local _VerticalSpan, _LineWidget, _OverlapGroup, _ImageWidget
 local _Geom
 local function FrameContainer()  _FrameContainer  = _FrameContainer  or require("ui/widget/container/framecontainer");  return _FrameContainer  end
 local function CenterContainer() _CenterContainer = _CenterContainer or require("ui/widget/container/centercontainer"); return _CenterContainer end
@@ -15,7 +15,6 @@ local function VerticalGroup()   _VerticalGroup   = _VerticalGroup   or require(
 local function VerticalSpan()    _VerticalSpan    = _VerticalSpan    or require("ui/widget/verticalspan");              return _VerticalSpan    end
 local function LineWidget()      _LineWidget      = _LineWidget      or require("ui/widget/linewidget");                return _LineWidget      end
 local function OverlapGroup()    _OverlapGroup    = _OverlapGroup    or require("ui/widget/overlapgroup");              return _OverlapGroup    end
-local function TextWidget()      _TextWidget      = _TextWidget      or require("ui/widget/textwidget");                return _TextWidget      end
 local function ImageWidget()     _ImageWidget     = _ImageWidget     or require("ui/widget/imagewidget");               return _ImageWidget     end
 local function Geom()            _Geom            = _Geom            or require("ui/geometry");                         return _Geom            end
 local Blitbuffer      = require("ffi/blitbuffer")
@@ -577,11 +576,12 @@ function M.buildNavpagerArrowCell(is_prev, enabled, tab_w, mode)
             vg[#vg + 1] = _vspan_icon_txt
         end
         local lbl_face, lbl_bold = M.LABEL_FONT(false)
-        tw = TextWidget():new{
-            text    = label,
-            face    = lbl_face,
-            bold    = lbl_bold,
-            fgcolor = color,
+        tw = _QARenderer().buildLabel{
+            text      = label,
+            face      = lbl_face,
+            bold      = lbl_bold,
+            fgcolor   = color,
+            max_width = _QARenderer().tabLabelMaxWidth(tab_w),
         }
         vg[#vg + 1] = tw
     end

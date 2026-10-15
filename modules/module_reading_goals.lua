@@ -48,7 +48,7 @@ local _BASE_ROW_H   = Screen:scaleBySize(16)
 local _BASE_SUB_H   = Screen:scaleBySize(16)
 local _BASE_SUB_GAP = Screen:scaleBySize(2)
 local _BASE_ROW_GAP = Screen:scaleBySize(18)
-local _BASE_BAR_H   = Screen:scaleBySize(8)
+local _BASE_BAR_H   = SUIStyle.PROGRESS_BAR_H
 local _BASE_LBL_W   = Screen:scaleBySize(44)
 local _BASE_COL_GAP = Screen:scaleBySize(8)
 local _BASE_BOT_PAD = Screen:scaleBySize(18)
@@ -1032,7 +1032,7 @@ function M.build(w, ctx)
         local err_h = require("device").screen:scaleBySize(60)
         local err_args = {
             text      = _("Error in Reading Goals: check crash.log"),
-            face      = Font:getFace(SUIStyle.FACE_REGULAR, 15),
+            face      = Font:getFace(SUIStyle.FACE_REGULAR, SUIStyle.FS_DETAIL),
             width     = w - PAD * 2,
             height    = err_h,
             height_adjust = true,

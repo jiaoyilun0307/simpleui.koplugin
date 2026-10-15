@@ -35,6 +35,7 @@ local SP = {}
 
 local _cache     = nil   -- the stats table
 local _cache_day = nil   -- "YYYY-MM-DD" when the cache was built
+local _db_stamp  = nil   -- statistics DB change token taken before _cache's queries ran
 
 -- Cross-process persistence: _cache lives only for the current KOReader
 -- process, so a genuine cold start would otherwise show a "no data yet"
@@ -1007,9 +1008,14 @@ function SP.get(db_conn, year_str, needs_books)
     }
 
     -- ── DB queries ────────────────────────────────────────────────────────
+    -- Taken before the queries: a write landing meanwhile changes the stamp
+    -- compared by SP.invalidateTimeSeriesIfDbChanged(), never the reverse.
+    local db_stamp = Config.getStatsDbStamp()
+    local queries_ok = false
     if db_conn then
         local ts, ts_err = fetchTimeSeries(db_conn, window_since, year_start,
                                            today_str, week_date, month_date, rolling7_date)
+        queries_ok = not ts_err
         result.today_secs  = ts.today_secs
         result.today_pages = ts.today_pages
         result.week_secs   = ts.week_secs
@@ -1069,6 +1075,7 @@ function SP.get(db_conn, year_str, needs_books)
     result._has_books = true
     _cache     = result
     _cache_day = today_str
+    _db_stamp  = queries_ok and db_stamp or nil
     _persistStaleStats(result)
     return result
 end
@@ -1101,6 +1108,19 @@ function SP.invalidateTimeSeries()
     if not _cache then return end
     _streak_cache_valid = _cache_day == os.date("%Y-%m-%d") and _cache.today_secs > 0
     _cache_day          = nil
+end
+
+-- ---------------------------------------------------------------------------
+-- SP.invalidateTimeSeriesIfDbChanged() — wake-up variant of
+-- SP.invalidateTimeSeries(): keeps the cache while statistics.sqlite3 is
+-- unchanged since the queries that built it, so a wake with no reading in
+-- between costs no DB work. Any write to the database falls through to the
+-- regular invalidation.
+-- ---------------------------------------------------------------------------
+function SP.invalidateTimeSeriesIfDbChanged()
+    local stamp = Config.getStatsDbStamp()
+    if stamp and stamp == _db_stamp then return end
+    SP.invalidateTimeSeries()
 end
 
 -- ---------------------------------------------------------------------------

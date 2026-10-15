@@ -206,8 +206,6 @@ local function buildQAWidget(w, action_ids, show_labels, on_tap_fn, d, shape, bg
             lbl_fs         = d.lbl_fs,
             lbl_face       = d.lbl_face,
             lbl_bold       = d.lbl_bold,
-            lbl_max_width  = d.frame_sz,
-            lbl_truncate   = true,
             on_tap_fn      = on_tap_fn,
             tap_event_name = "TapQA",
         })

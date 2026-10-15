@@ -5253,12 +5253,11 @@ function M.installAll(plugin)
     M.patchFileDialogBookTitle(plugin)
     M.patchFontGetFace(plugin)
     M.patchIconNightColors(plugin)
-    -- Install the FM + Reader tab icon patches so system icon overrides
-    -- survive menu rebuilds.
+    -- Register the tab icon step in the shared menu hooks so system icon
+    -- overrides survive menu rebuilds (FM and Reader).
     local ok_ss, SUIStyle = pcall(require, "features/sui_style")
     if ok_ss and SUIStyle then
-        pcall(SUIStyle.installTabIconPatch, plugin)
-        pcall(SUIStyle.installReaderTabIconPatch, plugin)
+        pcall(SUIStyle.installTabIconPatch)
     end
     -- Install button-bounds overlay when the debug setting is on at startup.
     if SUISettings:isTrue("simpleui_debug_button_bounds") then
@@ -5481,18 +5480,9 @@ function M.teardownAll(plugin)
         FileManagerMenu._simpleui_startwith_orig    = nil
         FileManagerMenu._simpleui_startwith_patched = nil
     end
-    -- Remove the FM tab icon patch installed by SUIStyle.
-    if plugin._sysicon_fmmenu_patched then
-        local ok_ss, SUIStyle = pcall(require, "features/sui_style")
-        if ok_ss and SUIStyle then pcall(SUIStyle.removeTabIconPatch) end
-        plugin._sysicon_fmmenu_patched = nil
-    end
-    -- Remove the Reader tab icon patch installed by SUIStyle.
-    if plugin._sysicon_rdmenu_patched then
-        local ok_ss, SUIStyle = pcall(require, "features/sui_style")
-        if ok_ss and SUIStyle then pcall(SUIStyle.removeReaderTabIconPatch) end
-        plugin._sysicon_rdmenu_patched = nil
-    end
+    -- Restore the FM and Reader menu methods and drop every registered step.
+    local MenuHooks = package.loaded["infra/sui_menu_hooks"]
+    if MenuHooks then MenuHooks.uninstall() end
 
     local Dispatcher = package.loaded["dispatcher"]
     if Dispatcher and Dispatcher._simpleui_execute_patched then

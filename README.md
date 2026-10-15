@@ -122,7 +122,7 @@ A slim status bar always visible at the top of the screen:
 An extra panel tab injected into KOReader's native touch menu, giving one-tap access to your favourite Quick Actions plus frontlight and warmth sliders without leaving your current screen:
 
 - Configure which Quick Actions appear, and reorder them
-- Optional **frontlight** and **warmth** sliders
+- Optional **frontlight** and **warmth** sliders in the **Minimal** or **Classic** style, aligned with the button row, also available in the reader's Book layout
 - **3 button types**: Round, Rounded Square, Bare, with adjustable label size and background
 
 ### Custom Title Bar

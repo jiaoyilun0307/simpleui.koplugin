@@ -1903,6 +1903,176 @@ function M.applyVisibilityToggle(item, opts)
     return item
 end
 
+-- A fixed set of items the user can hide and reorder. Returns a list with:
+--   list.rows()       menu rows: an entry opening the arrange screen (an eye
+--                     toggle per item in the SUI menu, a reorder-only
+--                     SortWidget in the classic menu) plus, in the classic
+--                     menu, one checklist row per item for visibility.
+--   list.arrange(ctx) pushes the arrange screen onto a SUI settings window.
+-- Options:
+--   opts.ids           default order of every item id
+--   opts.order_key     setting key holding the saved order
+--   opts.label         function(id) -> display text
+--   opts.is_visible    function(id) -> boolean
+--   opts.set_visible   function(id, visible)
+--   opts.refresh       function run after every change
+--   opts.ctx           menu context (is_sui, UIManager, SortWidget, translate)
+--   opts.title         title of the arrange screen (default "Items")
+--   opts.text          label of the classic row (default "Arrange")
+--   opts.toggle_label  function(id) -> classic checklist text (default: label)
+--   opts.empty_text    text shown when no item is visible
+--   opts.enabled_func  function() -> boolean (default: always enabled)
+--   opts.nested        { [id] = list }: tapping that item on the arrange
+--                      screen opens the arrange screen of another list
+--   opts.is_available  function(id) -> boolean: items reporting false are left
+--                      out of the menus and keep their slot in the saved order
+--   opts.anchors       { [id] = true }: fixed items that are always shown. They
+--                      can be moved but not hidden, and appear as a divider
+function M.makeOrderedItems(opts)
+    local ctx        = opts.ctx or {}
+    local _lc        = ctx._ or _
+    local title      = opts.title or _lc("Items")
+    local empty_text = opts.empty_text or _lc("No items selected.")
+    local enabled    = opts.enabled_func or function() return true end
+    local nested     = opts.nested or {}
+    local anchors    = opts.anchors or {}
+    local available  = opts.is_available or function() return true end
+
+    local function fullOrder()
+        return M.mergeOrder(SUISettings:readSetting(opts.order_key), opts.ids)
+    end
+
+    local function order()
+        local out = {}
+        for _i, id in ipairs(fullOrder()) do
+            if available(id) then out[#out + 1] = id end
+        end
+        return out
+    end
+
+    local function visibleIds()
+        local out = {}
+        for _i, id in ipairs(order()) do
+            if not anchors[id] and opts.is_visible(id) then out[#out + 1] = id end
+        end
+        return out
+    end
+
+    -- Sort entries in saved order; `decorate(entry, id)` may extend each one.
+    local function sortItems(decorate)
+        local items = {}
+        for _i, id in ipairs(order()) do
+            local entry = { text = opts.label(id), orig_item = id }
+            if anchors[id] then
+                entry.text       = entry.text:upper()
+                entry.is_divider = true
+            elseif decorate then
+                entry = decorate(entry, id)
+            end
+            items[#items + 1] = entry
+        end
+        return items
+    end
+
+    -- Saves the arranged available items; the others keep their slot.
+    local function saveOrder(items)
+        local arranged, n, ids = {}, 0, {}
+        for _i, it in ipairs(items) do arranged[#arranged + 1] = it.orig_item end
+        for _i, id in ipairs(fullOrder()) do
+            if available(id) then
+                n = n + 1
+                ids[#ids + 1] = arranged[n]
+            else
+                ids[#ids + 1] = id
+            end
+        end
+        SUISettings:saveSetting(opts.order_key, ids)
+        opts.refresh()
+    end
+
+    local list = {}
+
+    function list.arrange(ctx2)
+        ctx2.push("arrange", {
+            title      = title,
+            items      = sortItems(function(entry, id)
+                M.applyVisibilityToggle(entry, {
+                    is_visible  = function() return opts.is_visible(id) end,
+                    set_visible = function(visible) opts.set_visible(id, visible) end,
+                    on_change   = opts.refresh,
+                    repaint     = ctx2.repaint,
+                })
+                local child = nested[id]
+                if child then
+                    entry.show_chevron = true
+                    entry.on_tap       = function() child.arrange(ctx2) end
+                end
+                return entry
+            end),
+            empty_text = empty_text,
+            on_change  = saveOrder,
+        })
+    end
+
+    function list.rows()
+        local row = {
+            text           = opts.text or _lc("Arrange"),
+            keep_menu_open = true,
+            enabled_func   = enabled,
+            callback       = function()
+                local items = sortItems()
+                if #items < 2 then return end
+                local SortWidget = ctx.SortWidget or require("ui/widget/sortwidget")
+                local uim        = ctx.UIManager or require("ui/uimanager")
+                uim:show(SortWidget:new{
+                    title             = title,
+                    item_table        = items,
+                    covers_fullscreen = true,
+                    callback          = function() saveOrder(items) end,
+                })
+            end,
+            sui_build = ctx.is_sui and function(ctx2, _item)
+                local SUIWindow = require("engines/sui_window")
+                return SUIWindow.ListRow{
+                    title        = title,
+                    subtitle     = function()
+                        local names = {}
+                        for _i, id in ipairs(visibleIds()) do names[#names + 1] = opts.label(id) end
+                        return #names > 0 and table.concat(names, "  ·  ") or empty_text
+                    end,
+                    inner_w      = ctx2.inner_w,
+                    item_count   = function() return #visibleIds() end,
+                    enabled      = enabled(),
+                    show_chevron = true,
+                    on_tap       = function() list.arrange(ctx2) end,
+                }
+            end or nil,
+        }
+
+        local rows = { row }
+        if not ctx.is_sui then
+            local toggle_label = opts.toggle_label or opts.label
+            for _i, id in ipairs(opts.ids) do
+                if available(id) and not anchors[id] then
+                    rows[#rows + 1] = {
+                        text           = toggle_label(id),
+                        checked_func   = function() return opts.is_visible(id) end,
+                        enabled_func   = enabled,
+                        keep_menu_open = true,
+                        callback       = function()
+                            opts.set_visible(id, not opts.is_visible(id))
+                            opts.refresh()
+                        end,
+                    }
+                end
+            end
+        end
+        return rows
+    end
+
+    return list
+end
+
 -- ===========================================================================
 -- 6. Cover Management & Caching
 -- ===========================================================================
@@ -2425,6 +2595,12 @@ function M.getStretchedCoverBB(filepath, w, h)
     return SUICoverCache:put(filepath, _stretchBBToSize(raw_bb, w, h))
 end
 
+-- Revision of the stretched cover cached for `filepath`: stable while the
+-- cover is only enlarged, different once another cover replaces it.
+function M.getCoverRevision(filepath)
+    return SUICoverCache:revision(filepath)
+end
+
 function M.getCroppedCoverBB(filepath, w, h, align)
     if M.isCoverMissing(filepath) then return nil end
 
@@ -2595,6 +2771,23 @@ function M.checkpointStatsDB()
         conn:exec("PRAGMA wal_checkpoint(TRUNCATE);")
         conn:close()
     end)
+end
+
+-- Cheap change token for the statistics database: size and mtime of the main
+-- file and its WAL. Returns nil when the database cannot be inspected or was
+-- written within the last two seconds — mtime has one-second resolution, so
+-- an unchanged token that fresh could still hide a later write.
+function M.getStatsDbStamp()
+    if not _ensureSqlite() then return nil end
+    local path = M.getStatsDbPath()
+    local main = _lfs_mod.attributes(path)
+    if not main then return nil end
+    local wal      = _lfs_mod.attributes(path .. "-wal")
+    local newest   = math.max(main.modification, wal and wal.modification or 0)
+    if os.time() - newest < 2 then return nil end
+    return string.format("%d:%d|%d:%d",
+        main.size, main.modification,
+        wal and wal.size or 0, wal and wal.modification or 0)
 end
 
 function M.beginStatsSyncGuard()
@@ -2859,6 +3052,7 @@ function M.applyFirstRunDefaults()
     def(PFX .. "currently_show_title",         true)
     def(PFX .. "currently_show_author",        true)
     def(PFX .. "currently_show_progress",      true)
+    def(PFX .. "currently_show_stats",         true)
     def(PFX .. "currently_show_percent",       false)
     def(PFX .. "currently_show_book_days",     true)
     def(PFX .. "currently_show_book_time",     true)
@@ -2874,7 +3068,7 @@ function M.applyFirstRunDefaults()
     def(PFX .. "coverdeck_show_book_days",      false)
     def(PFX .. "coverdeck_show_book_time",      false)
     def(PFX .. "coverdeck_show_book_remaining", false)
-    def(PFX .. "coverdeck_show_stats",          true)  -- was previously undefaulted; relied silently on nilOrTrue's true fallback
+    def(PFX .. "coverdeck_show_stats",          true)
     def(PFX .. "recent_show_finished",          true)
 
     -- Updater
@@ -2921,6 +3115,10 @@ function M.applyFirstRunDefaults()
     def("simpleui_qs_bar_shape",            "round")
     def("simpleui_qs_bar_bg",              "flat")
     def("simpleui_qs_bar_settings_on_hold", true)
+    def("simpleui_qs_bar_open_reader",      true)
+    def("simpleui_qs_bar_open_fm",          true)
+    def("simpleui_qs_bar_reader_layout",    "book")
+    def("simpleui_qs_bar_slider_style",     "bar")
     def("simpleui_qs_bar_slots",            { "wifi_toggle", "bookmark_browser", "frontlight", "night_mode", "power", "sui_settings" })
 
     SUISettings:flush()
