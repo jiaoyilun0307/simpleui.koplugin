@@ -521,13 +521,20 @@ end
 -- icons alike, which then render at the same visual size.
 local TABS_SEARCH_ICON_SCALE = 1.37
 
+-- Face of the tab labels, scaled by the title-bar size. `base_size` is a
+-- SUIStyle font size (default FS_BODY). Also used by other tab bars so they
+-- scale with the title-bar tabs.
+function M.getTabsFace(base_size)
+    local S = SUIStyle()
+    return require("ui/font"):getFace(S.FACE_REGULAR, math.floor((base_size or S.FS_BODY) * M.getSizeScale()))
+end
+
 -- Metrics of the compact tabs-style bar, scaled by the title-bar size. The
 -- icon size equals the text height and is also the menu icon size of the
 -- classic style.
 local function _tabsMetrics()
-    local S     = SUIStyle()
     local scale = M.getSizeScale()
-    local face  = require("ui/font"):getFace(S.FACE_REGULAR, math.floor(S.FS_BODY * scale))
+    local face  = M.getTabsFace()
     local probe = require("ui/widget/textwidget"):new{ text = "A", face = face, padding = 0 }
     local text_h = probe:getSize().h
     probe:free()
@@ -823,18 +830,24 @@ local function _installBackController(fm_self, back_icon, shown_x, on_state)
     fc.onFolderUp = function(fc_self, ...)
         local BM = _BrowseMeta()
         if BM then
-            -- Arrived from the book dialog ("More by X"): one back press from
-            -- that author's list returns to the real folder, scrolled to the
-            -- book, not to the Authors root.
-            local origin = fc_self._sui_author_dialog_origin
-            if origin and origin.path then
+            -- Arrived at a leaf from elsewhere (the book dialog, or a screen):
+            -- one back press from that leaf returns to where it started, not
+            -- to the root of the dimension.
+            local origin = fc_self._sui_leaf_origin
+            if origin then
                 local ok_pl, level = pcall(BM.getPathLevel, fc_self.path or "")
                 if ok_pl and level == "file_list" and BM.getPathDepth(fc_self.path) == 1 then
-                    fc_self._sui_author_dialog_origin = nil
-                    BM.exitToNormal(fc_self, fm_self)
-                    fc_self:changeToPath(origin.path, origin.file)
-                    refreshState(fc_self, 1)
-                    return true
+                    fc_self._sui_leaf_origin = nil
+                    if fc_self.path == origin.leaf then
+                        BM.exitToNormal(fc_self, fm_self)
+                        if origin.return_fn then
+                            origin.return_fn()
+                        else
+                            fc_self:changeToPath(origin.path, origin.file)
+                        end
+                        refreshState(fc_self, 1)
+                        return true
+                    end
                 end
             end
             -- At the dim_list level of a virtual tree, exit to the filesystem.

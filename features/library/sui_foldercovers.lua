@@ -36,6 +36,8 @@ local UIManager       = require("ui/uimanager")
 local CoverFinder    = require("features/library/sui_cover_finder")
 local Finished       = require("features/library/sui_finished_books")
 local CoverWidgets   = require("features/library/sui_cover_widgets")
+local LabelOptions   = require("features/library/sui_label_options")
+local GroupCell      = require("engines/sui_group_cell")
 local RasterCache    = require("infra/sui_raster_cache")
 local CoverOverrides = require("features/library/sui_cover_overrides")
 local GroupActions   = require("features/library/sui_group_actions")
@@ -126,15 +128,15 @@ function M.setLabelOpacity(v) Backdrop.saveBackdropStrength(SK.label_opacity, v)
 
 -- "floating" (default) = inset box clear of the cover edges; "band" = strap
 -- across the full cover width.
-function M.getLabelLayout()   return SUISettings:readSetting(SK.label_layout)   or "floating" end
+function M.getLabelLayout()   return LabelOptions.normalize("layout", SUISettings:readSetting(SK.label_layout)) end
 function M.setLabelLayout(v)  SUISettings:saveSetting(SK.label_layout, v)                     end
 
 -- "bottom" (default) | "center" | "top"
-function M.getLabelPosition()  return SUISettings:readSetting(SK.label_position) or "bottom" end
+function M.getLabelPosition()  return LabelOptions.normalize("position", SUISettings:readSetting(SK.label_position)) end
 function M.setLabelPosition(v) SUISettings:saveSetting(SK.label_position, v)                 end
 
 -- "light" (default, white background / black text) | "dark" (black background / white text)
-function M.getLabelColor()  return SUISettings:readSetting(SK.label_color) or "light" end
+function M.getLabelColor()  return LabelOptions.normalize("color", SUISettings:readSetting(SK.label_color)) end
 function M.setLabelColor(v) SUISettings:saveSetting(SK.label_color, v)                end
 
 -- "top" (default) | "bottom"
@@ -263,26 +265,11 @@ end
 function M.getFadeAmount() return M.getFadeAmountPct() / 100 end
 
 -- Folder label text scale: integer %, clamped to [50, 200], default 100.
-local _FC_SCALE_MIN  = 50
-local _FC_SCALE_MAX  = 200
-local _FC_SCALE_DEF  = 100
-local _FC_SCALE_STEP = 10
-M.FC_LABEL_SCALE_MIN  = _FC_SCALE_MIN
-M.FC_LABEL_SCALE_MAX  = _FC_SCALE_MAX
-M.FC_LABEL_SCALE_DEF  = _FC_SCALE_DEF
-M.FC_LABEL_SCALE_STEP = _FC_SCALE_STEP
-
-local function _clampFCScale(n)
-    return math.max(_FC_SCALE_MIN, math.min(_FC_SCALE_MAX, math.floor(n)))
-end
-
 function M.getLabelScalePct()
-    local n = tonumber(SUISettings:readSetting(SK.label_scale))
-    if not n then return _FC_SCALE_DEF end
-    return _clampFCScale(n)
+    return LabelOptions.normalize("scale_pct", SUISettings:readSetting(SK.label_scale))
 end
-function M.getLabelScale()    return M.getLabelScalePct() / 100         end
-function M.setLabelScale(pct) SUISettings:saveSetting(SK.label_scale, _clampFCScale(pct)) end
+function M.getLabelScale()    return M.getLabelScalePct() / 100 end
+function M.setLabelScale(pct) SUISettings:saveSetting(SK.label_scale, LabelOptions.normalize("scale_pct", pct)) end
 
 -- Folder covers badge scale
 function M.getBadgeScalePct() return Config.getScalePctByKey(SK.badge_scale) end
@@ -489,7 +476,7 @@ end
 -- _invalidateFolderItem below.
 
 -- Books a quad folder cover is made of.
-local _QUAD_SLOTS = 4
+local _QUAD_SLOTS = GroupCell.QUAD_SLOTS
 -- Levels of subfolders a folder cover may be taken from.
 local _MAX_COVER_DEPTH = 3
 
@@ -621,7 +608,7 @@ local function _resolveStyle(menu, dir_path, entry)
         book_count = CoverFinder.countBooks(
             menu, dir_path, _coverDepth("quad"), _QUAD_SLOTS)
     end
-    return book_count >= _QUAD_SLOTS and "quad" or "single"
+    return GroupCell.resolveStyle(style, book_count)
 end
 
 -- Public wrapper used by other modules (sui_library_browse, sui_series_grouping).
@@ -1073,14 +1060,6 @@ local function _installStripPatch(MosaicMenuItem, BookInfoManager, _STRIP_H,
                     and SUIWallpaper.styleGetBgWidget() ~= nil
 
                 if wp_active then
-                    if not self._simpleui_strip_mask_bb
-                            or self._simpleui_strip_mask_bb:getWidth() ~= self.width then
-                        if self._simpleui_strip_mask_bb then
-                            self._simpleui_strip_mask_bb:free()
-                        end
-                        self._simpleui_strip_mask_bb =
-                            Blitbuffer_s.new(self.width, _STRIP_H, Blitbuffer_s.TYPE_BB8)
-                    end
                     local strip_y = y + self._simpleui_strip_top
                     Backdrop.paintBackdrop(bb, x + BACKDROP_MARGIN_X, strip_y,
                         self.width - 2 * BACKDROP_MARGIN_X, _STRIP_H,
@@ -1088,7 +1067,7 @@ local function _installStripPatch(MosaicMenuItem, BookInfoManager, _STRIP_H,
                     UI_core.paintWithAlphaMask(self, bb,
                         x, strip_y, self.width, _STRIP_H,
                         Blitbuffer_s.COLOR_BLACK,
-                        _stripPaintFn, self._simpleui_strip_mask_bb)
+                        _stripPaintFn)
                 else
                     bb:blitFrom(self._simpleui_strip_bb,
                         x, y + self._simpleui_strip_top,
@@ -1951,7 +1930,6 @@ function M.install()
         if self._fc_new_widget    then self._fc_new_widget:free();    self._fc_new_widget    = nil end
         self._fc_overlay_new = nil
         if self._simpleui_strip_bb      then self._simpleui_strip_bb:free();      self._simpleui_strip_bb      = nil end
-        if self._simpleui_strip_mask_bb then self._simpleui_strip_mask_bb:free(); self._simpleui_strip_mask_bb = nil end
         self._simpleui_strip_data = nil
         if orig_free then orig_free(self) end
     end

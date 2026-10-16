@@ -53,6 +53,7 @@ local Device      = require("device")
 local logger       = require("logger")
 local SUISettings  = require("infra/sui_store")
 local Backdrop     = require("infra/sui_backdrop")
+local Memory       = require("infra/sui_memory")
 local ImageWidget  = require("ui/widget/imagewidget")
 local UIManager    = require("ui/uimanager")
 local lfs          = require("libs/libkoreader-lfs")
@@ -552,9 +553,10 @@ function M.setCoverStripBackdropStrength(n)
 end
 
 -- Module backdrop strength; without a wallpaper there is no backdrop to paint.
--- With (pfx, id): per-module override, migrating legacy solid_bg once.
+-- With (pfx, id): per-module override, migrating legacy solid_bg once. Without
+-- an override the result is `default`, or the global default when that is nil.
 -- With no args: global default.
-function M.getModuleBackdropStrength(pfx, id)
+function M.getModuleBackdropStrength(pfx, id, default)
     if not M.isWallpaperActive() then return STRENGTH_MIN end
     if type(pfx) ~= "string" or not id then
         return Backdrop.readBackdropStrength(KEY_MODULE, Backdrop.BACKDROP_DEFAULT.module)
@@ -574,7 +576,7 @@ function M.getModuleBackdropStrength(pfx, id)
         SUISettings:saveSetting(key, STRENGTH_MAX)
         return STRENGTH_MAX
     end
-    return M.getModuleBackdropStrength()
+    return default or M.getModuleBackdropStrength()
 end
 
 function M.setModuleBackdropStrength(n, pfx, id)
@@ -669,5 +671,7 @@ if _orig_UIManager_SetNightMode then
         _notifyLayoutChanged()
     end
 end
+
+Memory.onReset(M.freeCache)
 
 return M

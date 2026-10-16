@@ -71,22 +71,14 @@ local DIRECTION_DX = {
     southwest = -DIAGONAL,
 }
 
--- Fills a rounded rectangle; falls back to a plain one when the buffer cannot
--- blit the rounded corners.
-local function fillShape(bb, x, y, w, h, radius, color)
-    if not AAPaint.fillRoundedRect(bb, x, y, w, h, radius, color, 255) then
-        AAPaint.fillRect(bb, x, y, w, h, color, 255)
-    end
-end
-
 -- Fills a pill of thickness `h` whose left end is at `x` and whose vertical
 -- centre is `cy`.
 local function fillPill(bb, x, cy, w, h, color)
-    fillShape(bb, x, cy - math.floor(h / 2), w, h, math.floor(h / 2), color)
+    AAPaint.fillPill(bb, x, cy - math.floor(h / 2), w, h, color, 255)
 end
 
 local function fillCircle(bb, cx, cy, r, color)
-    fillShape(bb, cx - r, cy - r, r * 2, r * 2, r, color)
+    AAPaint.fillPill(bb, cx - r, cy - r, r * 2, r * 2, color, 255)
 end
 
 -- ---------------------------------------------------------------------------
@@ -266,9 +258,8 @@ local SYMBOLS = {
     end,
     plus = function(bb, x, cy, len, stroke, color)
         fillPill(bb, x, cy, len, stroke, color)
-        local radius = math.floor(stroke / 2)
-        fillShape(bb, x + math.floor(len / 2) - radius, cy - math.floor(len / 2),
-            stroke, len, radius, color)
+        AAPaint.fillPill(bb, x + math.floor(len / 2) - math.floor(stroke / 2), cy - math.floor(len / 2),
+            stroke, len, color, 255)
     end,
 }
 

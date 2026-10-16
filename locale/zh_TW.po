@@ -5,7 +5,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: simpleui\n"
 "POT-Creation-Date: 2026-10-15 08:53+0000\n"
-"PO-Revision-Date: 2026-10-12 15:11+0800\n"
+"PO-Revision-Date: 2026-10-15 20:03+0800\n"
 "Last-Translator: gsWang <gs.wang@outlook.com>\n"
 "Language-Team: Chinese (Traditional)\n"
 "Language: zh_TW\n"
@@ -105,26 +105,27 @@ msgstr "（未找到書單）"
 #: screens/sui_menu.lua:191
 msgid ""
 "0% transparent, 100% solid. Applies across the full width of the title bar."
-msgstr "0% 為透明，100% 為完全不透明。套用至標題列的整個寬度。"
+msgstr "0% 即完全透明，100% 即完全不透明。效果覆蓋整個標題欄。"
 
 #: screens/sui_menu.lua:200
 msgid ""
 "0% transparent, 100% solid. Applies to the native page bar in Library, "
 "History, Collections and similar screens."
 msgstr ""
-"0% 為透明，100% 為純色。套用於「書庫」、「歷史紀錄」與「書單」等原生頁面導覽"
-"欄。"
+"0% 即完全透明，100% 即完全不透明。套用於「書庫」、「歷史紀錄」與「書單」等原"
+"生頁面欄。"
 
 #: screens/sui_menu.lua:3628
 msgid ""
 "0% transparent, 100% solid. Only the background changes; the text stays "
 "solid."
 msgstr ""
+"0% 即完全透明，100% 即完全不透明。僅背景透明度會變化，文字始終清晰可見。"
 
 #: infra/sui_config.lua:1318
 msgid ""
 "0% transparent, 100% solid. Values in between add a scrim over the wallpaper."
-msgstr "0% 透明，100% 純色。介於兩者之間的值會在桌布上疊加一層遮罩。"
+msgstr "0% 即完全透明，100% 即完全不透明。中間值會在桌布上疊加一層遮罩。"
 
 #: modules/module_collections.lua:1225
 msgid "4-Cover Grid"
@@ -222,7 +223,7 @@ msgstr "新增動作"
 
 #: features/sui_manual_books.lua:116
 msgid "Add Book"
-msgstr ""
+msgstr "新增書籍"
 
 #: screens/sui_menu.lua:1698 screens/sui_menu.lua:1736
 msgid "Add Button"
@@ -241,11 +242,11 @@ msgstr "新增項目"
 
 #: features/sui_manual_books.lua:165
 msgid "Add Manual Books"
-msgstr ""
+msgstr "新增手動追蹤的書籍"
 
 #: features/sui_manual_books.lua:178
 msgid "Add Manual Count"
-msgstr ""
+msgstr "新增年度數量"
 
 #: screens/sui_settings_window.lua:1156 screens/sui_settings_window.lua:1303
 msgid "Add Module"
@@ -257,7 +258,7 @@ msgstr "新增頁面"
 
 #: features/sui_manual_books.lua:173
 msgid "Add Single Book"
-msgstr ""
+msgstr "新增單本書籍"
 
 #: modules/module_action_list.lua:312 modules/module_quick_actions.lua:381
 #: screens/sui_menu.lua:2207 screens/sui_quicksettings_bar.lua:1541
@@ -367,7 +368,7 @@ msgstr "整理 %s"
 
 #: screens/sui_quicksettings_bar.lua:1701
 msgid "Arrange Book Details"
-msgstr ""
+msgstr "整理書籍詳細資訊"
 
 #: screens/sui_menu.lua:1654 screens/sui_menu.lua:1661
 #: screens/sui_menu.lua:1838 screens/sui_menu.lua:1853
@@ -464,11 +465,11 @@ msgstr "自動檢查更新"
 #: screens/sui_stats_windows.lua:1165 screens/sui_stats_windows.lua:2285
 #: screens/sui_stats_windows.lua:3643
 msgid "Average per day"
-msgstr "每日平均"
+msgstr "每日平均時長"
 
 #: screens/sui_stats_windows.lua:1167 screens/sui_stats_windows.lua:3645
 msgid "Average per page"
-msgstr "每頁平均"
+msgstr "每頁平均時長"
 
 #: screens/sui_titlebar.lua:117 screens/sui_titlebar.lua:123
 msgid "Back"
@@ -480,7 +481,7 @@ msgstr "返回按鈕"
 
 #: features/sui_module_chrome.lua:198
 msgid "Background"
-msgstr ""
+msgstr "背景"
 
 #: features/sui_module_chrome.lua:190 screens/sui_menu.lua:222
 #: screens/sui_menu.lua:3627 screens/sui_menu.lua:3722
@@ -582,7 +583,7 @@ msgstr "行為"
 
 #: screens/sui_stats_windows.lua:2055 screens/sui_stats_windows.lua:2075
 msgid "Best streak"
-msgstr "最佳連續"
+msgstr "最佳連續閱讀"
 
 #: infra/sui_config.lua:196
 msgid "Bluetooth"
@@ -598,7 +599,7 @@ msgstr "粗斜體"
 
 #: screens/sui_quicksettings_bar.lua:1723
 msgid "Book"
-msgstr ""
+msgstr "書籍"
 
 #: screens/sui_menu.lua:2789
 msgid "Book Cover Transition"
@@ -606,7 +607,7 @@ msgstr "書籍封面轉場"
 
 #: screens/sui_quicksettings_bar.lua:1700
 msgid "Book Details"
-msgstr ""
+msgstr "書籍詳細資訊"
 
 #: screens/sui_menu.lua:2624
 msgid "Book Folder"
@@ -706,7 +707,7 @@ msgstr "瀏覽圖示"
 
 #: features/library/sui_library_browse.lua:550
 msgid "Browse by"
-msgstr "瀏覽方式"
+msgstr "瀏覽方式為"
 
 #: features/sui_quickactions.lua:683
 msgid "Browse by Authors/Series/Tags not available."
@@ -855,14 +856,13 @@ msgid ""
 "Choose the folder where you will place all your books. Simple UI uses it to "
 "show your books in the Library."
 msgstr ""
-"請選擇用於存放所有書籍的資料夾。SimpleUI 將使用此資料夹在「書庫」中顯示你的書"
-"籍。"
+"請選擇用於存放書籍的資料夾。SimpleUI 將使用此資料夹在「書庫」中顯示你的書籍。"
 
 #: screens/sui_quicksettings_bar.lua:1816
 msgid ""
 "Choose the menus that open directly on the Quick Settings tab instead of the "
 "last used tab."
-msgstr ""
+msgstr "選擇在快速設定分頁中直接開啟的選單，而非在上次使用的分頁中開啟。"
 
 #: screens/sui_menu.lua:2501
 msgid "Choose wallpaper"
@@ -1020,6 +1020,7 @@ msgid ""
 "Count manually tracked books in the all-time total of books finished. They "
 "always count towards the year they belong to."
 msgstr ""
+"將手動追蹤的書籍計入已讀完書籍的歷史總數中。它們始終計入所屬年份的統計。"
 
 #: features/sui_presets.lua:175 features/sui_presets.lua:193
 #: modules/module_coverdeck.lua:943
@@ -1076,7 +1077,7 @@ msgstr "建立螢幕"
 
 #: screens/sui_onboarding.lua:192
 msgid "Create a \"Books\" folder"
-msgstr "建立「書籍」資料夾"
+msgstr "建立「Books」資料夾"
 
 #: features/library/sui_foldercovers.lua:757
 #: features/library/sui_foldercovers.lua:772
@@ -1095,7 +1096,7 @@ msgstr "正在建立備份……"
 
 #: screens/sui_stats_windows.lua:2053 screens/sui_stats_windows.lua:2073
 msgid "Current streak"
-msgstr "當前連續"
+msgstr "當前連續閱讀"
 
 #: features/sui_presets.lua:143 features/sui_presets.lua:155
 #: features/sui_presets.lua:219 modules/module_currently.lua:358
@@ -1192,7 +1193,7 @@ msgstr "深色"
 
 #: screens/sui_menu.lua:2573
 msgid "Darken"
-msgstr "變暗​"
+msgstr "變暗"
 
 #: features/sui_presets.lua:218
 msgid "Dashboard"
@@ -1310,7 +1311,7 @@ msgstr "要刪除快速動作「%s」嗎？"
 
 #: features/sui_manual_books.lua:102
 msgid "Delete this book?"
-msgstr ""
+msgstr "確定刪除這本書？"
 
 #: modules/module_currently.lua:277 modules/module_currently.lua:1409
 msgid "Description"
@@ -1318,7 +1319,7 @@ msgstr "描述"
 
 #: modules/module_currently.lua:1518
 msgid "Description Alignment"
-msgstr "描述對齊"
+msgstr "描述對齊方式"
 
 #: modules/module_reading_goals.lua:1148
 msgid "Detail"
@@ -1402,7 +1403,7 @@ msgstr "編輯"
 
 #: features/sui_manual_books.lua:116
 msgid "Edit Book"
-msgstr ""
+msgstr "編輯書籍"
 
 #: screens/sui_menu.lua:663 screens/sui_menu.lua:665 screens/sui_menu.lua:928
 msgid "Edit Custom Text"
@@ -1526,11 +1527,11 @@ msgstr "已排除"
 
 #: screens/sui_quicksettings_bar.lua:1007
 msgid "Exit"
-msgstr ""
+msgstr "離開"
 
 #: features/sui_style.lua:179
 msgid "Exit Book Button"
-msgstr ""
+msgstr "離開書籍按鈕"
 
 #: features/sui_backup.lua:1108
 msgid "Export"
@@ -1558,7 +1559,7 @@ msgstr "特小"
 
 #: features/sui_manual_books.lua:133
 msgid "Extra books read in %d, on top of the automatic count:"
-msgstr ""
+msgstr "%d 年中額外閱讀的書籍（在自動統計數量之外）："
 
 #: infra/sui_updater.lua:439
 msgid "Extraction error: "
@@ -1574,7 +1575,7 @@ msgstr "恢復原廠設定"
 
 #: features/library/sui_finished_books.lua:62
 msgid "Fade"
-msgstr ""
+msgstr "淡化"
 
 #: screens/sui_menu.lua:2992
 msgid "Fade Intensity"
@@ -1584,7 +1585,7 @@ msgstr "淡化強度"
 msgid ""
 "Fades finished book covers in the file browser. Other lists show them as "
 "usual."
-msgstr ""
+msgstr "在檔案瀏覽器中淡化已讀完書籍的封面。其他列表依常規方式顯示。"
 
 #: screens/sui_menu.lua:2993
 msgid ""
@@ -1641,7 +1642,7 @@ msgstr "五十"
 
 #: screens/sui_quicksettings_bar.lua:1803
 msgid "File Browser"
-msgstr ""
+msgstr "檔案瀏覽器"
 
 #: features/sui_quickactions.lua:856
 msgid "File Manager not available."
@@ -1673,7 +1674,7 @@ msgstr "按名稱篩選……"
 
 #: features/sui_manual_books.lua:121
 msgid "Finished"
-msgstr ""
+msgstr "完成日期"
 
 #: features/library/sui_finished_books.lua:84 features/sui_stats_menu.lua:133
 msgid "Finished Books"
@@ -1698,11 +1699,11 @@ msgstr "平面書庫"
 
 #: screens/sui_menu.lua:3550 screens/sui_menu.lua:3555
 msgid "Floating"
-msgstr ""
+msgstr "浮動"
 
 #: modules/module_coverdeck.lua:1608
 msgid "Flow"
-msgstr ""
+msgstr "封面流"
 
 #: features/sui_quickactions.lua:2663
 msgid "Folder"
@@ -1726,11 +1727,11 @@ msgstr "資料夾封面：空資料夾"
 
 #: screens/sui_menu.lua:3522
 msgid "Folder Name"
-msgstr "資料夾名稱"
+msgstr "資料夾名"
 
 #: screens/sui_menu.lua:3640
 msgid "Folder Name Text Size"
-msgstr "資料夾名稱文本大小"
+msgstr "資料夾名文本大小"
 
 #: features/sui_quickactions.lua:2188
 msgid "Folder Shortcuts"
@@ -1817,7 +1818,7 @@ msgstr "此裝置不支援前光。"
 
 #: screens/sui_menu.lua:3550 screens/sui_menu.lua:3562
 msgid "Full Width"
-msgstr ""
+msgstr "全寬"
 
 #: features/sui_backup.lua:658
 msgid "General — %d settings"
@@ -1969,7 +1970,7 @@ msgid ""
 "Hides the pagination bar on the homescreen.\n"
 "Not available when Navpager is active."
 msgstr ""
-"隱藏主螢幕上的分頁欄。\n"
+"隱藏首頁上的分頁欄。\n"
 "當導覽分頁器啟用時不可用。"
 
 #: screens/sui_menu.lua:2816
@@ -2112,7 +2113,7 @@ msgstr "匯入預設檔"
 
 #: features/sui_stats_menu.lua:102
 msgid "Include Manual Books in All Time Total"
-msgstr ""
+msgstr "將手動追蹤的書籍計入統計"
 
 #: infra/sui_compat_check.lua:306
 msgid "Incompatible items have been disabled:"
@@ -2269,7 +2270,7 @@ msgstr "版面編輯器"
 msgid ""
 "Layout of the Quick Settings panel in the reader. The file browser always "
 "uses the classic layout."
-msgstr ""
+msgstr "閱讀器中快速設定面板的佈局。檔案瀏覽器一律使用經典佈局。"
 
 #: features/sui_backup.lua:112
 msgid "Layout, modules, custom screens, presets"
@@ -2351,7 +2352,7 @@ msgstr "長按以自訂"
 
 #: screens/sui_quicksettings_bar.lua:1731
 msgid "Look of the frontlight and warmth sliders."
-msgstr ""
+msgstr "前光與色溫滑桿的外觀。"
 
 #: features/sui_backup.lua:530 features/sui_backup.lua:579
 #: features/sui_presets.lua:415 features/sui_presets.lua:427
@@ -2381,11 +2382,11 @@ msgstr "管理預設檔"
 
 #: features/sui_manual_books.lua:149 screens/sui_stats_windows.lua:782
 msgid "Manual Yearly Count"
-msgstr ""
+msgstr "手動記錄的年度數量"
 
 #: features/sui_manual_books.lua:132
 msgid "Manual Yearly Count — %d"
-msgstr ""
+msgstr "手動記錄的年度數量 — %d"
 
 #: modules/module_collections.lua:508
 msgid "Manual order"
@@ -2425,7 +2426,7 @@ msgstr "專注閱讀"
 
 #: screens/sui_quicksettings_bar.lua:1735
 msgid "Minimal"
-msgstr ""
+msgstr "極簡"
 
 #: screens/sui_menu.lua:392
 msgid "Minimum 1 tab required in navpager mode."
@@ -2700,7 +2701,7 @@ msgstr "歷史紀錄中沒有書籍。"
 
 #: screens/sui_stats_windows.lua:689
 msgid "No books finished"
-msgstr ""
+msgstr "尚無已讀完的書籍"
 
 #: screens/sui_stats_windows.lua:802
 msgid "No books finished in %s"
@@ -3006,7 +3007,7 @@ msgstr "開啟"
 
 #: screens/sui_quicksettings_bar.lua:1815
 msgid "Open Menu on Quick Settings"
-msgstr ""
+msgstr "在快速設定中開啟選單"
 
 #: modules/module_collections.lua:1019
 msgid "Open Module Settings"
@@ -3032,7 +3033,7 @@ msgstr "要開啟此檔案嗎？"
 
 #: features/library/sui_book_hold_dialog.lua:387
 msgid "Open with…"
-msgstr "開啟方式……"
+msgstr "開啟方式"
 
 #: screens/sui_menu.lua:2842
 msgid "Overflow Warning"
@@ -3050,7 +3051,7 @@ msgstr "覆蓋"
 
 #: features/sui_presets.lua:917 features/sui_presets.lua:1049
 msgid "Overwrite preset \"%s\" with the current homescreen settings?"
-msgstr "要以目前的主螢幕設定覆蓋預設檔「%s」嗎？"
+msgstr "要以目前的首頁設定覆蓋預設檔「%s」嗎？"
 
 #: screens/sui_menu.lua:4338 screens/sui_menu.lua:4467
 msgid "Overwrite preset \"%s\" with the current icon settings?"
@@ -3078,12 +3079,12 @@ msgstr "無法存取圖示包資料夾："
 
 #: infra/sui_book_stats.lua:175
 msgid "Page"
-msgstr ""
+msgstr "頁面"
 
 #: engines/sui_screen_engine.lua:1887 engines/sui_window.lua:1560
 #: infra/sui_patches.lua:2305 infra/sui_patches.lua:3083
 msgid "Page %1 of %2"
-msgstr "第 %1 頁，共 %2 頁"
+msgstr "第 %1 頁 · 共 %2 頁"
 
 #: screens/sui_settings_window.lua:618 screens/sui_settings_window.lua:782
 #: screens/sui_settings_window.lua:1168
@@ -3092,7 +3093,7 @@ msgstr "第 %d 頁"
 
 #: infra/sui_book_stats.lua:188
 msgid "Page %s/%s"
-msgstr ""
+msgstr "頁面 %s/%s"
 
 #: screens/sui_settings_window.lua:617 screens/sui_settings_window.lua:781
 #: screens/sui_settings_window.lua:1167
@@ -3231,15 +3232,15 @@ msgstr "請輸入預設檔的名稱。"
 
 #: features/sui_manual_books.lua:55
 msgid "Please enter a start or finish date."
-msgstr ""
+msgstr "請輸入開始或完成日期。"
 
 #: features/sui_manual_books.lua:49
 msgid "Please enter a title."
-msgstr ""
+msgstr "請輸入書名。"
 
 #: features/sui_manual_books.lua:52
 msgid "Please enter dates as YYYY-MM-DD or YYYY."
-msgstr ""
+msgstr "請以 YYYY-MM-DD 或 YYYY 格式輸入日期。"
 
 #: infra/sui_compat_check.lua:196
 msgid "Please restart KOReader for the change to take effect."
@@ -3283,7 +3284,7 @@ msgstr "保持封面比例"
 
 #: features/sui_stats_menu.lua:89
 msgid "Preserve Deleted Books in Statistics"
-msgstr "在統計數據中保留已刪除的書籍"
+msgstr "刪除書籍後仍保留統計資料"
 
 #: features/sui_presets.lua:1102 screens/sui_menu.lua:4519
 msgid "Preset \"%s\" imported."
@@ -3424,7 +3425,7 @@ msgstr "快速動作行"
 
 #: features/sui_style.lua:1218
 msgid "Quick Settings"
-msgstr ""
+msgstr "快速設定"
 
 #: screens/sui_menu.lua:2949 screens/sui_quicksettings_bar.lua:1418
 msgid "Quick Settings Bar"
@@ -3470,11 +3471,11 @@ msgstr "隨機"
 
 #: screens/sui_quicksettings_bar.lua:1802
 msgid "Reader"
-msgstr ""
+msgstr "閱讀器"
 
 #: screens/sui_quicksettings_bar.lua:1719
 msgid "Reader Layout"
-msgstr ""
+msgstr "閱讀器佈局"
 
 #: features/sui_presets.lua:175 features/sui_presets.lua:220
 #: features/sui_stats_menu.lua:138 modules/module_reading_goals.lua:800
@@ -3521,7 +3522,7 @@ msgstr "近期書籍"
 
 #: features/sui_style.lua:2041
 msgid "Regular"
-msgstr "標準體"
+msgstr "標準"
 
 #: modules/module_tbr.lua:533
 msgid "Remove from To Be Read"
@@ -3798,7 +3799,7 @@ msgstr "進度徽章的縮放。"
 #: engines/sui_book_grid.lua:1941
 msgid ""
 "Scale for this module's corner badges (progress, pages, series, new book)."
-msgstr "此模組角落徽章（進度、頁數、叢書、新書）的縮放。"
+msgstr "此模組角落徽章（進度、頁數、叢書與新書）的縮放。"
 
 #: modules/module_coverdeck.lua:1589
 msgid "Scale for this module."
@@ -3984,7 +3985,7 @@ msgstr ""
 
 #: features/library/sui_finished_books.lua:59
 msgid "Show"
-msgstr ""
+msgstr "顯示"
 
 #: modules/module_clock.lua:1063
 msgid "Show Battery"
@@ -4021,8 +4022,8 @@ msgid ""
 "Show a brief \"Loading statistics…\" notice when opening a statistics "
 "window, preventing accidental double-taps while e-ink refreshes."
 msgstr ""
-"開啟統計視窗時，顯示短暫的「正在載入統計資料……」提示，以防止電子墨水屏重新整"
-"理期間發生誤觸。"
+"開啟統計視窗時，顯示短暫的「正在載入統計資料……」提示，以防止墨水屏重新整理期"
+"間發生誤觸。"
 
 #: modules/module_coverdeck.lua:1787 modules/module_recent.lua:50
 msgid "Show finished books"
@@ -4048,7 +4049,7 @@ msgstr "顯示區塊標籤"
 msgid ""
 "Show the frontlight and warmth sliders below the book details in the Book "
 "layout."
-msgstr ""
+msgstr "在書籍佈局中，將前光與色溫滑桿顯示在書籍詳細資訊下方。"
 
 #: screens/sui_menu.lua:2550
 msgid "Show wallpaper on all screens"
@@ -4061,7 +4062,7 @@ msgid ""
 "Navpager enables this automatically.\n"
 "Not available when Navpager is active."
 msgstr ""
-"在瀏覽書庫、歷史記錄或書單時，在標題列副標題中顯示「第 X 頁，共 Y 頁」。\n"
+"在瀏覽書庫、歷史記錄或書單時，在標題列副標題中顯示「第 X 頁 · 共 Y 頁」。\n"
 "導覽分頁器會自動啟用此功能。\n"
 "當導覽分頁器處於活動狀態時不可用。"
 
@@ -4071,7 +4072,7 @@ msgid ""
 "The active page dot is filled; the others are dimmed.\n"
 "Always active when Navpager is selected."
 msgstr ""
-"在主畫面底部顯示一列圓點。\n"
+"在首頁底部顯示一列圓點。\n"
 "目前頁面對應的圓點為實心，其餘為暗色。\n"
 "當選取導覽分頁器時始終處於活動狀態。"
 
@@ -4146,7 +4147,7 @@ msgstr ""
 
 #: main.lua:957
 msgid "Simple UI: Go to Homescreen"
-msgstr "SimpleUI：前往主螢幕"
+msgstr "SimpleUI：前往首頁"
 
 #: main.lua:963
 msgid "Simple UI: Go to Library"
@@ -4166,7 +4167,7 @@ msgstr "SimpleUI：設定"
 
 #: main.lua:969
 msgid "Simple UI: Toggle Homescreen / Library"
-msgstr "SimpleUI：切換主螢幕/書庫"
+msgstr "SimpleUI：切換首頁/書庫"
 
 #: modules/module_collections.lua:1224 screens/sui_menu.lua:3146
 msgid "Single Cover"
@@ -4209,6 +4210,8 @@ msgid ""
 "Size of the title bar buttons and tabs.\n"
 "100% is the default size."
 msgstr ""
+"標題欄按鈕和分頁標籤的大小。\n"
+"預設大小為 100%。"
 
 #: engines/sui_book_grid.lua:2072 modules/module_action_list.lua:497
 #: modules/module_clock.lua:1080 modules/module_coverdeck.lua:1735
@@ -4228,11 +4231,11 @@ msgstr "休眠"
 
 #: screens/sui_quicksettings_bar.lua:1730
 msgid "Slider Style"
-msgstr ""
+msgstr "滑桿樣式"
 
 #: screens/sui_quicksettings_bar.lua:1745
 msgid "Sliders in Book Layout"
-msgstr ""
+msgstr "書籍佈局中的滑桿"
 
 #: screens/sui_menu.lua:596
 msgid "Small"
@@ -4278,15 +4281,15 @@ msgstr "開始使用 SimpleUI"
 #: infra/sui_patches.lua:1201 infra/sui_patches.lua:1203
 #: screens/sui_menu.lua:2609
 msgid "Start with"
-msgstr "預設開啟"
+msgstr "啟動時顯示"
 
 #: screens/sui_onboarding.lua:131
 msgid "Start with a ready-made layout. You can change everything later."
-msgstr "從現成版面配置開始。隨後可以修改任何設定。"
+msgstr "從預設佈局開始。隨後可以修改任何設定。"
 
 #: features/sui_manual_books.lua:120
 msgid "Started"
-msgstr ""
+msgstr "開始日期"
 
 #: modules/module_coverdeck.lua:174 modules/module_coverdeck.lua:1707
 #: modules/module_coverdeck.lua:1727 modules/module_coverdeck.lua:1734
@@ -4551,7 +4554,7 @@ msgstr "此螢幕已提供導航欄。"
 
 #: features/sui_manual_books.lua:61
 msgid "The start date is after the finish date."
-msgstr ""
+msgstr "開始日期晚於完成日期。"
 
 #: screens/sui_menu.lua:2005
 msgid ""
@@ -4657,11 +4660,11 @@ msgstr "標題"
 
 #: engines/sui_book_grid.lua:1493 modules/module_library.lua:203
 msgid "Title (A–Z)"
-msgstr "標題（A–Z）"
+msgstr "書名（A–Z）"
 
 #: engines/sui_book_grid.lua:1494 modules/module_library.lua:204
 msgid "Title (Z–A)"
-msgstr "標題（Z–A）"
+msgstr "書名（Z–A）"
 
 #: features/sui_style.lua:1213 screens/sui_menu.lua:2946
 msgid "Title Bar"
@@ -4673,7 +4676,7 @@ msgstr "標題欄不透明度"
 
 #: screens/sui_menu.lua:2013
 msgid "Title Bar Size"
-msgstr ""
+msgstr "標題欄大小"
 
 #: screens/sui_menu.lua:2042
 msgid ""
@@ -4681,17 +4684,17 @@ msgid ""
 "\n"
 "Restart now?"
 msgstr ""
-"重啟後標題欄將改為 %s。\n"
+"重啟後標題欄將改為%s。\n"
 "\n"
 "要立即重新啟動嗎？"
 
 #: screens/sui_menu.lua:3700
 msgid "Title and Author"
-msgstr "標題與作者"
+msgstr "書名與作者"
 
 #: screens/sui_menu.lua:3651
 msgid "Title and Author Below Covers"
-msgstr "封面下方顯示標題與作者"
+msgstr "封面下方顯示書名與作者"
 
 #: screens/sui_menu.lua:3712
 msgid ""
@@ -4699,13 +4702,13 @@ msgid ""
 "\n"
 "Restart now?"
 msgstr ""
-"標題與作者欄已啟用。\n"
+"已在封面下方啟用書名與作者。\n"
 "\n"
 "要立即重新啟動嗎？"
 
 #: screens/sui_menu.lua:3678
 msgid "Title only"
-msgstr "僅標題"
+msgstr "僅書名"
 
 #: screens/sui_menu.lua:3667
 msgid ""
@@ -4713,7 +4716,7 @@ msgid ""
 "\n"
 "Restart now?"
 msgstr ""
-"標題欄已停用。\n"
+"已在封面下方停用書名。\n"
 "\n"
 "要立即重新啟動嗎？"
 
@@ -4723,7 +4726,7 @@ msgid ""
 "\n"
 "Restart now?"
 msgstr ""
-"標題欄已啟用。\n"
+"已在封面下方啟用書名。\n"
 "\n"
 "要立即重新啟動嗎？"
 
@@ -4890,7 +4893,7 @@ msgid ""
 "Uses the standard KOReader pagination bar on the homescreen.\n"
 "Not available when Navpager is active."
 msgstr ""
-"主螢幕使用標準 KOReader 分頁欄。\n"
+"首頁使用標準 KOReader 分頁欄。\n"
 "當導覽分頁器啟用時不可用。"
 
 #: modules/module_reading_stats.lua:797 modules/module_reading_stats.lua:859
@@ -4990,8 +4993,8 @@ msgid ""
 "Books changed back to Reading or Abandoned are automatically removed from "
 "this list."
 msgstr ""
-"當從裝置中刪除已讀完的書籍（檔案或資料夾）時，仍在首頁的「已讀書籍」統計中保"
-"留計數。\n"
+"當從裝置中刪除已讀完的書籍（檔案或資料夾）時，仍在首頁的「已讀完書籍」統計中"
+"保留計數。\n"
 "\n"
 "狀態改回「在讀」或「擱置」的書籍會自動從此清單中移除。"
 
@@ -5064,11 +5067,11 @@ msgstr "文字"
 
 #: features/sui_manual_books.lua:113
 msgid "YYYY-MM-DD or YYYY"
-msgstr ""
+msgstr "YYYY-MM-DD 或 YYYY"
 
 #: features/sui_manual_books.lua:150
 msgid "Year:"
-msgstr ""
+msgstr "年份："
 
 #: screens/sui_stats_windows.lua:1177
 msgid "Yes"
@@ -5120,7 +5123,7 @@ msgstr "八月"
 
 #: modules/module_reading_stats.lua:128 screens/sui_stats_windows.lua:2176
 msgid "books finished"
-msgstr "讀讀完籍數"
+msgstr "讀完書籍數"
 
 #: modules/module_reading_stats.lua:123
 msgid "daily avg (7 days)"
@@ -5162,7 +5165,7 @@ msgstr "二月"
 
 #: features/sui_style.lua:2215
 msgid "ffi/archiver not available in this KOReader version"
-msgstr "此版本的 KOReader 中 ffi/archiver 不可用"
+msgstr "此版本 KOReader 中的 ffi/archiver 不可用"
 
 #: features/sui_quickactions.lua:2050
 msgid "hex code, e.g. E001"
@@ -5331,7 +5334,8 @@ msgstr[1] "讀 %d 本書在 %s 年"
 #: screens/sui_stats_windows.lua:1235
 msgid "%d book read"
 msgid_plural "%d books read"
-msgstr[0] ""
+msgstr[0] "%d 本書已讀"
+msgstr[1] "%d 本書已讀"
 
 #: infra/sui_book_stats.lua:190 screens/sui_stats_windows.lua:2040
 #: screens/sui_stats_windows.lua:2042

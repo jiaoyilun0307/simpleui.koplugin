@@ -113,5 +113,11 @@ M.name          = _("Spacer")
 M.instanciable  = true
 M.makeInstance  = makeInstance
 M.instances_key = "simpleui_spacer_row_instances"
+M.menu_group    = "quick_actions"
+
+-- Layout-editor summary of an instance: its height as a scale percentage.
+function M.getInstanceSubtitle(inst_id, pfx)
+    return Config.getModuleScalePct(inst_id, pfx) .. "%"
+end
 
 return M

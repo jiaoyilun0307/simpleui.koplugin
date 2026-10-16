@@ -392,6 +392,15 @@ function M.fillRoundedRect(bb, x, y, w, h, radius, color, alpha)
     return true
 end
 
+-- Fills a pill (fully rounded ends along its longer side) of w x h with
+-- `color` at `alpha` (0-255). Falls back to a plain rectangle when the
+-- rounded ends cannot be drawn.
+function M.fillPill(bb, x, y, w, h, color, alpha)
+    if not M.fillRoundedRect(bb, x, y, w, h, math.min(w, h) / 2, color, alpha) then
+        M.fillRect(bb, x, y, w, h, color, alpha)
+    end
+end
+
 -- Border for a corner radius that does not exceed the thickness. Each corner
 -- square then lies entirely inside the border band, so the corners are plain
 -- fill-mask quadrants and the inner edge is square. The band is covered

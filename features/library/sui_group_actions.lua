@@ -15,6 +15,7 @@
 --     args.override_key   -- string key used with sui_cover_overrides
 --     args.items          -- { {path=fullpath, title=display_title}, ... }
 --     args.menu           -- the FileChooser/menu widget to invalidate after a change
+--     args.on_change      -- optional; called after the cover is set or cleared
 --     args.empty_message  -- shown instead of the picker when items is empty
 --
 --   GroupActions.createCollection(args)
@@ -34,7 +35,7 @@ local GroupActions = {}
 function GroupActions.openCoverPicker(args)
     local UIManager    = require("ui/uimanager")
     local ButtonDialog = require("ui/widget/buttondialog")
-        local items = args.items or {}
+    local items = args.items or {}
     if #items == 0 then
         UI.Notify.toast(args.empty_message or _("No books found."), 2)
         return
@@ -47,13 +48,20 @@ function GroupActions.openCoverPicker(args)
     local picker
     local buttons = {}
 
+    local function applyOverride(book_path)
+        UIManager:close(picker)
+        if book_path then
+            CoverOverrides.set(override_key, book_path)
+        else
+            CoverOverrides.clear(override_key)
+        end
+        CoverOverrides.invalidateGridItem(menu, override_key)
+        if args.on_change then args.on_change() end
+    end
+
     buttons[#buttons + 1] = {{
         text = (not cur_override and "\u{2713} " or "  ") .. _("Auto (first book)"),
-        callback = function()
-            UIManager:close(picker)
-            CoverOverrides.clear(override_key)
-            CoverOverrides.invalidateGridItem(menu, override_key)
-        end,
+        callback = function() applyOverride(nil) end,
     }}
 
     for _, item in ipairs(items) do
@@ -62,11 +70,7 @@ function GroupActions.openCoverPicker(args)
             or (fp:match("([^/]+)%.[^%.]+$") or fp)
         buttons[#buttons + 1] = {{
             text = ((cur_override == fp) and "\u{2713} " or "  ") .. title,
-            callback = function()
-                UIManager:close(picker)
-                CoverOverrides.set(override_key, fp)
-                CoverOverrides.invalidateGridItem(menu, override_key)
-            end,
+            callback = function() applyOverride(fp) end,
         }}
     end
 

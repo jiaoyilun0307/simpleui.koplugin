@@ -41,11 +41,12 @@
 --   M.getSavedMode() / M.setSavedMode(mode)
 --   M.openVirtualCoverPicker(vpath, fc)
 --   M.getAuthorBookCount(fc, author)    — count books by author in current base_dir (cached)
---   M.navigateToAuthorLeaf(fm, author)  — navigate FM directly to author virtual leaf
+--   M.navigateToLeaf(fm, dimension, value, opts) — navigate FM directly to a virtual leaf
 
 local lfs     = require("libs/libkoreader-lfs")
 local ffiUtil = require("ffi/util")
 local logger  = require("logger")
+local Memory  = require("infra/sui_memory")
 local _ = require("infra/sui_i18n").translate
 local SUISettings = require("infra/sui_store")
 
@@ -347,37 +348,42 @@ function M.getAuthorBookCount(fc, author_name)
     return #MetadataSource.getValidRows(bim, base, fs, variant, accept)
 end
 
--- Navigates the FM directly to the virtual leaf for *author_name*, bypassing
--- the top-level Authors list. The up-button / back-button will land on the
--- Authors root (not the real filesystem), matching the expected UX.
+-- Navigates the FM directly to the virtual leaf of `value` in `dimension`,
+-- bypassing the top-level list of the dimension. The up button lands on that
+-- list, not on the real filesystem.
 --
--- origin_file (optional): the book file that triggered this navigation.
---   When provided, pressing back from the virtual leaf returns directly to
---   the real folder where the book lives, with the list scrolled to that
---   book. Without it, back lands on the Authors root.
+-- opts (all optional):
+--   base_dir     directory whose subtree the leaf lists; the file manager's
+--                current one by default
+--   origin_file  the book the navigation started from: going back from the
+--                leaf returns to the real folder, scrolled to that book
+--   return_fn    called when going back from the leaf, instead of returning
+--                to a real folder, for a navigation that started elsewhere
 --
 -- Preconditions: browse mode must be installed (M.install() called).
-function M.navigateToAuthorLeaf(fm, author_name, origin_file)
-    if not fm or not author_name or author_name == "" then return end
-    local fc = fm.file_chooser
-    if not fc then return end
+function M.navigateToLeaf(fm, dimension, value, opts)
+    local fc = fm and fm.file_chooser
+    if not (fc and FilterState.isDimension(dimension) and value and value ~= "") then return end
+    opts = opts or {}
 
-    local base   = VirtualPath.getBaseDir(fc.path)
-    local target = VirtualPath.buildLeaf(base, nil, "author", author_name)
+    local fc_base = VirtualPath.getBaseDir(fc.path)
+    local base    = opts.base_dir or fc_base
+    local target  = VirtualPath.buildLeaf(base, nil, dimension, value)
 
-    -- Save the origin so onFolderUp can return to exactly the right place.
-    -- Stored on fc (not a module upvalue) so it survives across module reloads.
-    if origin_file then
-        local real_path = fc.path
-        if VirtualPath.isVirtual(real_path) then real_path = base end
-        fc._sui_author_dialog_origin = { path = real_path, file = origin_file }
+    -- The origin lives on the file chooser, not in a module upvalue, so it
+    -- survives module reloads. It is bound to the leaf it was set for.
+    if opts.origin_file or opts.return_fn then
+        fc._sui_leaf_origin = {
+            leaf      = target,
+            path      = VirtualPath.isVirtual(fc.path) and fc_base or fc.path,
+            file      = opts.origin_file,
+            return_fn = opts.return_fn,
+        }
     else
-        fc._sui_author_dialog_origin = nil
+        fc._sui_leaf_origin = nil
     end
 
-    -- Set the entry path to the Authors root so the up-button hierarchy is
-    -- correct when the user did NOT come from the dialog (normal flow).
-    fc._browse_by_meta_entry_path = VirtualPath.buildDimList(base, nil, "author")
+    fc._browse_by_meta_entry_path = VirtualPath.buildDimList(base, nil, dimension)
     fm._navbar_suppress_path_change = true
     fc:changeToPath(target)
     fm._navbar_suppress_path_change = nil
@@ -387,8 +393,8 @@ function M.navigateToAuthorLeaf(fm, author_name, origin_file)
     if fc.onGotoPage then
         pcall(function() fc:onGotoPage(1) end)
     end
-    -- Persist "author" mode so the next session restores the virtual tree.
-    M.setSavedMode("author")
+    -- Persist the mode so the next session restores the virtual tree.
+    M.setSavedMode(dimension)
 end
 
 -- ---------------------------------------------------------------------------
@@ -1059,5 +1065,7 @@ function M.reset()
     MetadataSource.clearCache()
     _last_base_dir = nil
 end
+
+Memory.onReset(M.reset)
 
 return M

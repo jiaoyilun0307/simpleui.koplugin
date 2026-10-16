@@ -334,17 +334,12 @@ function M.patchDimmedIcon(btn)
     if not lw or lw._sui_dim_patched then return end
     lw._sui_dim_patched = true
     local orig_lw_pt = lw.paintTo
-    local Blitbuffer = require("ffi/blitbuffer")
     local UI_core    = require("infra/sui_core")
     lw.paintTo = function(self_lw, bb, x, y)
         if not btn.enabled then
             local sz = self_lw:getSize()
             local w, h = sz.w, sz.h
             if w > 0 and h > 0 then
-                if not self_lw._sui_tmp_bb or self_lw._sui_tmp_bb:getWidth() ~= w or self_lw._sui_tmp_bb:getHeight() ~= h then
-                    if self_lw._sui_tmp_bb then self_lw._sui_tmp_bb:free() end
-                    self_lw._sui_tmp_bb = Blitbuffer.new(w, h, Blitbuffer.TYPE_BB8)
-                end
                 local saved_dim = self_lw.dim
                 local saved_orig_nm = self_lw.original_in_nightmode
                 local saved_alpha = self_lw.alpha
@@ -364,7 +359,7 @@ function M.patchDimmedIcon(btn)
                 self_lw.alpha = true
 
                 local fg = _getInactiveColor()
-                UI_core.paintWithAlphaMask(self_lw, bb, x, y, w, h, fg, orig_lw_pt, self_lw._sui_tmp_bb)
+                UI_core.paintWithAlphaMask(self_lw, bb, x, y, w, h, fg, orig_lw_pt)
 
                 self_lw.dim = saved_dim
                 self_lw.original_in_nightmode = saved_orig_nm
@@ -373,11 +368,6 @@ function M.patchDimmedIcon(btn)
             end
         end
         orig_lw_pt(self_lw, bb, x, y)
-    end
-    local orig_lw_free = lw.free
-    lw.free = function(self_lw)
-        if self_lw._sui_tmp_bb then self_lw._sui_tmp_bb:free(); self_lw._sui_tmp_bb = nil end
-        if orig_lw_free then orig_lw_free(self_lw) end
     end
 end
 
@@ -1336,7 +1326,7 @@ end
 -- ---------------------------------------------------------------------------
 
 local function showUnavailable(msg)
-    UI.Notify.toast(msg)
+    _UI().Notify.toast(msg)
 end
 
 local function setActiveAndRefreshFM(plugin, action_id, tabs)
@@ -1905,7 +1895,7 @@ end
 -- window if called directly from somewhere else.
 function M.showFloatingBarWindow(fm)
     if M.isBarInjectedOnCurrentScreen() then
-        UI.Notify.toast(_("The navigation bar is already available on this screen."), 2)
+        _UI().Notify.toast(_("The navigation bar is already available on this screen."), 2)
         return
     end
 

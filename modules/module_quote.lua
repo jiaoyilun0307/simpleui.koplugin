@@ -729,8 +729,6 @@ local function getPool()
 
         _hl_pool = _buildPool()
 
-        _last_hl_idx = nil
-
     end
 
     return _hl_pool

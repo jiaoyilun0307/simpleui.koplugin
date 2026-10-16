@@ -2,6 +2,7 @@
 -- Layouts: Default (bar + detail), Compact (single inline row), Rings (circular progress).
 
 local CenterContainer = require("ui/widget/container/centercontainer")
+local Memory          = require("infra/sui_memory")
 local Device          = require("device")
 local Font            = require("ui/font")
 local FrameContainer  = require("ui/widget/container/framecontainer")
@@ -1361,5 +1362,7 @@ function M.getMenuItems(ctx_menu)
         behaviour = #behaviour_rows > 0 and behaviour_rows or nil,
     }, ctx_menu)
 end
+
+Memory.onReset(M.reset)
 
 return M

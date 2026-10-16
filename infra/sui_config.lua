@@ -10,7 +10,8 @@ local Blitbuffer        = require("ffi/blitbuffer")
 local DataStorage       = require("datastorage")
 local SUISettings       = require("infra/sui_store")
 local SUICoverCache     = require("infra/sui_cover_cache")
-local RasterCache       = require("infra/sui_raster_cache")
+local LRU               = require("infra/sui_lru")
+local Memory            = require("infra/sui_memory")
 local Backdrop          = require("infra/sui_backdrop")
 local logger            = require("logger")
 local _ = require("infra/sui_i18n").translate
@@ -1240,8 +1241,7 @@ function M.makeScaleItem(opts)
         value_func     = function() return opts.get() .. "%" end,
         callback       = function()
             if enabled_func and not enabled_func() then
-                local UIManager   = require("ui/uimanager")
-                UI.Notify.toast(_("Disable \"Lock Scale\" first to set a per-module scale."))
+                require("infra/sui_core").Notify.toast(_("Disable \"Lock Scale\" first to set a per-module scale."))
                 return
             end
             local SpinWidget = require("ui/widget/spinwidget")
@@ -2083,7 +2083,7 @@ M._cover_extract_pending = {}
 M._cover_extract_specs   = {}
 
 local _BookInfoManager = nil
-local _bbBytes = RasterCache.bbBytes
+local _bbBytes = Memory.bbBytes
 
 -- Listeners told when a book's record in the book info store changes:
 -- fn(filepath, method). Records written by background extraction happen in a
@@ -2145,8 +2145,7 @@ end
 -- very different sizes. Entries here are just filepath strings — tiny and
 -- roughly uniform — so a simple count cap is the right unit.
 local _NO_COVER_MAX_ENTRIES = 2000
-local _no_cover_probe = {}   -- filepath -> true
-local _no_cover_order = {}   -- filepaths, oldest at front, MRU at back
+local _no_cover = LRU.new{ max_entries = _NO_COVER_MAX_ENTRIES }   -- filepath -> true
 local _RenderImage = nil
 local _lfs_cover   = nil  -- lazy-loaded lfs for filepath validation
 
@@ -2161,24 +2160,15 @@ end
 
 -- isCoverMissing(filepath) is queried from both cover APIs below on every
 -- request, so it must be a plain, correct membership test.
-function M.isCoverMissing(filepath) return _no_cover_probe[filepath] == true end
+function M.isCoverMissing(filepath) return _no_cover:has(filepath) end
 
 local function _markNoCover(filepath)
-    if _no_cover_probe[filepath] then return end
-    _no_cover_probe[filepath] = true
-    _no_cover_order[#_no_cover_order + 1] = filepath
-    if #_no_cover_order > _NO_COVER_MAX_ENTRIES then
-        local oldest = table.remove(_no_cover_order, 1)
-        _no_cover_probe[oldest] = nil
-    end
+    if _no_cover:has(filepath) then return end
+    _no_cover:put(filepath, true)
 end
 
 local function _unmarkNoCover(filepath)
-    if not _no_cover_probe[filepath] then return end
-    _no_cover_probe[filepath] = nil
-    for i, k in ipairs(_no_cover_order) do
-        if k == filepath then table.remove(_no_cover_order, i); break end
-    end
+    _no_cover:remove(filepath)
 end
 
 -- ---------------------------------------------------------------------------
@@ -2209,29 +2199,13 @@ end
 -- visible in several crop-shaped slots only pays that decode/downscale
 -- once per session, not once per slot.
 -- ---------------------------------------------------------------------------
-local _REF_MAX_DIM     = 480               -- long-side cap in px; plenty for any on-screen slot
-local _REF_BYTE_BUDGET = 4 * 1024 * 1024   -- small: bounded per-entry size, few concurrent books need it
-local _bim_ref_cache = {}   -- filepath -> { bb, bytes }
-local _bim_ref_order = {}   -- filepaths, oldest at front, MRU at back
-local _bim_ref_bytes = 0
+local _REF_MAX_DIM = 480   -- long-side cap in px; plenty for any on-screen slot
 
-local function _removeRefOrderKey(key)
-    for i, k in ipairs(_bim_ref_order) do
-        if k == key then table.remove(_bim_ref_order, i); return end
-    end
-end
-
-local function _evictRefIfNeeded()
-    while #_bim_ref_order > 1 and _bim_ref_bytes > _REF_BYTE_BUDGET do
-        local key = table.remove(_bim_ref_order, 1)
-        local entry = _bim_ref_cache[key]
-        _bim_ref_cache[key] = nil
-        if entry then
-            _bim_ref_bytes = _bim_ref_bytes - (entry.bytes or 0)
-            if _bim_ref_bytes < 0 then _bim_ref_bytes = 0 end
-        end
-    end
-end
+-- filepath -> reference bb. Small budget: bounded per-entry size, few
+-- concurrent books need it. A reference bb can be handed back to a caller
+-- when it cannot be scaled further, so evicted entries are dereferenced, not
+-- freed.
+local _ref_cache = LRU.new{ max_bytes = Memory.budgets().ref }
 
 local function _ensureRenderImage()
     if not _RenderImage then
@@ -2241,23 +2215,13 @@ local function _ensureRenderImage()
     return _RenderImage
 end
 
--- Returns the cached reference bb for `filepath` (refreshing its LRU
--- position), or nil on a miss.
-local function _cachedRefCoverBB(filepath)
-    local cached = _bim_ref_cache[filepath]
-    if not cached then return nil end
-    _removeRefOrderKey(filepath)
-    _bim_ref_order[#_bim_ref_order + 1] = filepath
-    return cached.bb
-end
-
 -- Returns a bb that's safe to use as _scaleBBToSlot's source for `filepath`:
 -- the raw bb itself when it's already small (no point caching a second copy
 -- no bigger than the reference would be), or a cached downscaled copy
 -- otherwise. Never crops -- only ever a uniform scale-to-fit within
 -- _REF_MAX_DIM -- so the result stays a valid source for ANY target shape.
 local function _getRefCoverBB(filepath, raw_bb)
-    local cached = _cachedRefCoverBB(filepath)
+    local cached = _ref_cache:get(filepath)
     if cached then return cached end
 
     local src_w, src_h = raw_bb:getWidth(), raw_bb:getHeight()
@@ -2284,12 +2248,7 @@ local function _getRefCoverBB(filepath, raw_bb)
     if ref_bb ~= cp_bb then pcall(cp_bb.free, cp_bb) end
     if not (ok_sc and ref_bb) then return raw_bb end
 
-    local nbytes = _bbBytes(ref_bb)
-    _bim_ref_cache[filepath] = { bb = ref_bb, bytes = nbytes }
-    _bim_ref_order[#_bim_ref_order + 1] = filepath
-    _bim_ref_bytes = _bim_ref_bytes + nbytes
-    _evictRefIfNeeded()
-    return ref_bb
+    return _ref_cache:put(filepath, ref_bb, _bbBytes(ref_bb))
 end
 
 local function _scaleBBToSlot(bb, target_w, target_h, align)
@@ -2426,68 +2385,28 @@ end
 -- slot shape (width, height, alignment). Slots are small, so a few MiB hold
 -- every visible peek and Quad quadrant. Entries are shared with live
 -- ImageWidgets (image_disposable = false), so evicting only drops the
--- reference and never frees the buffer.
-local _CROP_BYTE_BUDGET = 4 * 1024 * 1024
-local _crop_cache = {}   -- filepath -> { [slot_key] = { bb, bytes, tick } }
-local _crop_bytes = 0
-local _crop_tick  = 0
+-- reference and never frees the buffer. Scoped by file path, so one call
+-- drops every slot of a book.
+local _crop_cache = LRU.new{ max_bytes = Memory.budgets().crop }
 
 local function _cropSlotKey(w, h, align)
     return w .. "x" .. h .. (align or "")
 end
 
 local function _cropGet(filepath, slot_key)
-    local entry = _crop_cache[filepath] and _crop_cache[filepath][slot_key]
-    if not entry then return nil end
-    _crop_tick = _crop_tick + 1
-    entry.tick = _crop_tick
-    return entry.bb
-end
-
-local function _cropEvictOverBudget(keep)
-    while _crop_bytes > _CROP_BYTE_BUDGET do
-        local oldest, oldest_fp, oldest_key
-        for fp, slots in pairs(_crop_cache) do
-            for key, entry in pairs(slots) do
-                if entry ~= keep and (not oldest or entry.tick < oldest.tick) then
-                    oldest, oldest_fp, oldest_key = entry, fp, key
-                end
-            end
-        end
-        if not oldest then return end
-        _crop_bytes = _crop_bytes - oldest.bytes
-        _crop_cache[oldest_fp][oldest_key] = nil
-        if next(_crop_cache[oldest_fp]) == nil then _crop_cache[oldest_fp] = nil end
-    end
+    return _crop_cache:get(slot_key, filepath)
 end
 
 local function _cropPut(filepath, slot_key, bb)
-    _crop_tick = _crop_tick + 1
-    local entry = { bb = bb, bytes = _bbBytes(bb), tick = _crop_tick }
-    _crop_cache[filepath] = _crop_cache[filepath] or {}
-    _crop_cache[filepath][slot_key] = entry
-    _crop_bytes = _crop_bytes + entry.bytes
-    _cropEvictOverBudget(entry)
-end
-
-local function _cropDrop(filepath)
-    local slots = _crop_cache[filepath]
-    if not slots then return end
-    for _, entry in pairs(slots) do _crop_bytes = _crop_bytes - entry.bytes end
-    _crop_cache[filepath] = nil
+    _crop_cache:put(slot_key, bb, _bbBytes(bb), filepath)
 end
 
 -- Drop stretch, crop and ref entries so a later put after re-extract can install the
 -- higher-quality bb (prefer-larger alone keeps same pixel-count upscales).
 local function _dropLocalCoverCaches(filepath)
     SUICoverCache:drop(filepath)
-    _cropDrop(filepath)
-    local entry = _bim_ref_cache[filepath]
-    if not entry then return end
-    _removeRefOrderKey(filepath)
-    _bim_ref_cache[filepath] = nil
-    _bim_ref_bytes = _bim_ref_bytes - (entry.bytes or 0)
-    if _bim_ref_bytes < 0 then _bim_ref_bytes = 0 end
+    _crop_cache:removeScope(filepath)
+    _ref_cache:remove(filepath)
 end
 
 -- Forgets all locally cached cover state for one book (stretched bitmap,
@@ -2627,7 +2546,7 @@ function M.getCroppedCoverBB(filepath, w, h, align)
     if cropped then return cropped end
 
     -- Shared uncropped ref; each slot shape is cropped from it once.
-    local ref_bb = _cachedRefCoverBB(filepath)
+    local ref_bb = _ref_cache:get(filepath)
     if not ref_bb then
         local raw_bb = _loadCoverBB(bim, filepath)
         if not raw_bb then return _noCover(filepath) end
@@ -2641,37 +2560,14 @@ function M.getCroppedCoverBB(filepath, w, h, align)
 end
 
 function M.clearCoverCache()
-    -- Stretch-only cache (infra/sui_cover_cache.lua) — cheap, unconditional:
-    -- clear()'s own contract is already "drop references, don't free()"
-    -- (see that module), so no deferred-sweep coordination is needed here.
+    -- Every cover cache drops its references and reports the released bytes
+    -- to infra/sui_memory.lua; widgets may still hold some of these buffers,
+    -- so none is freed explicitly.
     SUICoverCache:clear()
-    _crop_cache, _crop_bytes = {}, 0
-
-    -- No-cover probes hold no bb payload (just filepath markers) — nothing
-    -- to free, reset synchronously.
-    _no_cover_probe = {}
-    _no_cover_order = {}
-
-    -- Reference cover cache (backs Config.getCroppedCoverBB) is the only
-    -- remaining table here that holds real blitbuffers. It's never handed
-    -- to any ImageWidget outside this module (see _getRefCoverBB) — it only
-    -- ever serves as _scaleBBToSlot's source, and that call already
-    -- copies/crops the pixels it needs before returning, so nothing outside
-    -- holds a reference to these entries. Safe to free on a deferred sweep.
-    if next(_bim_ref_cache) == nil then return end
-
-    local to_free = _bim_ref_cache
-    _bim_ref_cache = {}; _bim_ref_order = {}; _bim_ref_bytes = 0
+    _crop_cache:clear()
+    _ref_cache:clear()
+    _no_cover:clear()
     _RenderImage = nil
-
-    local UIManager = require("ui/uimanager")
-    local function freeNext()
-        local k, entry = next(to_free)
-        if not k then return end
-        pcall(function() entry.bb:free() end); to_free[k] = nil
-        if next(to_free) then UIManager:scheduleIn(0.1, freeNext) end
-    end
-    UIManager:scheduleIn(0.1, freeNext)
 end
 
 function M.flushCoverQueue()

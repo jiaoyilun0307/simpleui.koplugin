@@ -16,6 +16,7 @@ local Device         = require("device")
 local Screen         = Device.screen
 local logger         = require("logger")
 local SUISettings = require("infra/sui_store")
+local Memory      = require("infra/sui_memory")
 local SUIStyle    = require("features/sui_style")
 
 -- Lazy references to sibling modules — resolved on first use to avoid
@@ -678,27 +679,58 @@ end
 -- ---------------------------------------------------------------------------
 -- Shared helper to paint a widget with perfect alpha transparency over wallpapers
 -- ---------------------------------------------------------------------------
-function M.paintWithAlphaMask(widget, target_bb, x, y, w, h, fgcolor, custom_paint_fn, tmp_bb)
+
+-- Scratch buffers shared by every alpha-mask paint, one per nesting level: a
+-- masked widget can contain another one. A level only ever grows, so painting
+-- allocates no pixel memory once the largest widget has been seen.
+local _scratch = {}
+local _scratch_depth = 0
+
+-- Returns an exactly w×h view of the scratch buffer of the next nesting level.
+local function _acquireMask(w, h)
+    _scratch_depth = _scratch_depth + 1
+    local bb = _scratch[_scratch_depth]
+    if not bb or bb:getWidth() < w or bb:getHeight() < h then
+        local grown_w = bb and math.max(bb:getWidth(), w) or w
+        local grown_h = bb and math.max(bb:getHeight(), h) or h
+        if bb then bb:free() end
+        bb = Blitbuffer.new(grown_w, grown_h, Blitbuffer.TYPE_BB8)
+        _scratch[_scratch_depth] = bb
+    end
+    return bb:viewport(0, 0, w, h)
+end
+
+local function _paintMasked(widget, mask, target_bb, x, y, w, h, fgcolor, custom_paint_fn)
+    mask:paintRect(0, 0, w, h, SUIStyle.COLOR.surface)
+    if custom_paint_fn then
+        custom_paint_fn(widget, mask, 0, 0)
+    else
+        widget:paintTo(mask, 0, 0)
+    end
+    mask:invertRect(0, 0, w, h)
+    target_bb:colorblitFromRGB32(mask, x, y, 0, 0, w, h, fgcolor)
+end
+
+-- Frees the scratch buffers. They are re-allocated on demand.
+function M.releaseScratch()
+    if _scratch_depth > 0 then return end
+    for level, bb in pairs(_scratch) do
+        bb:free()
+        _scratch[level] = nil
+    end
+end
+
+function M.paintWithAlphaMask(widget, target_bb, x, y, w, h, fgcolor, custom_paint_fn)
     -- widget can be nil if it was already freed (e.g. a widget shared with
     -- a tree that got torn down elsewhere via a CloseWidget cascade) while
     -- this wrapper is still reachable from a live paint pass. Skip the
     -- paint rather than crash the whole repaint pipeline.
     if not widget then return end
 
-    local own_bb = false
-    if not tmp_bb then
-        tmp_bb = Blitbuffer.new(w, h, Blitbuffer.TYPE_BB8)
-        own_bb = true
-    end
-    tmp_bb:fill(SUIStyle.COLOR.surface)
-    if custom_paint_fn then
-        custom_paint_fn(widget, tmp_bb, 0, 0)
-    else
-        widget:paintTo(tmp_bb, 0, 0)
-    end
-    tmp_bb:invertRect(0, 0, w, h)
-    target_bb:colorblitFromRGB32(tmp_bb, x, y, 0, 0, w, h, fgcolor)
-    if own_bb then tmp_bb:free() end
+    local mask = _acquireMask(w, h)
+    local ok, err = pcall(_paintMasked, widget, mask, target_bb, x, y, w, h, fgcolor, custom_paint_fn)
+    _scratch_depth = _scratch_depth - 1
+    if not ok then error(err, 0) end
 end
 
 -- Shared lazy loader used by makeAlphaMaskWidget and its callers below.
@@ -710,8 +742,8 @@ end
 
 -- ---------------------------------------------------------------------------
 -- makeAlphaMaskWidget — generic WidgetContainer wrapper that paints `inner`
--- through paintWithAlphaMask, recolored to `fgcolor`, with a cached scratch
--- Blitbuffer sized to the widget's own dimen.
+-- through paintWithAlphaMask, recolored to `fgcolor`, at the widget's own
+-- dimen.
 --
 -- This is the shared shape behind makeColoredText, makeAlphaTextBox, and
 -- wrapDimmable below (each just builds a different `inner` and picks a
@@ -738,12 +770,7 @@ function M.makeAlphaMaskWidget(inner, fgcolor, dimen)
         local w = self.dimen.w
         local h = self.dimen.h
         if w <= 0 or h <= 0 then return end
-
-        if not self._tmp_bb or self._tmp_bb:getWidth() ~= w or self._tmp_bb:getHeight() ~= h then
-            if self._tmp_bb then self._tmp_bb:free() end
-            self._tmp_bb = Blitbuffer.new(w, h, Blitbuffer.TYPE_BB8)
-        end
-        M.paintWithAlphaMask(self._inner, bb, x, y, w, h, self._fg, nil, self._tmp_bb)
+        M.paintWithAlphaMask(self._inner, bb, x, y, w, h, self._fg)
     end
 
     function widget:onCloseWidget()
@@ -754,10 +781,6 @@ function M.makeAlphaMaskWidget(inner, fgcolor, dimen)
         if self._inner then
             self._inner:free()
             self._inner = nil
-        end
-        if self._tmp_bb then
-            self._tmp_bb:free()
-            self._tmp_bb = nil
         end
     end
 
@@ -1221,5 +1244,7 @@ function M.applyPresetWithNotice(apply_fn, on_applied, sync_repaint)
     end)
     return true
 end
+
+Memory.onReset(M.releaseScratch)
 
 return M

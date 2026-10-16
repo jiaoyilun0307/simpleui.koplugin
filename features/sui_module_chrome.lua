@@ -30,9 +30,19 @@ function M.skipsModuleChrome(id)
     return false
 end
 
--- Whether the module's frame is switched on (a stored per-module toggle).
-function M.isFrameOn(pfx, id)
-    return SUISettings:isTrue((pfx or "simpleui_hs_") .. (id or "") .. "_show_frame")
+-- Chrome of a surface drawn without any box: only the lateral inset applies.
+M.NO_CHROME = { strength = 0, border_sz = 0 }
+
+-- Defaults of a surface whose frame and background start differently from a
+-- module: { frame = bool, strength = 0-100 }. Either field may be omitted.
+local NO_DEFAULTS = {}
+
+-- Whether the frame is switched on: the stored per-module toggle, or
+-- `default` while none is stored.
+function M.isFrameOn(pfx, id, default)
+    local stored = SUISettings:get((pfx or "simpleui_hs_") .. (id or "") .. "_show_frame")
+    if stored == nil then return default == true end
+    return stored == true
 end
 
 function M.setShowFrame(pfx, id, on)
@@ -41,14 +51,15 @@ end
 
 -- Resolved chrome of a module: backdrop `strength` (0-100) and the frame's
 -- `border_sz` in pixels (0 = no frame). Modules that skip chrome resolve to
--- neither.
-function M.resolve(pfx, id)
+-- neither. `defaults` applies while the user has chosen nothing.
+function M.resolve(pfx, id, defaults)
     pfx = pfx or "simpleui_hs_"
     id = id or ""
+    defaults = defaults or NO_DEFAULTS
     local chrome = { strength = 0, border_sz = 0, pfx = pfx, id = id }
     if not M.skipsModuleChrome(id) then
-        chrome.strength = SUIWallpaper.getModuleBackdropStrength(pfx, id)
-        chrome.border_sz = M.isFrameOn(pfx, id) and SUIStyle.BORDER_SZ or 0
+        chrome.strength = SUIWallpaper.getModuleBackdropStrength(pfx, id, defaults.strength)
+        chrome.border_sz = M.isFrameOn(pfx, id, defaults.frame) and SUIStyle.BORDER_SZ or 0
     end
     return chrome
 end
@@ -78,9 +89,14 @@ function M.boxInset(chrome)
     return (M.innerPad(chrome) + chrome.border_sz) * 2
 end
 
+-- Corner radius of every module frame, at the given landscape factor.
+function M.frameRadius(scale)
+    return math.floor(Screen:scaleBySize(12) * (scale or 1))
+end
+
 function M.radius(chrome, scale)
     if not M.hasChrome(chrome) then return 0 end
-    return math.floor(Screen:scaleBySize(12) * (scale or 1))
+    return M.frameRadius(scale)
 end
 
 function M.contentWidth(col_w, chrome)
@@ -167,20 +183,28 @@ function M.wrap(content, chrome, col_w, scale)
     return withOuter(box)
 end
 
+-- Insets `content` to the label column without drawing any chrome, for
+-- modules that draw their own boxes (see `owns_chrome` in moduleregistry.lua).
+function M.inset(content, col_w, scale)
+    return M.wrap(content, M.NO_CHROME, col_w, scale)
+end
+
 -- "Background" submenu: Frame toggle and Background Opacity. The opacity item
 -- is listed only while a wallpaper is active, since it has no effect
--- otherwise. Returns nil for modules that skip module-wide chrome.
-function M.makeBackgroundItem(pfx, id, refresh, _lc)
+-- otherwise. Returns nil for modules that skip module-wide chrome. `defaults`
+-- is as in M.resolve.
+function M.makeBackgroundItem(pfx, id, refresh, _lc, defaults)
     _lc = _lc or _
     if M.skipsModuleChrome(id) then return nil end
+    defaults = defaults or NO_DEFAULTS
     local Config = require("infra/sui_config")
     local items = {
         {
             text = _lc("Frame"),
-            checked_func = function() return M.isFrameOn(pfx, id) end,
+            checked_func = function() return M.isFrameOn(pfx, id, defaults.frame) end,
             keep_menu_open = true,
             callback = function()
-                M.setShowFrame(pfx, id, not M.isFrameOn(pfx, id))
+                M.setShowFrame(pfx, id, not M.isFrameOn(pfx, id, defaults.frame))
                 if refresh then refresh() end
             end,
         },
@@ -188,10 +212,10 @@ function M.makeBackgroundItem(pfx, id, refresh, _lc)
     if SUIWallpaper.isWallpaperActive() then
         items[#items + 1] = Config.makeBackdropStrengthItem({
             title         = _lc("Background Opacity"),
-            get           = function() return M.resolve(pfx, id).strength end,
+            get           = function() return M.resolve(pfx, id, defaults).strength end,
             set           = function(v) M.setStrength(pfx, id, v) end,
             refresh       = function() if refresh then refresh() end end,
-            default_value = Backdrop.BACKDROP_DEFAULT.module,
+            default_value = defaults.strength or Backdrop.BACKDROP_DEFAULT.module,
             _lc           = _lc,
         })
     end

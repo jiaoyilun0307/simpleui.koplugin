@@ -31,6 +31,8 @@ local UI           = require("infra/sui_core")
 local SUISettings  = require("infra/sui_store")
 local SUIStyle     = require("features/sui_style")
 local BookStats    = require("infra/sui_book_stats")
+local LRU          = require("infra/sui_lru")
+local Memory       = require("infra/sui_memory")
 local PAD          = UI.PAD
 local PAD2         = UI.PAD2
 local CLR_TEXT_SUB = UI.CLR_TEXT_SUB
@@ -367,51 +369,6 @@ local function applyProgressBadge(cover_widget, bd, slot, pfx)
     return SH.applyProgressBadge(cover_widget, bd, slot.w, slot.h, opts)
 end
 
--- ---------------------------------------------------------------------------
--- LRU cache — capped at `max_entries` keyed values. Eviction scans the small
--- table for the least recently used entry, which keeps RAM bounded even when
--- the user browses a large TBR list across a long session. Evicted values are
--- only dereferenced, never freed, so a widget still holding one stays valid.
--- ---------------------------------------------------------------------------
-
-local function newLru(max_entries)
-    return { max = max_entries, count = 0, tick = 0, entries = {} }
-end
-
-local function lruGet(lru, key)
-    local entry = lru.entries[key]
-    if not entry then return nil end
-    lru.tick = lru.tick + 1
-    entry.tick = lru.tick
-    return entry.value
-end
-
-local function lruRemove(lru, key)
-    if lru.entries[key] then
-        lru.entries[key] = nil
-        lru.count = lru.count - 1
-    end
-end
-
--- Stores `value` under `key`, dropping the least recently used entry first
--- when a new key would exceed the cap.
-local function lruPut(lru, key, value)
-    if not lru.entries[key] then
-        if lru.count >= lru.max then
-            local oldest_key, oldest_tick = nil, math.huge
-            for k, e in pairs(lru.entries) do
-                if e.tick < oldest_tick then
-                    oldest_key, oldest_tick = k, e.tick
-                end
-            end
-            if oldest_key then lruRemove(lru, oldest_key) end
-        end
-        lru.count = lru.count + 1
-    end
-    lru.tick = lru.tick + 1
-    lru.entries[key] = { value = value, tick = lru.tick }
-end
-
 local fetchBookStats = BookStats.fetch
 
 -- Resolves a book's partial_md5_checksum: prefers the prefetched entry,
@@ -561,19 +518,20 @@ function TiltedCover:handleEvent()
     return false
 end
 
--- Warped covers keyed by book, side and size. Evicted or replaced entries are
--- only dereferenced: a widget on screen may still be painting one, and its
--- buffer is reclaimed by the Blitbuffer finalizer once the last widget drops
--- it. An entry made from a cover bitmap records the cover's revision and is
--- rebuilt once another cover replaces it; enlarging the same cover keeps it.
-local _tilt_cache = newLru(TILT_CACHE_MAX)
+-- Warped covers keyed by book, side and size, bounded by count and bytes.
+-- Evicted or replaced entries are only dereferenced: a widget on screen may
+-- still be painting one, and its buffer is reclaimed by the Blitbuffer
+-- finalizer once the last widget drops it. An entry made from a cover bitmap
+-- records the cover's revision and is rebuilt once another cover replaces it;
+-- enlarging the same cover keeps it.
+local _tilt_cache = LRU.new{ max_entries = TILT_CACHE_MAX, max_bytes = Memory.budgets().tilt }
 
 -- Warped entry of `slot` stored under `key`. `source` is a cover-cache bitmap
 -- (must not be freed here) and `revision` identifies the cover it holds. When
 -- `source` is nil, `render` returns a newly allocated bitmap that this
 -- function frees after warping.
 local function tiltEntry(slot, key, source, revision, render)
-    local entry = lruGet(_tilt_cache, key)
+    local entry = _tilt_cache:get(key)
     if entry and entry.revision == revision then return entry end
 
     local w, h = math.floor(slot.w), math.floor(slot.h)
@@ -629,7 +587,7 @@ local function tiltEntry(slot, key, source, revision, render)
     end
 
     warped.revision = revision
-    lruPut(_tilt_cache, key, warped)
+    _tilt_cache:put(key, warped, Memory.bbBytes(warped))
     return warped
 end
 
@@ -934,6 +892,7 @@ M.enabled_key = "coverdeck_enabled"
 M.default_on  = false
 M.has_covers  = true   -- activates e-ink dithering and cover poll
 M.is_book_mod = true   -- suppresses empty-state when active
+M.needs       = require("engines/sui_book_sources").get("recent").needs
 
 -- Text elements with a user-selectable font family and size.
 M.text_elems  = { "title", "author", "info" }
@@ -945,7 +904,7 @@ function M.reset()
     cancelWarmup()
     _SH = nil
     BookStats.invalidate()
-    _tilt_cache = newLru(TILT_CACHE_MAX)
+    _tilt_cache:clear()
 end
 
 -- No-op: called from main.lua:onCloseDocument as a fallback when the closed
@@ -1823,5 +1782,7 @@ function M.getMenuItems(ctx_menu)
         },
     }, ctx_menu)
 end
+
+Memory.onReset(M.reset)
 
 return M

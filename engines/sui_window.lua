@@ -4008,9 +4008,10 @@ function SUIWindow.makeSettingsScreens(buildRoot)
             for _, it in ipairs(picker_items) do
                 local _it = it
                 rows[#rows + 1] = SUIWindow.ListRow{
-                    title   = _it.text,
-                    inner_w = iw,
-                    on_tap  = function() _it.on_tap(ctx) end,
+                    title        = _it.text,
+                    inner_w      = iw,
+                    show_chevron = _it.show_chevron,
+                    on_tap       = function() _it.on_tap(ctx) end,
                 }
             end
         end

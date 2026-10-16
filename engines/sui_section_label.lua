@@ -14,7 +14,6 @@
 -- M.get, so a cache owned by one screen instance never outlives the callbacks
 -- it holds.
 
-local Button          = require("ui/widget/button")
 local CenterContainer = require("ui/widget/container/centercontainer")
 local Font            = require("ui/font")
 local FrameContainer  = require("ui/widget/container/framecontainer")
@@ -22,10 +21,9 @@ local Geom            = require("ui/geometry")
 local HorizontalGroup = require("ui/widget/horizontalgroup")
 local HorizontalSpan  = require("ui/widget/horizontalspan")
 local LeftContainer   = require("ui/widget/container/leftcontainer")
-local Screen          = require("device").screen
 
-local Bottombar = require("screens/sui_bottombar")
 local Config    = require("infra/sui_config")
+local PageNav   = require("engines/sui_page_nav")
 local SUIStyle  = require("features/sui_style")
 local UI        = require("infra/sui_core")
 
@@ -109,47 +107,6 @@ end
 -- Rendering
 -- ---------------------------------------------------------------------------
 
--- Icon size for the page-nav chevrons (base pixels, scaled at use time).
-local NAV_ICON_SIZE = 16
-
--- Chevron pair flanking the page indicator. Each button is padded
--- vertically up to a finger-sized tap zone without growing the row height,
--- and the one at the page boundary is dimmed and disabled. With
--- `has_wallpaper` the icons are alpha-blended at construction time and the
--- button frame paints transparently over the wallpaper.
--- turn_page(delta) is called on tap.
-local function buildPageNavButtons(page, npages, row_h, turn_page, has_wallpaper)
-    local icon_size = Screen:scaleBySize(NAV_ICON_SIZE)
-    local v_pad = math.max(0, math.floor((row_h - icon_size) / 2))
-    local function make(icon, enabled, delta)
-        local btn = Button:new{
-            icon            = icon,
-            icon_width      = icon_size,
-            icon_height     = icon_size,
-            bordersize      = 0,
-            margin          = 0,
-            padding_top     = v_pad,
-            padding_bottom  = v_pad,
-            padding_left    = 0,
-            padding_right   = 0,
-            enabled         = enabled,
-            callback        = function() turn_page(delta) end,
-        }
-        Bottombar.patchDimmedIcon(btn)
-        if has_wallpaper then Bottombar.patchWallpaperIcon(btn) end
-        return btn
-    end
-    local function makePair()
-        return make("chevron.left", page > 1, -1), make("chevron.right", page < npages, 1)
-    end
-    if not has_wallpaper then return makePair() end
-    local prev_btn, next_btn
-    Bottombar.withWallpaperAlphaIcons(function()
-        prev_btn, next_btn = makePair()
-    end)
-    return prev_btn, next_btn
-end
-
 -- Title row with the right-aligned text and, when `turn_page` is given,
 -- chevrons on both sides of it. All three share one row height so they
 -- centre on a single line.
@@ -157,37 +114,28 @@ local function buildTitleRow(desc, avail_w, face, scale, turn_page, has_wallpape
     local face_right = Font:getFace(SUIStyle.FACE_REGULAR, math.max(8, math.floor(SUIStyle.FS_DETAIL * scale)))
     local right_widget = UI.makeColoredText{ text = desc.right_text, face = face_right, bold = false }
     local title_widget = UI.makeColoredText{ text = desc.text, face = face, bold = true }
-    local right_w = right_widget:getSize().w
-    local row_h   = math.max(title_widget:getSize().h, right_widget:getSize().h)
-    local gap     = PAD
+    local row_h = math.max(title_widget:getSize().h, right_widget:getSize().h)
+    local gap   = PAD
 
-    local prev_button, next_button
-    local nav_w = 0
+    local right
     if turn_page then
-        prev_button, next_button = buildPageNavButtons(desc.page, desc.npages, row_h, turn_page, has_wallpaper)
-        nav_w = prev_button:getSize().w + next_button:getSize().w + gap * 2
+        right = PageNav.buildPager(desc.page, desc.npages, row_h, right_widget, gap, turn_page, has_wallpaper)
+    else
+        right = CenterContainer:new{
+            dimen = Geom:new{ w = right_widget:getSize().w, h = row_h },
+            right_widget,
+        }
     end
 
-    -- The title gets a real-width slot so the right text stays at the row's
+    -- The title gets a real-width slot so the right side stays at the row's
     -- right edge (a TextWidget only reports its glyph width).
     local row = HorizontalGroup:new{ align = "center" }
     row[#row + 1] = LeftContainer:new{
-        dimen = Geom:new{ w = math.max(1, avail_w - right_w - nav_w - gap), h = row_h },
+        dimen = Geom:new{ w = math.max(1, avail_w - right:getSize().w - gap), h = row_h },
         title_widget,
     }
     row[#row + 1] = HorizontalSpan:new{ width = gap }
-    if prev_button then
-        row[#row + 1] = prev_button
-        row[#row + 1] = HorizontalSpan:new{ width = gap }
-    end
-    row[#row + 1] = CenterContainer:new{
-        dimen = Geom:new{ w = right_w, h = row_h },
-        right_widget,
-    }
-    if next_button then
-        row[#row + 1] = HorizontalSpan:new{ width = gap }
-        row[#row + 1] = next_button
-    end
+    row[#row + 1] = right
     return row
 end
 

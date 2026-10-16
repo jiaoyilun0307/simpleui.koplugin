@@ -861,6 +861,21 @@ local function _loadStaleBooksFromDisk()
     return v
 end
 
+-- Screen-wide setting: keep the Currently Reading book out of the recent
+-- books. It is applied when the recent books are prefetched, so every surface
+-- listing them follows it. On by default.
+local EXCLUDE_CURRENT_KEY = "recent_exclude_currently"
+
+function SH.isCurrentExcluded(pfx)
+    local store = _getSUIStore()
+    return not store or store:readSetting((pfx or "") .. EXCLUDE_CURRENT_KEY) ~= false
+end
+
+function SH.setCurrentExcluded(pfx, excluded)
+    local store = _getSUIStore()
+    if store then store:saveSetting((pfx or "") .. EXCLUDE_CURRENT_KEY, excluded) end
+end
+
 -- opts.exclude_current (default true): when Currently and Recent are both
 -- active, keep the currently-reading book out of recent_fps. Callers that
 -- pass false allow the same book in both modules.

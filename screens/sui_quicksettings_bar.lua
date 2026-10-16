@@ -1470,13 +1470,6 @@ local function rebuildOpenMenus()
     if RUI and RUI.instance then rebuild(RUI.instance.menu) end
 end
 
--- Toast shown when the action slots are full.
-local function toastSlotsFull()
-    UI.Notify.toast(string.format(
-        N_("Maximum of %d slot reached. Remove one first.",
-           "Maximum of %d slots reached. Remove one first.", MAX_SLOTS), MAX_SLOTS), 2)
-end
-
 -- Every action that can be placed on the bar, sorted by label.
 local function actionPool()
     local QA, pool = _QA(), {}
@@ -1488,13 +1481,6 @@ local function actionPool()
     end
     table.sort(pool, function(a, b) return a.label:lower() < b.label:lower() end)
     return pool
-end
-
-local function hasSlot(id)
-    for _i, sid in ipairs(getSlots()) do
-        if sid == id then return true end
-    end
-    return false
 end
 
 -- Master row: enables or disables the whole bar, after a restart.
@@ -1523,138 +1509,29 @@ local function makeEnableItem(ctx_menu)
     }
 end
 
--- "Quick Actions" row: classic checklist submenu with an Arrange entry, and
--- the arrange screen with an item picker in the SUI menu.
-local function makeQuickActionsItem(ctx_menu, refresh)
-    local pool = actionPool()
-    local uim  = (ctx_menu and ctx_menu.UIManager) or UIManager
-
-    local function sortItems()
-        local items = {}
-        for _i, sid in ipairs(getSlots()) do
-            items[#items + 1] = { text = labelFor(sid), orig_item = sid }
-        end
-        return items
-    end
-
-    local function saveSortedSlots(items)
-        local slots = {}
-        for _i, it in ipairs(items) do slots[#slots + 1] = it.orig_item end
-        saveSlots(slots)
-        refresh()
-    end
-
-    local sub = {
-        {
-            text           = _("Arrange Items"),
-            keep_menu_open = true,
-            separator      = true,
-            enabled_func   = function() return #getSlots() >= 2 end,
-            callback       = function()
-                if #getSlots() < 2 then
-                    UI.Notify.toast(_("Add at least 2 actions to arrange."), 2)
-                    return
-                end
-                local items = sortItems()
-                uim:show(require("ui/widget/sortwidget"):new{
-                    title             = _("Arrange Quick Settings"),
-                    item_table        = items,
-                    covers_fullscreen = true,
-                    callback          = function() saveSortedSlots(items) end,
-                })
+-- "Quick Actions" row: the action slots of the bar, picked from every action.
+local function makeQuickActionsItem(ctx_menu)
+    return require("features/sui_arrange").makeListItem{
+        ctx_menu = ctx_menu,
+        title    = _("Quick Actions"),
+        labels   = {
+            action  = _("Arrange Quick Settings"),
+            empty   = _("No actions active yet."),
+            too_few = _("Add at least 2 actions to arrange."),
+            add     = _("Add Action"),
+            full    = function(max)
+                return string.format(N_("Maximum of %d slot reached. Remove one first.",
+                    "Maximum of %d slots reached. Remove one first.", max), max)
             end,
         },
-    }
-
-    for _i, entry in ipairs(pool) do
-        sub[#sub + 1] = {
-            text_func = function()
-                for pos, sid in ipairs(getSlots()) do
-                    if sid == entry.id then
-                        return string.format("%s  (%d/%d)", entry.label, pos, MAX_SLOTS)
-                    end
-                end
-                return entry.label
-            end,
-            checked_func   = function() return hasSlot(entry.id) end,
-            keep_menu_open = true,
-            callback       = function()
-                local slots = getSlots()
-                local pos
-                for i, sid in ipairs(slots) do
-                    if sid == entry.id then pos = i; break end
-                end
-                if pos then
-                    table.remove(slots, pos)
-                elseif #slots >= MAX_SLOTS then
-                    toastSlotsFull()
-                    return
-                else
-                    slots[#slots + 1] = entry.id
-                end
-                saveSlots(slots)
-                refresh()
-            end,
-        }
-    end
-
-    return {
-        text                = _("Quick Actions"),
-        sub_item_table_func = function() return sub end,
-        sui_build = ctx_menu and ctx_menu.is_sui and function(ctx, _item)
-            local SUIWindow = require("engines/sui_window")
-            return SUIWindow.ListRow{
-                title        = _("Quick Actions"),
-                subtitle     = function()
-                    local slots = getSlots()
-                    if #slots == 0 then return _("No actions active yet.") end
-                    local names = {}
-                    for _j, sid in ipairs(slots) do names[#names + 1] = labelFor(sid) end
-                    return table.concat(names, "  ·  ")
-                end,
-                inner_w      = ctx.inner_w,
-                item_count   = function() return #getSlots() end,
-                max_items    = MAX_SLOTS,
-                show_chevron = true,
-                on_tap       = function()
-                    local items = sortItems()
-                    ctx.push("arrange", {
-                        title         = _("Quick Actions"),
-                        items         = items,
-                        empty_text    = _("No actions active yet."),
-                        item_count    = function() return #getSlots() end,
-                        max_items     = MAX_SLOTS,
-                        on_delete     = function(_item) end,
-                        on_change     = saveSortedSlots,
-                        footer_text   = _("Add Action"),
-                        footer_action = function(ctx2)
-                            local picker_items = {}
-                            for _j, entry in ipairs(pool) do
-                                if not hasSlot(entry.id) then
-                                    picker_items[#picker_items + 1] = {
-                                        text   = entry.label,
-                                        on_tap = function(picker_ctx)
-                                            local slots = getSlots()
-                                            if #slots >= MAX_SLOTS then
-                                                toastSlotsFull()
-                                                return
-                                            end
-                                            slots[#slots + 1] = entry.id
-                                            saveSlots(slots)
-                                            table.insert(items, { text = entry.label, orig_item = entry.id })
-                                            refresh()
-                                            picker_ctx.pop()
-                                            ctx2.repaint()
-                                        end,
-                                    }
-                                end
-                            end
-                            ctx2.push("item_picker", { title = _("Add Action"), items = picker_items })
-                        end,
-                    })
-                end,
-            }
-        end or nil,
+        max    = MAX_SLOTS,
+        pool   = actionPool,
+        label  = labelFor,
+        getIds = getSlots,
+        setIds = function(ids)
+            saveSlots(ids)
+            rebuildOpenMenus()
+        end,
     }
 end
 
@@ -1718,7 +1595,7 @@ function QSBar.makeMenuItems(ctx_menu)
     }
 
     -- The SUI menu reaches the statistics from the Book Details screen.
-    local item_rows = { makeQuickActionsItem(ctx_menu, refresh) }
+    local item_rows = { makeQuickActionsItem(ctx_menu) }
     local lists = { book_list }
     if not (ctx_menu and ctx_menu.is_sui) then lists[#lists + 1] = stats_list end
     for _i, list in ipairs(lists) do

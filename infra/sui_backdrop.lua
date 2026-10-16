@@ -34,14 +34,15 @@ local STRENGTH_MIN, STRENGTH_MAX = 0, 100
 M.STRENGTH_MIN, M.STRENGTH_MAX = STRENGTH_MIN, STRENGTH_MAX
 
 -- Semantic default strength of every surface. Bars keep the solid look of a
--- plain UI; cards, buttons and the cover strip start solid; modules start
--- transparent over the wallpaper.
+-- plain UI; cards, buttons, the cover strip and tab bars start solid; modules
+-- start transparent over the wallpaper.
 M.BACKDROP_DEFAULT = {
     statusbar    = 100,
     navbar       = 100,
     pagination   = 100,
     titlebar     = 100,
     module       = 0,
+    tab_bar      = 100,
     cover_strip  = 100,
     folder_label = 75,
     card         = 100,

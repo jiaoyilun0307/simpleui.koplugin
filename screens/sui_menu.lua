@@ -32,6 +32,8 @@ local Backdrop    = require("infra/sui_backdrop")
 -- see infra/sui_custom_screens.lua). Config.ALL_ACTIONS only ever mirrors the
 -- built-ins, so every pool below is built from QA.allIds() instead.
 local QA        = require("features/sui_quickactions")
+local Arrange   = require("features/sui_arrange")
+local LabelOptions = require("features/library/sui_label_options")
 
 -- ---------------------------------------------------------------------------
 -- Installer function
@@ -319,98 +321,56 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
         return QA.getEntry(id).label
     end
 
-    local function makeTabsMenu(ctx_menu)
-        local items = {}
+    -- Every action a tab can show on this device.
+    local function getTabPool()
+        local pool = {}
+        for _i, id in ipairs(QA.allIds()) do
+            if actionAvailable(id) then pool[#pool + 1] = { id = id, label = getActionLabel(id) } end
+        end
+        for _i, qa_id in ipairs(getCustomQAList()) do
+            pool[#pool + 1] = { id = qa_id, label = getActionLabel(qa_id) }
+        end
+        return pool
+    end
 
-        items[#items + 1] = {
-            text           = _("Arrange Tabs"),
-            keep_menu_open = true,
-            separator      = true,
-            callback       = function()
-                local tabs       = loadTabConfig()
-                local sort_items = {}
-                for _i, tid in ipairs(tabs) do
-                    sort_items[#sort_items + 1] = { text = getActionLabel(tid), orig_item = tid }
+    local function makeTabsItem(ctx_menu)
+        return Arrange.makeListItem{
+            ctx_menu  = ctx_menu,
+            title     = _("Tabs"),
+            text_func = function()
+                local n     = #loadTabConfig()
+                local limit = Config.effectiveMaxTabs()
+                local remaining = limit - n
+                if remaining <= 0 then
+                    return string.format(_("Tabs  (%d/%d — at limit)"), n, limit)
                 end
-                local function on_save()
-                    local new_tabs = {}
-                    for _i, item in ipairs(sort_items) do new_tabs[#new_tabs + 1] = item.orig_item end
-                    _ensureHomePresent(new_tabs)
-                    saveTabConfig(new_tabs)
-                    plugin:_scheduleRebuild()
-                    if ctx_menu and ctx_menu.refresh then ctx_menu.refresh() end
-                end
-                UIManager:show(SortWidget():new{
-                    title             = _("Arrange Tabs"),
-                    item_table        = sort_items,
-                    covers_fullscreen = true,
-                    callback          = on_save,
-                })
+                return string.format(_("Tabs  (%d/%d — %d left)"), n, limit, remaining)
+            end,
+            labels = {
+                action  = _("Arrange Tabs"),
+                empty   = _("No items selected."),
+                too_few = _("Add at least 2 tabs to arrange."),
+                full    = function(max)
+                    return string.format(N_("The maximum of %d tab has been reached. Remove one first.",
+                        "The maximum of %d tabs has been reached. Remove one first.", max), max)
+                end,
+                at_min  = function()
+                    return Config.isNavpagerEnabled()
+                        and _("Minimum 1 tab required in navpager mode.")
+                        or  _("Minimum 2 tabs required. Select another tab first.")
+                end,
+            },
+            max    = function() return Config.effectiveMaxTabs() end,
+            min    = function() return Config.isNavpagerEnabled() and 1 or 2 end,
+            pool   = getTabPool,
+            label  = getActionLabel,
+            getIds = loadTabConfig,
+            setIds = function(ids)
+                _ensureHomePresent(ids)
+                saveTabConfig(ids)
+                plugin:_scheduleRebuild()
             end,
         }
-
-        local toggle_items = {}
-        local action_pool  = {}
-        for _i, id in ipairs(QA.allIds()) do
-            if actionAvailable(id) then action_pool[#action_pool + 1] = id end
-        end
-        for _i, qa_id in ipairs(getCustomQAList()) do action_pool[#action_pool + 1] = qa_id end
-
-        for _i, aid in ipairs(action_pool) do
-            local _aid = aid
-            local _base_label = getActionLabel(_aid)
-            toggle_items[#toggle_items + 1] = {
-                _base        = _base_label,
-                text_func    = function()
-                    local limit = Config.effectiveMaxTabs()
-                    for _i, tid in ipairs(loadTabConfig()) do
-                        if tid == _aid then return _base_label end
-                    end
-                    local rem = limit - #loadTabConfig()
-                    if rem <= 2 then return _base_label .. string.format(N_("  (%d left)", "  (%d left)", rem), rem) end
-                    return _base_label
-                end,
-                checked_func = function()
-                    for _i, tid in ipairs(loadTabConfig()) do
-                        if tid == _aid then return true end
-                    end
-                    return false
-                end,
-                radio          = false,
-                keep_menu_open = true,
-                callback = function()
-                    local tabs       = loadTabConfig()
-                    local limit      = Config.effectiveMaxTabs()
-                    local min_tabs   = Config.isNavpagerEnabled() and 1 or 2
-                    local active_pos = nil
-                    for i, tid in ipairs(tabs) do
-                        if tid == _aid then active_pos = i; break end
-                    end
-                    if active_pos then
-                        if #tabs <= min_tabs then
-                            UI.Notify.toast(Config.isNavpagerEnabled()
-                                    and _("Minimum 1 tab required in navpager mode.")
-                                    or  _("Minimum 2 tabs required. Select another tab first."), 2)
-                            return
-                        end
-                        table.remove(tabs, active_pos)
-                    else
-                        if #tabs >= limit then
-                            UI.Notify.toast(string.format(N_("The maximum of %d tab has been reached. Remove one first.",
-                                   "The maximum of %d tabs has been reached. Remove one first.", limit), limit), 2)
-                            return
-                        end
-                        tabs[#tabs + 1] = _aid
-                    end
-                    _ensureHomePresent(tabs)
-                    saveTabConfig(tabs)
-                    plugin:_scheduleRebuild()
-                end,
-            }
-        end
-        table.sort(toggle_items, function(a, b) return a._base:lower() < b._base:lower() end)
-        for _i, item in ipairs(toggle_items) do items[#items + 1] = item end
-        return items
     end
 
     -- -----------------------------------------------------------------------
@@ -649,7 +609,7 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
     -- Topbar menu builders
     -- -----------------------------------------------------------------------
 
-    local function makeTopbarItemsMenu()
+    local function makeTopbarItemsMenu(ctx_menu)
         local items = {}
 
         -- Custom Text item — toggle visibility via tap, edit text via long-press.
@@ -1187,134 +1147,7 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
                 end,
                 separator = true,
             },
-            {
-                text_func = function()
-                    local n     = #loadTabConfig()
-                    local limit = Config.effectiveMaxTabs()
-                    local remaining = limit - n
-                    if remaining <= 0 then
-                        return string.format(_("Tabs  (%d/%d — at limit)"), n, limit)
-                    end
-                    return string.format(_("Tabs  (%d/%d — %d left)"), n, limit, remaining)
-                end,
-                sub_item_table_func = function() return makeTabsMenu(ctx_menu) end,
-                sui_build = ctx_menu and ctx_menu.is_sui and function(ctx, _item)
-                    local SUIWindow = require("engines/sui_window")
-                    return SUIWindow.ListRow{
-                        title        = _("Tabs"),
-                        subtitle     = function()
-                            local tabs = loadTabConfig()
-                            if #tabs == 0 then return _("No items selected.") end
-                            local names = {}
-                            for _, tid in ipairs(tabs) do
-                                names[#names + 1] = getActionLabel(tid)
-                            end
-                            return table.concat(names, "  ·  ")
-                        end,
-                        inner_w      = ctx.inner_w,
-                        item_count   = function() return #loadTabConfig() end,
-                        max_items    = function() return Config.effectiveMaxTabs() end,
-                        show_chevron = true,
-                        on_tap       = function()
-                            local tabs = loadTabConfig()
-                            local sort_items = {}
-                            local min_tabs = Config.isNavpagerEnabled() and 1 or 2
-                            
-                            local function refresh_delete_handlers()
-                                for i, item in ipairs(sort_items) do
-                                    local _tid = item.orig_item
-                                    if #sort_items > min_tabs then
-                                        item.on_delete = function()
-                                            local new_tabs = {}
-                                            for _, t in ipairs(loadTabConfig()) do
-                                                if t ~= _tid then table.insert(new_tabs, t) end
-                                            end
-                                            _ensureHomePresent(new_tabs)
-                                            saveTabConfig(new_tabs)
-                                            for j, v in ipairs(sort_items) do
-                                                if v.orig_item == _tid then table.remove(sort_items, j); break end
-                                            end
-                                            refresh_delete_handlers()
-                                            plugin:_scheduleRebuild()
-                                            if ctx_menu and ctx_menu.refresh then ctx_menu.refresh() end
-                                            ctx.repaint()
-                                        end
-                                    else
-                                        item.on_delete = nil
-                                    end
-                                end
-                            end
-                            
-                            for _, tid in ipairs(tabs) do
-                                sort_items[#sort_items + 1] = {
-                                    text = getActionLabel(tid),
-                                    orig_item = tid,
-                                }
-                            end
-                            refresh_delete_handlers()
-                            ctx.push("arrange", {
-                                title = _("Tabs"),
-                                items = sort_items,
-                                empty_text = _("No items selected."),
-                                item_count = function() return #loadTabConfig() end,
-                                max_items  = function() return Config.effectiveMaxTabs() end,
-                                on_change = function(items_to_save)
-                                    local new_tabs = {}
-                                    for _, item in ipairs(items_to_save) do new_tabs[#new_tabs + 1] = item.orig_item end
-                                    _ensureHomePresent(new_tabs)
-                                    saveTabConfig(new_tabs)
-                                    plugin:_scheduleRebuild()
-                                    if ctx_menu and ctx_menu.refresh then ctx_menu.refresh() end
-                                end,
-                                footer_text = _("Add Item"),
-                                footer_action = function(ctx2)
-                                    local tabs = loadTabConfig()
-                                    local action_pool = {}
-                                    for _i, id in ipairs(QA.allIds()) do
-                                        if actionAvailable(id) then action_pool[#action_pool + 1] = id end
-                                    end
-                                    for _i, qa_id in ipairs(getCustomQAList()) do action_pool[#action_pool + 1] = qa_id end
-                                    
-                                    local picker_items = {}
-                                    for _, aid in ipairs(action_pool) do
-                                        local is_sel = false
-                                        for _, tid in ipairs(tabs) do if tid == aid then is_sel = true break end end
-                                        if not is_sel then
-                                            local _aid = aid
-                                            local _label = getActionLabel(_aid)
-                                            picker_items[#picker_items + 1] = {
-                                                text = _label,
-                                                on_tap = function(picker_ctx)
-                                                    local cur = loadTabConfig()
-                                                    local limit = Config.effectiveMaxTabs()
-                                                    if #cur >= limit then
-                                                        UI.Notify.toast(string.format(N_("The maximum of %d tab has been reached. Remove one first.", "The maximum of %d tabs has been reached. Remove one first.", limit), limit), 2)
-                                                        return
-                                                    end
-                                                    cur[#cur + 1] = _aid
-                                                    _ensureHomePresent(cur)
-                                                    saveTabConfig(cur)
-                                                    table.insert(sort_items, { text = _label, orig_item = _aid })
-                                                    refresh_delete_handlers()
-                                                    plugin:_scheduleRebuild()
-                                                    if ctx_menu and ctx_menu.refresh then ctx_menu.refresh() end
-                                                    picker_ctx.pop()
-                                                    ctx2.repaint()
-                                                end
-                                            }
-                                        end
-                                    end
-                                    table.sort(picker_items, function(a, b) return a.text:lower() < b.text:lower() end)
-                                    ctx2.push("item_picker", {
-                                        title = _("Add Item"),
-                                        items = picker_items,
-                                    })
-                                end
-                            })
-                        end
-                    }
-                end or nil,
-            },
+            makeTabsItem(ctx_menu),
             {
                 text = _("Tab Style"),
                 sub_item_table_func = makeTypeMenu,
@@ -2411,7 +2244,7 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
                         and (_(_mod.name) .. "  " .. count_lbl)
                         or   _(_mod.name)
                 end
-                if _mod.id:match("_row_") then
+                if Registry.getMenuGroup(_mod.id) == "quick_actions" then
                     qa_items[#qa_items + 1] = {
                         text_func           = text_fn,
                         sub_item_table_func = function() return _moduleSettingsItems(_mod) end,
@@ -3011,6 +2844,60 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
         return item
     end
 
+    -- "Folder Name": visibility of the name label drawn inside the folder
+    -- cover, plus its layout, position, color, opacity and text size.
+    local function makeFolderNameItem(FC)
+        local function visible() return FC.getLabelMode() ~= "hidden" end
+        local function refresh()
+            FC.invalidateCache()
+            _refreshFC()
+        end
+
+        local getters = {
+            layout    = FC.getLabelLayout,
+            position  = FC.getLabelPosition,
+            color     = FC.getLabelColor,
+            opacity   = FC.getLabelOpacity,
+            scale_pct = FC.getLabelScalePct,
+        }
+        local setters = {
+            layout    = FC.setLabelLayout,
+            position  = FC.setLabelPosition,
+            color     = FC.setLabelColor,
+            opacity   = FC.setLabelOpacity,
+            scale_pct = FC.setLabelScale,
+        }
+
+        local items = {
+            Config.makeRadioSubmenuItem{
+                text    = _("Visibility"),
+                options = {
+                    { value = "overlay", label = _("Visible") },
+                    { value = "hidden",  label = _("Hidden") },
+                },
+                get     = FC.getLabelMode,
+                set     = FC.setLabelMode,
+                refresh = _refreshFC,
+            },
+        }
+        for _i, item in ipairs(LabelOptions.makeMenuItems{
+            get          = function(field) return getters[field]() end,
+            set          = function(field, value) setters[field](value) end,
+            refresh      = refresh,
+            enabled_func = visible,
+            size_title   = _("Folder Name Text Size"),
+            size_info    = _("Scale for the folder name overlay text.\n100% is the default size."),
+        }) do
+            items[#items + 1] = item
+        end
+
+        return {
+            text           = _("Folder Name"),
+            enabled_func   = function() return not FC.getShowTitleStrip() end,
+            sub_item_table = items,
+        }
+    end
+
     -- "Group by Book Series": one checkbox per view whose lists can be grouped.
     local function makeSeriesGroupingItem(FC)
         local BM = require("features/library/sui_library_browse")
@@ -3517,135 +3404,7 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
                                 },
                             },
                             makeFinishedBooksItem(FC),
-                            -- ── Folder Name ───────────────────────────────────────────────────
-                            {
-                                text         = _("Folder Name"),
-                                enabled_func = function() return not FC.getShowTitleStrip() end,
-                                sub_item_table = {
-                                    {
-                                        text_func  = function() return _("Visibility") end,
-                                        value_func = function()
-                                            return FC.getLabelMode() == "hidden" and _("Hidden") or _("Visible")
-                                        end,
-                                        sub_item_table = {
-                                            {
-                                                text           = _("Visible"),
-                                                radio          = true,
-                                                checked_func   = function() return FC.getLabelMode() ~= "hidden" end,
-                                                keep_menu_open = true,
-                                                callback       = function() FC.setLabelMode("overlay"); _refreshFC() end,
-                                            },
-                                            {
-                                                text           = _("Hidden"),
-                                                radio          = true,
-                                                checked_func   = function() return FC.getLabelMode() == "hidden" end,
-                                                keep_menu_open = true,
-                                                callback       = function() FC.setLabelMode("hidden"); _refreshFC() end,
-                                            },
-                                        },
-                                    },
-                                    {
-                                        text_func  = function() return _("Layout") end,
-                                        value_func = function()
-                                            return FC.getLabelLayout() == "band" and _("Full Width") or _("Floating")
-                                        end,
-                                        enabled_func = function() return FC.getLabelMode() ~= "hidden" end,
-                                        sub_item_table = {
-                                            {
-                                                text           = _("Floating"),
-                                                radio          = true,
-                                                checked_func   = function() return FC.getLabelLayout() ~= "band" end,
-                                                keep_menu_open = true,
-                                                callback       = function() FC.setLabelLayout("floating"); _refreshFC() end,
-                                            },
-                                            {
-                                                text           = _("Full Width"),
-                                                radio          = true,
-                                                checked_func   = function() return FC.getLabelLayout() == "band" end,
-                                                keep_menu_open = true,
-                                                callback       = function() FC.setLabelLayout("band"); _refreshFC() end,
-                                            },
-                                        },
-                                    },
-                                    {
-                                        text_func  = function() return _("Position") end,
-                                        value_func = function()
-                                            local p = FC.getLabelPosition()
-                                            if p == "top" then return _("Top")
-                                            elseif p == "center" then return _("Center")
-                                            else return _("Bottom") end
-                                        end,
-                                        enabled_func = function() return FC.getLabelMode() ~= "hidden" end,
-                                        sub_item_table = {
-                                            {
-                                                text           = _("Top"),
-                                                radio          = true,
-                                                checked_func   = function() return FC.getLabelPosition() == "top" end,
-                                                keep_menu_open = true,
-                                                callback       = function() FC.setLabelPosition("top"); _refreshFC() end,
-                                            },
-                                            {
-                                                text           = _("Center"),
-                                                radio          = true,
-                                                checked_func   = function() return FC.getLabelPosition() == "center" end,
-                                                keep_menu_open = true,
-                                                callback       = function() FC.setLabelPosition("center"); _refreshFC() end,
-                                            },
-                                            {
-                                                text           = _("Bottom"),
-                                                radio          = true,
-                                                checked_func   = function() return FC.getLabelPosition() == "bottom" end,
-                                                keep_menu_open = true,
-                                                callback       = function() FC.setLabelPosition("bottom"); _refreshFC() end,
-                                            },
-                                        },
-                                    },
-                                    {
-                                        text_func  = function() return _("Color") end,
-                                        value_func = function()
-                                            return FC.getLabelColor() == "dark" and _("Dark") or _("Light")
-                                        end,
-                                        enabled_func = function() return FC.getLabelMode() ~= "hidden" end,
-                                        sub_item_table = {
-                                            {
-                                                text           = _("Light"),
-                                                radio          = true,
-                                                checked_func   = function() return FC.getLabelColor() ~= "dark" end,
-                                                keep_menu_open = true,
-                                                callback       = function() FC.setLabelColor("light"); _refreshFC() end,
-                                            },
-                                            {
-                                                text           = _("Dark"),
-                                                radio          = true,
-                                                checked_func   = function() return FC.getLabelColor() == "dark" end,
-                                                keep_menu_open = true,
-                                                callback       = function() FC.setLabelColor("dark"); _refreshFC() end,
-                                            },
-                                        },
-                                    },
-                                    Config.makeBackdropStrengthItem({
-                                        title         = _("Background Opacity"),
-                                        info          = _("0% transparent, 100% solid. Only the background changes; the text stays solid."),
-                                        get           = FC.getLabelOpacity,
-                                        set           = FC.setLabelOpacity,
-                                        default_value = Backdrop.BACKDROP_DEFAULT.folder_label,
-                                        enabled_func  = function() return FC.getLabelMode() ~= "hidden" end,
-                                        refresh       = function() FC.invalidateCache(); _refreshFC() end,
-                                    }),
-                                    (function()
-                                        local Config = require("infra/sui_config")
-                                        return Config.makeScaleItem({
-                                            text_func    = function() return _("Text Size") end,
-                                            enabled_func = function() return FC.getLabelMode() ~= "hidden" end,
-                                            title        = _("Folder Name Text Size"),
-                                            info         = _("Scale for the folder name overlay text.\n100% is the default size."),
-                                            get          = function() return FC.getLabelScalePct() end,
-                                            set          = function(v) FC.setLabelScale(v) end,
-                                            refresh      = function() FC.invalidateCache(); _refreshFC() end,
-                                        })
-                                    end)(),
-                                },
-                            },
+                            makeFolderNameItem(FC),
                             -- ── Title and Author Below Covers ─────────────────────────────────
                             {
                                 text         = _("Title and Author Below Covers"),

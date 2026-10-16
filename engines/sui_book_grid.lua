@@ -21,6 +21,8 @@
 --     library, not a curated subset; spec.grid = true)
 --   • module_collections.lua (Collections — one cell per collection, via
 --     spec.renderCell, instead of one cell per book; spec.grid = true)
+--   • module_tab_grid.lua    (Tabbed Grid, instantiable — the source changes
+--     with the active tab, via spec.getSource; no section label)
 --
 -- Not a registry module (no top-level M.id / M.build) — a pure library.
 --
@@ -33,6 +35,7 @@
 --   badge_new_mode — see _migrateProgressStyle/getBadgeNewMode).
 
 local Blitbuffer      = require("ffi/blitbuffer")
+local Memory          = require("infra/sui_memory")
 local BD              = require("ui/bidi")
 local T               = require("ffi/util").template
 local Font            = require("ui/font")
@@ -193,6 +196,11 @@ local function _migrateProgressStyle(pfx, id)
     elseif p then return "bar"
     elseif t then return "text"
     else return "none" end
+end
+
+-- True when `progress_style` prints the percentage under the cover.
+function GridRenderer.progressDrawsText(progress_style)
+    return progress_style == "text" or progress_style == "bar_text"
 end
 
 function GridRenderer.getProgressStyle(pfx, id, spec_cfg)
@@ -584,6 +592,21 @@ function GridRenderer.turnPage(page, npages, delta)
 end
 
 -- ---------------------------------------------------------------------------
+-- Requests of a paginated module to the screen that owns `ctx`: turn the
+-- module's page by `delta`, or repaint it after its state changed. Both are
+-- no-ops while the ctx has no live screen.
+-- ---------------------------------------------------------------------------
+function GridRenderer.requestPageTurn(ctx, id, delta)
+    local screen = ctx._screen_widget
+    if screen and screen._turnBookModPage then screen:_turnBookModPage(id, delta) end
+end
+
+function GridRenderer.requestRepaint(ctx, id)
+    local screen = ctx._screen_widget
+    if screen and screen._repaintBookMod then screen:_repaintBookMod(id) end
+end
+
+-- ---------------------------------------------------------------------------
 -- build(w, ctx, opts) → widget | nil
 --
 -- opts:
@@ -617,6 +640,29 @@ end
 --                         page size is grid_rows * grid_cols, not max_items.
 --   grid_cols   number?  4-5 (default max_items or 5).
 -- ---------------------------------------------------------------------------
+
+-- ---------------------------------------------------------------------------
+-- makeEraser(w, h, pfx, id, strength?) → widget
+--
+-- Non-interactive widget that paints the module chrome background (wallpaper
+-- + scrim) over a w × h rect, so a partial rebuild never leaves pixels of the
+-- previous content behind. `strength` fixes the scrim instead of reading the
+-- module's own (0 restores the bare wallpaper, for modules whose boxes paint
+-- their own scrim). Built as a WidgetContainer instance, not a plain
+-- table, so it carries the full widget contract (handleEvent, free, ...) that
+-- OverlapGroup expects from its children; getSize/paintTo are overridden for
+-- its custom appearance. Place it first in an OverlapGroup, under the content.
+-- ---------------------------------------------------------------------------
+function GridRenderer.makeEraser(w, h, pfx, id, strength)
+    local eraser = WidgetContainer:new{}
+    eraser.dimen = Geom:new{ w = w, h = h }
+    function eraser:getSize() return self.dimen end
+    function eraser:paintTo(bb, x, y)
+        SUIWallpaper.paintEraser(bb, x, y, self.dimen.w, self.dimen.h,
+            strength or SUIWallpaper.getModuleBackdropStrength(pfx, id), 0)
+    end
+    return eraser
+end
 
 -- Filters a raw file list through opts.filterItem, if set. Shared by
 -- build()'s cold-cache path and updateStats()'s re-derivation so both
@@ -715,7 +761,7 @@ function GridRenderer.build(w, ctx, opts)
 
     local progress_style     = GridRenderer.getProgressStyle(pfx, id, progress_style_cfg)
     local draw_progress      = progress_style == "bar"  or progress_style == "bar_text"
-    local draw_text          = progress_style == "text" or progress_style == "bar_text"
+    local draw_text          = GridRenderer.progressDrawsText(progress_style)
     local use_overlay        = progress_style == "overlay"
     local use_progress_badge = progress_style == "badge"
 
@@ -983,7 +1029,6 @@ function GridRenderer.build(w, ctx, opts)
     -- fit in one row.
     local content = row
     if paged and npages > 1 then
-        local screen = ctx._screen_widget
     -- Fixed height = full grid_rows, NOT row:getSize().h (which reflects
     -- only the rows actually occupied on this page). The last page may
     -- have fewer rows than an earlier page (e.g. 3x5 grid, 12 books →
@@ -1008,19 +1053,7 @@ function GridRenderer.build(w, ctx, opts)
         -- mode. Radius 0: this rect is inside the chrome box.
         local content_row = row
         do
-            -- Built as a WidgetContainer instance, not a plain table, so it
-            -- inherits the full widget contract (handleEvent/propagateEvent,
-            -- free, ...) that OverlapGroup expects from every child it holds
-            -- — same pattern as sui_quickactions_render.lua's
-            -- _buildRoundedBackdrop. getSize/paintTo are overridden for this
-            -- widget's custom (non-child-based) appearance.
-            local eraser = WidgetContainer:new{}
-            eraser.dimen = Geom:new{ w = w, h = row_h }
-            function eraser:getSize() return self.dimen end
-            function eraser:paintTo(bb, x, y)
-                SUIWallpaper.paintEraser(bb, x, y, self.dimen.w, self.dimen.h,
-                    SUIWallpaper.getModuleBackdropStrength(pfx, id), 0)
-            end
+            local eraser = GridRenderer.makeEraser(w, row_h, pfx, id)
             content_row = OverlapGroup:new{
                 dimen = Geom:new{ w = w, h = row_h },
                 eraser,
@@ -1052,9 +1085,7 @@ function GridRenderer.build(w, ctx, opts)
             -- and its header's "page/npages" indicator + chevrons — the same
             -- single path the chevrons themselves use. It no-ops (and this
             -- gesture is simply absorbed) when already at that edge.
-            if screen and screen._turnBookModPage then
-                screen:_turnBookModPage(id, delta)
-            end
+            GridRenderer.requestPageTurn(ctx, id, delta)
             return true
         end
         content = swipe_area
@@ -1078,6 +1109,7 @@ function GridRenderer.build(w, ctx, opts)
     result._row_update_funcs    = row_update_funcs
     result._row_progress_style  = progress_style
     result._row_uses_render_cell = opts.renderCell and true or false
+    result._update_covers        = opts.updateCovers
     return result
 end
 
@@ -1219,8 +1251,17 @@ function GridRenderer.updateStats(widget, ctx, opts)
     return true
 end
 
+-- Landscape scale factor for a module: the one the screen engine put in ctx,
+-- or the current orientation's factor when there is no ctx (e.g. previews).
+local function landscapeFactor(ctx)
+    return (ctx and ctx.landscape_factor) or (UI.isLandscape() and UI.getLandscapeFactor() or 1)
+end
+GridRenderer.landscapeFactor = landscapeFactor
+
 -- ---------------------------------------------------------------------------
--- getHeight(ctx, opts) — opts:
+-- getGridHeight(ctx, opts) — height of the cover grid alone, without the
+-- section label. getHeight() adds the label on top.
+-- opts:
 --   id, progress_style?  (see GridRenderer.build)
 --   max_items?       replicates build()'s cover sizing: the base is
 --                     always the auto-fit size, and Scale/Cover Size is a
@@ -1232,12 +1273,14 @@ end
 --   grid_rows/grid_cols  number?  see build() — must reflect the same
 --                     values passed to build(), or the reserved height
 --                     diverges from the actual drawn height.
+--   cell_hooks    table?   height hooks of every kind of cell the grid may
+--                     show, see below; replaces getCellHeight.
 -- ---------------------------------------------------------------------------
-function GridRenderer.getHeight(_ctx, opts)
+function GridRenderer.getGridHeight(_ctx, opts)
     local id  = opts.id
     local progress_style_cfg = opts.progress_style or {}
     local pfx = _ctx and _ctx.pfx or ""
-    local lf = (_ctx and _ctx.landscape_factor) or (UI.isLandscape() and UI.getLandscapeFactor() or 1)
+    local lf = landscapeFactor(_ctx)
     local scale       = Config.getModuleScale(id, pfx) * lf
     local thumb_scale = Config.getThumbScale(id, pfx) * lf
     _migrateLabelTextScale(id, pfx)
@@ -1272,28 +1315,41 @@ function GridRenderer.getHeight(_ctx, opts)
     -- so it always matches the actual glyph height, not a fixed constant.
     local progress_style = GridRenderer.getProgressStyle(pfx, id, progress_style_cfg)
     local draw_progress  = progress_style == "bar"  or progress_style == "bar_text"
-    local draw_text      = progress_style == "text" or progress_style == "bar_text"
+    local draw_text      = GridRenderer.progressDrawsText(progress_style)
     local use_overlay    = progress_style == "overlay"
     local pct_fs   = math.max(8, math.floor(_BASE_RB_PCT_FS * scale * (styles.label.scale or 1)))
     local label_h  = SUIStyle.faceHeight((SUIStyle.getTextFace(styles.label, pct_fs)))
+    -- Height of the default book cell.
+    local function bookCellHeight()
+        if use_overlay then return rh + math.floor(cw * 0.28) end
+        return rh + cellExtraHeight(draw_progress, draw_text, D.RB_GAP1, D.RB_BAR_H, D.RB_GAP2, label_h)
+    end
     -- opts.getCellHeight: see the twin note in build() — must return
     -- exactly the same value for the same cw, or the height reserved here
     -- diverges from the actual drawn content.
+    -- opts.cell_hooks lists the cell height hooks of every kind of cell the
+    -- grid may show (false stands for the default book cell); the grid is as
+    -- tall as the tallest, so it never resizes when the kind changes.
     local cell_h
-    if opts.getCellHeight then
+    if opts.cell_hooks then
+        cell_h = 0
+        for _i, hook in ipairs(opts.cell_hooks) do
+            cell_h = math.max(cell_h, hook and hook(cw, pfx) or bookCellHeight())
+        end
+        if cell_h == 0 then cell_h = bookCellHeight() end
+    elseif opts.getCellHeight then
         cell_h = opts.getCellHeight(cw, pfx)
     else
-        cell_h = rh
-        if use_overlay then
-            local badge_r = math.floor(cw * 0.28)
-            cell_h = cell_h + badge_r
-        else
-            cell_h = cell_h + cellExtraHeight(draw_progress, draw_text, D.RB_GAP1, D.RB_BAR_H, D.RB_GAP2, label_h)
-        end
+        cell_h = bookCellHeight()
     end
     -- grid_rows rows of cell_h + (grid_rows-1) vertical gaps between them.
-    local h = grid_rows * cell_h + math.max(0, grid_rows - 1) * row_gap
-    return SectionLabel.height(id, lf) + h
+    return grid_rows * cell_h + math.max(0, grid_rows - 1) * row_gap
+end
+
+-- Total module height: the section label (0 when hidden) plus the grid.
+-- Takes the same opts as getGridHeight.
+function GridRenderer.getHeight(ctx, opts)
+    return SectionLabel.height(opts.id, landscapeFactor(ctx)) + GridRenderer.getGridHeight(ctx, opts)
 end
 
 -- ---------------------------------------------------------------------------
@@ -1384,6 +1440,27 @@ function GridRenderer.getCollectionFileList(coll_name)
 end
 
 -- ---------------------------------------------------------------------------
+-- setCollectionOrder(coll_name, fps) → bool (success)
+--
+-- Persists `fps` (file paths, complete list) as the order of a
+-- ReadCollection. Paths that are not members of the collection are ignored.
+-- Not calling rc:_read() — see note in listAllCollectionNames() above.
+-- ---------------------------------------------------------------------------
+function GridRenderer.setCollectionOrder(coll_name, fps)
+    local ok_rc, rc = pcall(require, "readcollection")
+    local coll = ok_rc and rc and rc.coll and coll_name and rc.coll[coll_name]
+    if not coll then return false end
+    local ordered = {}
+    for _, fp in ipairs(fps) do
+        local entry = coll[fp]
+        if entry then ordered[#ordered + 1] = entry end
+    end
+    rc:updateCollectionOrder(coll_name, ordered)
+    rc:write({ [coll_name] = true })
+    return true
+end
+
+-- ---------------------------------------------------------------------------
 -- sortCollection(coll_name, mode) → bool (success)
 --
 -- Recomputes and persists a collection's order via RC:updateCollectionOrder,
@@ -1440,14 +1517,7 @@ function GridRenderer.sortCollection(coll_name, mode)
         return false
     end
 
-    local ordered = {}
-    for _, fp in ipairs(fps) do
-        local entry = coll[fp]
-        if entry then ordered[#ordered + 1] = entry end
-    end
-    rc:updateCollectionOrder(coll_name, ordered)
-    rc:write({ [coll_name] = true })
-    return true
+    return GridRenderer.setCollectionOrder(coll_name, fps)
 end
 
 -- ---------------------------------------------------------------------------
@@ -1480,7 +1550,8 @@ end
 --
 -- opts:
 --   _lc          function   translate function (ctx_menu._)
---   state_key    string     settings key holding { mode, sig }
+--   getState     function   () → the stored { mode, sig } | nil
+--   setState     function   (state) persists { mode, sig }
 --   getCollName  function   () → collection name | nil
 --   getCount     function   () → number of books; the row is enabled above 1
 --   refresh      function   () repaints the module
@@ -1501,7 +1572,7 @@ function GridRenderer.makeSortMenuItem(opts)
     for _i, entry in ipairs(modes) do labels[entry[1]] = entry[2] end
 
     local function appliedMode()
-        local state = SUISettings:readSetting(opts.state_key)
+        local state = opts.getState()
         if type(state) ~= "table" then return nil end
         local sig = collectionOrderSignature(opts.getCollName())
         return sig and state.sig == sig and state.mode or nil
@@ -1525,8 +1596,7 @@ function GridRenderer.makeSortMenuItem(opts)
                     callback       = function()
                         local name = opts.getCollName()
                         if name and GridRenderer.sortCollection(name, mode) then
-                            SUISettings:saveSetting(opts.state_key,
-                                { mode = mode, sig = collectionOrderSignature(name) })
+                            opts.setState({ mode = mode, sig = collectionOrderSignature(name) })
                             if opts.onSorted then opts.onSorted() end
                             opts.refresh()
                         end
@@ -1573,14 +1643,28 @@ end
 --   name          string   (required) — M.name (name shown in "Add Module")
 --   label         string?  — default section label text
 --   label_fn      function? (pfx) -> string — dynamic label (overrides label)
+--                  A module declaring neither has no section label and
+--                  reserves no label height; M.getGridHeight(ctx) exposes the
+--                  height of the grid alone.
 --   default_on    bool?    (default false)
 --   is_book_mod   bool?    (default false) — see moduleregistry.lua
 --   max_items     number?  (default 5)
 --   paged         bool?    (default false) — see GridRenderer.build
---   getFileList   function (ctx) -> { fp, ... }  (required)
+--   getFileList   function (ctx) -> { fp, ... }  (required unless getSource)
 --   cache_key     string?
 --   filterItem    function? (fp, ctx) -> bool
 --   labelForItem  function? (bd) -> string
+--   getSource     function? (ctx) -> { getFileList, filterItem?, labelForItem?, cell? }
+--       — resolves the book source on every build, for modules whose source
+--       changes at runtime (see engines/sui_book_sources.lua's Sources.bind).
+--       When present, the three static fields above are not used. A source
+--       with a `cell` ({ renderCell, getCellHeight, updateCovers }) replaces
+--       the spec's cell hooks while it is the active source.
+--   getSources    function? (ctx) -> { source, ... } — every source getSource
+--       may return; the grid is as tall as the tallest of their cells.
+--   needs         table?   — M.needs, read by the screen engine (see
+--       moduleregistry.lua); e.g. { recent = n } asks for n prefetched
+--       recent books in ctx.recent_fps.
 --   progress_style  table?  { default=style, locked=style, allowed={style,...} }
 --       — see GridRenderer.getProgressStyle's doc comment for the full
 --       field reference and the values a style can take.
@@ -1600,8 +1684,15 @@ end
 --       default toggles; the value read is accessible to getFileList/
 --       filterItem via SUISettings, not passed automatically — each spec
 --       reads what it needs from its own closure)
+--   text_elems    string[]?  (default { "label" }) — every text element of the
+--       module, all reset together with it. The menu lists only the grid's own
+--       "label" element; the others are configured by the module itself
+--   text_label    string?    (default "Progress Text") — title of the entry
+--       of the "label" element in the Appearance menu
 --   extra_menu_items_before  function? (ctx_menu) -> { item, ... }
 --   extra_menu_items_after   function? (ctx_menu) -> { item, ... }
+--   extra_appearance_items   function? (ctx_menu) -> { item, ... }
+--       — rows appended to the Appearance submenu.
 --   updateCovers  function? — replaces GridRenderer.updateCovers (e.g. for
 --       a more sophisticated in-place patch optimization)
 --   updateStats   function? — replaces GridRenderer.updateStats (the
@@ -1637,7 +1728,8 @@ end
 -- ---------------------------------------------------------------------------
 function GridRenderer.makeModule(spec)
     assert(spec.id, "makeModule: spec.id is required")
-    assert(spec.getFileList, "makeModule: spec.getFileList is required")
+    assert(spec.getFileList or spec.getSource, "makeModule: spec.getFileList or spec.getSource is required")
+    assert(not spec.getSources or spec.getSource, "makeModule: spec.getSources requires spec.getSource")
 
     local id             = spec.id
     local progress_style = spec.progress_style or {}
@@ -1655,8 +1747,12 @@ function GridRenderer.makeModule(spec)
     -- The label is bold until the user picks another variant.
     Config.declareTextVariants(id, { label = "bold" })
     if spec.is_book_mod then M.is_book_mod = true end
+    if spec.needs        then M.needs        = spec.needs end
     if spec.isEnabled    then M.isEnabled    = spec.isEnabled end
-    if spec.reset         then M.reset         = spec.reset end
+    if spec.reset then
+        M.reset = spec.reset
+        Memory.onReset(spec.reset)
+    end
 
     local row_opts = {
         id            = id,
@@ -1707,7 +1803,15 @@ function GridRenderer.makeModule(spec)
     end
 
     function M.build(w, ctx)
-        row_opts.getFileList = function() return spec.getFileList(ctx) end
+        local source = spec.getSource and spec.getSource(ctx) or spec
+        row_opts.getFileList  = function() return source.getFileList(ctx) end
+        row_opts.filterItem   = source.filterItem
+        row_opts.labelForItem = source.labelForItem
+        -- A source may bring its own kind of cell.
+        local cell = source.cell
+        row_opts.renderCell    = cell and cell.renderCell    or spec.renderCell
+        row_opts.getCellHeight = cell and cell.getCellHeight or spec.getCellHeight
+        row_opts.updateCovers  = cell and cell.updateCovers  or spec.updateCovers
         row_opts.grid_rows, row_opts.grid_cols = _gridDims(ctx.pfx)
         -- Read at build time (not once in makeModule) so a change made in
         -- the "Long press on cover" submenu takes effect on the next repaint.
@@ -1715,20 +1819,44 @@ function GridRenderer.makeModule(spec)
         return GridRenderer.build(w, ctx, row_opts)
     end
 
-    function M.getHeight(ctx)
+    -- Height hooks of the cells of every source the module may show.
+    local function _cellHooks(ctx)
+        if not spec.getSources then return nil end
+        local hooks = {}
+        for _i, source in ipairs(spec.getSources(ctx)) do
+            hooks[#hooks + 1] = source.cell and source.cell.getCellHeight or false
+        end
+        return hooks
+    end
+
+    local function _heightOpts(ctx)
         local grid_rows, grid_cols = _gridDims(ctx and ctx.pfx)
-        return GridRenderer.getHeight(ctx, {
+        return {
             id             = id,
             progress_style = progress_style,
             max_items      = spec.max_items or 5,
             grid_rows      = grid_rows,
             grid_cols      = grid_cols,
             getCellHeight  = spec.getCellHeight,
-        })
+            cell_hooks     = _cellHooks(ctx),
+        }
     end
 
+    -- Height of the cover grid alone; M.getHeight adds the section label when
+    -- the module declares one.
+    function M.getGridHeight(ctx)
+        return GridRenderer.getGridHeight(ctx, _heightOpts(ctx))
+    end
+
+    function M.getHeight(ctx)
+        if not (spec.label or spec.label_fn) then return M.getGridHeight(ctx) end
+        return GridRenderer.getHeight(ctx, _heightOpts(ctx))
+    end
+
+    -- Covers are patched the way the cell kind the widget was built with does.
     function M.updateCovers(widget, ctx)
-        if spec.updateCovers then return spec.updateCovers(widget, ctx) end
+        local update = widget and widget._update_covers
+        if update then return update(widget, ctx) end
         return GridRenderer.updateCovers(widget, ctx)
     end
 
@@ -1838,6 +1966,11 @@ function GridRenderer.makeModule(spec)
         local lbl = spec.label_fn and spec.label_fn(pfx) or spec.label
         if lbl then
             appearance_extra[#appearance_extra + 1] = Config.makeLabelToggleItem(id, refresh, _lc)
+        end
+        if spec.extra_appearance_items then
+            for _, it in ipairs(spec.extra_appearance_items(ctx_menu)) do
+                appearance_extra[#appearance_extra + 1] = it
+            end
         end
 
         local behaviour_rows = {
@@ -2065,7 +2198,7 @@ function GridRenderer.makeModule(spec)
                 size  = size_group,
                 text  = {
                     mod_id  = id,
-                    elems   = M.text_elems,
+                    elems   = { "label" },
                     labels  = {
                         label = spec.text_label or _lc("Progress Text"),
                     },

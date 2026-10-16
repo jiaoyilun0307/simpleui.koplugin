@@ -17,6 +17,7 @@ local Screen          = Device.screen
 local _  = require("infra/sui_i18n").translate
 local N_ = require("infra/sui_i18n").ngettext
 local Config = require("infra/sui_config")
+local Arrange     = require("features/sui_arrange")
 local QA          = require("features/sui_quickactions")
 local QARenderer  = require("engines/sui_quickactions_render")
 local UI          = require("infra/sui_core")
@@ -268,174 +269,24 @@ function M.getMenuItems(ctx_menu)
     local pfx     = ctx_menu.pfx
     local refresh = ctx_menu.refresh
     local _lc     = ctx_menu._
-    local items   = {}
-
-    -- Items submenu (add/remove/arrange)
-    local function getItems()
-        return SUISettings:readSetting(pfx .. ITEMS_KEY) or {}
-    end
-    local function isSelected(id)
-        for _, v in ipairs(getItems()) do if v == id then return true end end
-        return false
-    end
-    local function toggleItem(id)
-        local cur = getItems()
-        local new = {}
-        local found = false
-        for _, v in ipairs(cur) do
-            if v == id then found = true else new[#new + 1] = v end
-        end
-        if not found then
-            if #cur >= MAX_AL then
-                UI.Notify.toast(string.format(N_("The maximum of %d action per module has been reached. Remove one first.", "The maximum of %d actions per module has been reached. Remove one first.", MAX_AL), MAX_AL), 2)
-                return
-            end
-            new[#new + 1] = id
-        end
-        SUISettings:saveSetting(pfx .. ITEMS_KEY, new)
-        refresh()
-    end
-
-    local pool = {}
-    for _, a in ipairs(getALPool()) do pool[#pool + 1] = a end
-    table.sort(pool, function(a, b) return a.label:lower() < b.label:lower() end)
-
-    local items_sub = {}
-    items_sub[#items_sub + 1] = {
-        text           = _lc("Arrange Items"),
-        keep_menu_open = true,
-        separator      = true,
-        enabled_func   = function() return #getItems() >= 2 end,
-        callback       = function()
-            local qa_ids = getItems()
-            if #qa_ids < 2 then
-                UI.Notify.toast(_lc("Add at least 2 actions to arrange."), 2)
-                return
-            end
-            local pool_labels = {}
-            for _, a in ipairs(getALPool()) do pool_labels[a.id] = a.label end
-            local sort_items = {}
-            for _, id in ipairs(qa_ids) do
-                sort_items[#sort_items + 1] = { text = pool_labels[id] or id, orig_item = id }
-            end
-            local function on_save()
-                local new_order = {}
-                for _, item in ipairs(sort_items) do
-                    new_order[#new_order + 1] = item.orig_item
-                end
-                SUISettings:saveSetting(pfx .. ITEMS_KEY, new_order)
-                refresh()
-            end
-            local SortWidget = ctx_menu.SortWidget or require("ui/widget/sortwidget")
-            local uim        = ctx_menu.UIManager  or require("ui/uimanager")
-            uim:show(SortWidget:new{
-                title             = string.format(_lc("Arrange %s"), M.name),
-                covers_fullscreen = true,
-                item_table        = sort_items,
-                callback          = on_save,
-            })
-        end,
-    }
-    for _, a in ipairs(pool) do
-        local aid  = a.id
-        local _lbl = a.label
-        items_sub[#items_sub + 1] = {
-            text_func = function()
-                if isSelected(aid) then return _lbl end
-                local rem = MAX_AL - #getItems()
-                if rem <= 2 then
-                    return _lbl .. string.format(N_("  (%d left)", "  (%d left)", rem), rem)
-                end
-                return _lbl
-            end,
-            checked_func   = function() return isSelected(aid) end,
-            keep_menu_open = true,
-            callback       = function() toggleItem(aid) end,
-        }
-    end
-
-    items[#items + 1] = {
-        text                = _lc("Quick Actions"),
-        sub_item_table_func = function() return items_sub end,
-        sui_build = ctx_menu.is_sui and function(ctx, _item)
-            local SUIWindow = require("engines/sui_window")
-            return SUIWindow.ListRow{
-                title        = _lc("Quick Actions"),
-                    subtitle     = function()
-                        local qa_ids = getItems()
-                        if #qa_ids == 0 then return _lc("No items selected.") end
-                        local pool_labels = {}
-                        for _, a in ipairs(getALPool()) do pool_labels[a.id] = a.label end
-                        local names = {}
-                        for _, id in ipairs(qa_ids) do
-                            names[#names + 1] = pool_labels[id] or id
-                        end
-                        return table.concat(names, "  ·  ")
-                    end,
-                inner_w      = ctx.inner_w,
-                    item_count   = function() return #getItems() end,
-                    max_items    = MAX_AL,
-                show_chevron = true,
-                on_tap       = function()
-                    local qa_ids = getItems()
-                    local pool_labels = {}
-                    for _, a in ipairs(getALPool()) do pool_labels[a.id] = a.label end
-                    local sort_items = {}
-                    for _, id in ipairs(qa_ids) do
-                        sort_items[#sort_items + 1] = { text = pool_labels[id] or id, orig_item = id }
-                    end
-                    
-                    ctx.push("arrange", {
-                        title = _lc("Quick Actions"),
-                        items = sort_items,
-                        empty_text = _lc("No items selected."),
-                            item_count = function() return #getItems() end,
-                            max_items  = MAX_AL,
-                        on_delete = function(item) end,
-                        on_change = function(items_to_save)
-                            local new_order = {}
-                            for _, it in ipairs(items_to_save) do new_order[#new_order + 1] = it.orig_item end
-                            SUISettings:saveSetting(pfx .. ITEMS_KEY, new_order)
-                            refresh()
-                        end,
-                        footer_text = _lc("Add Item"),
-                        footer_action = function(ctx2)
-                            local picker_items = {}
-                            local sorted_pool = {}
-                            for _, a in ipairs(getALPool()) do sorted_pool[#sorted_pool + 1] = a end
-                            table.sort(sorted_pool, function(a, b) return a.label:lower() < b.label:lower() end)
-
-                            for _, a in ipairs(sorted_pool) do
-                                if not isSelected(a.id) then
-                                    local _id = a.id
-                                    local _label = a.label
-                                    picker_items[#picker_items + 1] = {
-                                        text   = _label,
-                                        on_tap = function(picker_ctx)
-                                            local cur = getItems()
-                                            if #cur >= MAX_AL then
-                                                UI.Notify.toast(string.format(N_("The maximum of %d action per module has been reached. Remove one first.", "The maximum of %d actions per module has been reached. Remove one first.", MAX_AL), MAX_AL), 2)
-                                                return
-                                            end
-                                            cur[#cur + 1] = _id
-                                            SUISettings:saveSetting(pfx .. ITEMS_KEY, cur)
-                                            refresh()
-                                            table.insert(sort_items, { text = _label, orig_item = _id })
-                                            picker_ctx.pop()
-                                            ctx2.repaint()
-                                        end,
-                                    }
-                                end
-                            end
-                            ctx2.push("item_picker", {
-                                title = _lc("Add Item"),
-                                items = picker_items,
-                            })
-                        end
-                    })
-                end
-            }
-        end or nil,
+    local items = {
+        Arrange.makeListItem{
+            ctx_menu = ctx_menu,
+            title    = _lc("Quick Actions"),
+            labels   = {
+                action  = string.format(_lc("Arrange %s"), M.name),
+                empty   = _lc("No items selected."),
+                too_few = _lc("Add at least 2 actions to arrange."),
+                full    = function(max)
+                    return string.format(N_("The maximum of %d action per module has been reached. Remove one first.",
+                        "The maximum of %d actions per module has been reached. Remove one first.", max), max)
+                end,
+            },
+            max    = MAX_AL,
+            pool   = getALPool,
+            getIds = function() return SUISettings:readSetting(pfx .. ITEMS_KEY) or {} end,
+            setIds = function(ids) SUISettings:saveSetting(pfx .. ITEMS_KEY, ids) end,
+        },
     }
 
     items[#items + 1] = {

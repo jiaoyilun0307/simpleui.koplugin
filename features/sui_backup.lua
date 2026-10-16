@@ -187,8 +187,6 @@ local CLASSIFY_RULES = {
           "simpleui_hs_", "simpleui_layout", "simpleui_cs_", "simpleui_custom_screens",
           "simpleui_hide_label_", "simpleui_homescreen_preset", "simpleui_coll_",
           "simpleui_collections_", "simpleui_quote_", "navbar_homescreen_",
-          "simpleui_qa_row_instances", "simpleui_spacer_row_instances",
-          "simpleui_coll_row_instances",
       },
     },
     { "quick_actions",
@@ -221,11 +219,21 @@ local CLASSIFY_RULES = {
     },
 }
 
+-- Whether `key` persists a module instance list (owned by the registry, so
+-- new instanciable modules are covered without touching the rules above).
+local function _isInstanceListKey(key)
+    for _i, instance_key in ipairs(require("modules/moduleregistry").getInstanceKeys()) do
+        if key == instance_key then return true end
+    end
+    return false
+end
+
 --- Classify a settings key → category id | "core" | nil (excluded/foreign).
 function Backup.classifyKey(key)
     if type(key) ~= "string" then return nil end
     if EXCLUDED_EXACT[key] then return nil end
     if CORE_ALWAYS[key] then return "core" end
+    if _isInstanceListKey(key) then return "home_screen" end
     -- Only ever classify keys the plugin owns (repo convention).
     if key:sub(1, 9) ~= "simpleui_" and key:sub(1, 7) ~= "navbar_" then
         return nil

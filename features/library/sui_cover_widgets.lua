@@ -52,7 +52,7 @@
 --       -- setting, or just the shadow when the stack is hidden.
 --   CoverWidgets.buildBacking(cover_w, cover_h, inset)
 --       -- The widget for that backing (nil when there is nothing to draw).
---   CoverWidgets.buildFolderNameWidget(item, available_w, font_size, fgcolor, bgcolor)
+--   CoverWidgets.buildFolderNameWidget(item, available_w, font_size, fgcolor, bgcolor, text_style)
 --   CoverWidgets.buildLabel(item, size, border, display)
 --       -- display: { label_mode, show_name, label_opacity, label_layout, label_pos, label_color, label_scale }
 --   CoverWidgets.buildBadge(mandatory, cover_dimen, cv_scale, cell_dimen, opts)
@@ -739,52 +739,55 @@ end
 
 -- ── Folder-name label overlay ─────────────────────────────────────────────────
 
--- Rendered line height per font size, memoised: measuring costs a full text
--- layout pass.
+-- Rendered line height per face and size, memoised: measuring costs a full
+-- text layout pass.
 local _line_h_memo = {}
 
 function CoverWidgets.clearLabelMetricsCache()
     _line_h_memo = {}
 end
 
-local function labelLineHeight(face, font_size)
-    local h = _line_h_memo[font_size]
+local function labelLineHeight(face, font_size, bold)
+    local key = string.format("%s|%d|%s", tostring(face.orig_font), font_size, tostring(bold))
+    local h = _line_h_memo[key]
     if not h then
         local probe = TextBoxWidget:new{
             text  = "Mg",
             face  = face,
             width = Screen:getWidth(),
-            bold  = true,
+            bold  = bold,
         }
         h = probe:getLineHeight()
         probe:free(true)
-        _line_h_memo[font_size] = h
+        _line_h_memo[key] = h
     end
     return h
 end
 
--- Folder name as centred bold text at a fixed `font_size`, capitalised per
--- word. Names longer than _LABEL_MAX_LINES lines are cut with an ellipsis.
+-- Folder name as centred text at a fixed `font_size`, capitalised per word.
+-- It is bold in the regular face unless `text_style` (a { family, variant }
+-- text style, see Config.getTextStyle) gives the face. Names longer than _LABEL_MAX_LINES lines are cut with an ellipsis.
 -- Without a `bgcolor` the text is drawn over whatever is already painted;
 -- with one it sits on that opaque background.
 -- `item` needs only `.text` and a writable `._fc_display_text` cache slot
 -- (any table works — sui_foldercovers.lua passes the MosaicMenuItem instance
 -- so the capitalised/bidi-wrapped text is computed once per item, not once
 -- per render).
-function CoverWidgets.buildFolderNameWidget(item, available_w, font_size, fgcolor, bgcolor)
+function CoverWidgets.buildFolderNameWidget(item, available_w, font_size, fgcolor, bgcolor, text_style)
     if not item._fc_display_text then
         local text = item.text
         if text:match("/$") then text = text:sub(1, -2) end
         text = text:gsub("(%S+)", function(w) return w:sub(1,1):upper() .. w:sub(2) end)
         item._fc_display_text = BD.directory(text)
     end
-    local face   = Font:getFace(SUIStyle.FACE_REGULAR, font_size)
+    local face, bold = Font:getFace(SUIStyle.FACE_REGULAR, font_size), true
+    if text_style then face, bold = SUIStyle.getTextFace(text_style, font_size) end
     local opts   = {
         text      = item._fc_display_text,
         face      = face,
         width     = available_w,
         alignment = "center",
-        bold      = true,
+        bold      = bold,
         fgcolor   = fgcolor or SUIStyle.COLOR.text_primary,
         bgcolor   = bgcolor,
     }
@@ -792,7 +795,7 @@ function CoverWidgets.buildFolderNameWidget(item, available_w, font_size, fgcolo
         if bgcolor then return TextBoxWidget:new(opts) end
         return UI.makeAlphaTextBox(opts)
     end
-    local max_h = _LABEL_MAX_LINES * labelLineHeight(face, font_size)
+    local max_h = _LABEL_MAX_LINES * labelLineHeight(face, font_size, bold)
     local name  = build()
     if name:getSize().h <= max_h then return name end
 
@@ -809,7 +812,8 @@ end
 -- _LABEL_LAYOUTS). At the bottom it is lifted off the edge so it reads as a
 -- strap around the book.
 -- `display` is the pre-read settings table:
---   { label_mode, show_name, label_opacity, label_layout, label_pos, label_color, label_scale }
+--   { label_mode, show_name, label_opacity, label_layout, label_pos, label_color, label_scale,
+--     label_style? }   label_style: text style of the name (see buildFolderNameWidget)
 function CoverWidgets.buildLabel(item, size, border, display)
     if display.label_mode ~= "overlay" then return nil end
     if not display.show_name            then return nil end
@@ -829,7 +833,7 @@ function CoverWidgets.buildLabel(item, size, border, display)
     -- opaque background lets the text paint its own.
     local font_size = math.max(8, math.floor(_BASE_DIR_FS * (display.label_scale or 1.0)))
     local name      = CoverWidgets.buildFolderNameWidget(item, inner_w - _LATERAL_PAD * 2,
-        font_size, fg_color, strength >= 100 and bg_color or nil)
+        font_size, fg_color, strength >= 100 and bg_color or nil, display.label_style)
 
     local band_h  = math.max(name:getSize().h + (_VERTICAL_PAD + border) * 2,
                              math.floor(cover_h * _LABEL_MIN_H_FRAC))

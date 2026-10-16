@@ -33,6 +33,10 @@
 --                             (equivalent to belonging to _COVER_MOD_IDS)
 --   M.is_book_mod    bool?    true → suppresses the "No books opened yet" empty-state
 --                             (equivalent to "currently"/"recent"/"coverdeck")
+--   M.needs          table?   data the screen engine prepares while the module is enabled:
+--                             recent = n | function(pfx) -> n   n recent books in
+--                                      ctx.recent_fps (see Registry.getRecentDemand)
+--                             db, stats, books = true           external modules only
 --   M.text_elems     string[]?  ids of the text elements with a user-selectable
 --                             font family, size scale and variant (regular, bold,
 --                             italic, bold italic; see Config.makeTextStyleMenu).
@@ -51,7 +55,27 @@
 --   M.instanciable = true
 --   M.makeInstance(id) → sub-module descriptor
 -- and don't have their own id in the registry — only the instances do.
--- Instances persist in "simpleui_qa_row_instances" (list of ids).
+-- Instance ids are "<base id>_<hex>". Each base persists its instance ids in
+-- the list stored under M.instances_key (default "simpleui_qa_row_instances").
+-- A base may also declare:
+--   M.menu_group = "quick_actions"   groups its instances under that entry of
+--                                    the global module settings menu
+--   M.getInstanceSubtitle(inst_id, pfx, pfx_qa) → string | nil
+--                                    summary shown under an instance in the
+--                                    layout editor's module list
+--   M.setting_suffixes = { "_tabs" } suffixes of the instance's own settings
+--                                    keys (pfx .. inst_id .. suffix), removed
+--                                    together with the instance
+-- A module may also declare:
+--   M.owns_chrome = true             the module draws its own frame and
+--                                    background boxes (see
+--                                    features/sui_module_chrome.lua): the
+--                                    screen engine skips the module-wide
+--                                    chrome and builds it at the full column
+--                                    width, label insets included
+-- Registry.baseId / isInstance / getInstanceIndex / getInstanceKeys resolve
+-- instances generically; nothing outside the registry should match on id
+-- patterns.
 --
 -- ADDING A BUILT-IN MODULE: append a line to MODULES. Nothing else.
 --
@@ -82,6 +106,7 @@ local MODULES = {
     { require_mod = "modules/module_coverdeck"      },
     { require_mod = "modules/module_collections"   },
     { require_mod = "modules/module_feat_coll"      },
+    { require_mod = "modules/module_tab_grid"       },
     { require_mod = "modules/module_library"        },
     { require_mod = "modules/module_reading_goals" },
     { require_mod = "modules/module_reading_stats" },
@@ -102,6 +127,90 @@ local _instanciable  = {}
 local _external      = {}
 
 local Registry = {}
+
+local DEFAULT_INSTANCES_KEY = "simpleui_qa_row_instances"
+
+local function _instancesKey(base)
+    return base.instances_key or DEFAULT_INSTANCES_KEY
+end
+
+-- Base descriptors of every instanciable built-in module, in MODULES order.
+-- Reads the require cache only: unlike _load() it never materialises or
+-- prunes instances, so it is safe to call at any time (e.g. while a backup
+-- is being restored).
+local _bases_cache = nil
+local function _instanciableBases()
+    if _bases_cache then return _bases_cache end
+    local bases = {}
+    for _, def in ipairs(MODULES) do
+        local ok, mod = pcall(require, def.require_mod)
+        if ok and type(mod) == "table" and mod.instanciable then
+            bases[#bases + 1] = mod
+        end
+    end
+    _bases_cache = bases
+    return bases
+end
+
+-- Base descriptor an instance id belongs to, or nil for a non-instance id.
+local function _baseOf(mod_id)
+    if type(mod_id) ~= "string" then return nil end
+    for _, base in ipairs(_instanciableBases()) do
+        if mod_id:sub(1, #base.id + 1) == base.id .. "_" then return base end
+    end
+    return nil
+end
+
+-- "coll_row_a1b2c3" → "coll_row"; nil when `mod_id` is not an instance.
+function Registry.baseId(mod_id)
+    local base = _baseOf(mod_id)
+    return base and base.id
+end
+
+function Registry.isInstance(mod_id)
+    return _baseOf(mod_id) ~= nil
+end
+
+-- Ids of every instanciable base, in MODULES order.
+function Registry.getInstanciableBaseIds()
+    local ids = {}
+    for _, base in ipairs(_instanciableBases()) do ids[#ids + 1] = base.id end
+    return ids
+end
+
+-- Settings keys under which the instance id lists are persisted.
+function Registry.getInstanceKeys()
+    local keys = {}
+    for _, base in ipairs(_instanciableBases()) do keys[#keys + 1] = _instancesKey(base) end
+    return keys
+end
+
+-- Creation-order position of an instance and the number of instances of its
+-- base: index, count. nil when `mod_id` is not a persisted instance.
+function Registry.getInstanceIndex(mod_id)
+    local base = _baseOf(mod_id)
+    if not base then return nil end
+    local ids = SUISettings:readSetting(_instancesKey(base)) or {}
+    for idx, iid in ipairs(ids) do
+        if iid == mod_id then return idx, #ids end
+    end
+    return nil
+end
+
+-- Menu group declared by the instance's base (see the header), or nil.
+function Registry.getMenuGroup(mod_id)
+    local base = _baseOf(mod_id)
+    return base and base.menu_group
+end
+
+-- Layout-editor summary of an instance, or nil when its base provides none.
+function Registry.getInstanceSubtitle(mod_id, pfx, pfx_qa)
+    local base = _baseOf(mod_id)
+    if base and base.getInstanceSubtitle then
+        return base.getInstanceSubtitle(mod_id, pfx, pfx_qa)
+    end
+    return nil
+end
 
 -- ---------------------------------------------------------------------------
 -- _placedInstanceIds()
@@ -176,7 +285,7 @@ end
 -- re-instantiated.
 -- ---------------------------------------------------------------------------
 local function _pruneOrphanInstances(mod, placed)
-    local inst_key = mod.instances_key or "simpleui_qa_row_instances"
+    local inst_key = _instancesKey(mod)
     local inst_ids = SUISettings:readSetting(inst_key) or {}
     if #inst_ids == 0 then return inst_ids end
 
@@ -281,6 +390,21 @@ function Registry.isEnabled(mod, pfx)
     return mod.default_on ~= false
 end
 
+-- Number of recent books the enabled modules need prefetched into
+-- ctx.recent_fps: the largest M.needs.recent among them, 0 when none asks.
+-- M.needs.recent is a count or a function(pfx) -> count.
+function Registry.getRecentDemand(pfx)
+    local demand = 0
+    for _, mod in ipairs(Registry.list()) do
+        local need = mod.needs and mod.needs.recent
+        if need and Registry.isEnabled(mod, pfx) then
+            if type(need) == "function" then need = need(pfx) end
+            demand = math.max(demand, need)
+        end
+    end
+    return demand
+end
+
 function Registry.countEnabled(pfx)
     local n = 0
     for _, mod in ipairs(Registry.list()) do
@@ -332,6 +456,7 @@ function Registry.defaultOrder()
 end
 
 function Registry.invalidate()
+    _bases_cache   = nil
     _loaded        = nil
     _by_id         = nil
     _default_order = nil
@@ -342,7 +467,7 @@ end
 -- Registry.createInstance(base_id) → instance_id | nil
 --
 -- Creates a new instance of an instanciable module, persists its id in
--- "simpleui_qa_row_instances", registers it in _loaded/_by_id, and returns
+-- the base's instances list, registers it in _loaded/_by_id, and returns
 -- the new instance id (e.g. "quick_actions_row_a1b2c3").
 -- Returns nil if the base module is not instanciable or not found.
 -- ---------------------------------------------------------------------------
@@ -360,7 +485,7 @@ function Registry.createInstance(base_id)
     _by_id[m.id]          = m
     _default_order        = nil  -- invalidate order cache
     -- Persist using the base module's instances_key.
-    local inst_key = base.instances_key or "simpleui_qa_row_instances"
+    local inst_key = _instancesKey(base)
     local ids = SUISettings:readSetting(inst_key) or {}
     ids[#ids + 1] = inst_id
     SUISettings:set(inst_key, ids)
@@ -403,11 +528,11 @@ function Registry.destroyInstance(inst_id)
     -- Try each registered instanciable base's key; fall back to legacy key.
     local removed = false
     for _, base in pairs(_instanciable) do
-        local key = base.instances_key or "simpleui_qa_row_instances"
+        local key = _instancesKey(base)
         if _remove_from_key(key) then removed = true; break end
     end
     if not removed then
-        _remove_from_key("simpleui_qa_row_instances")
+        _remove_from_key(DEFAULT_INSTANCES_KEY)
     end
 end
 
@@ -432,14 +557,25 @@ function Registry.purgeInstanceSettings(inst_id, pfx)
                        "_show_progress", "_show_text", "_show_overlay",
                        "_show_frame", "_solid_bg", "_backdrop",
                        "_grid_rows", "_grid_cols" }
+    local base = _baseOf(inst_id)
+    if base and base.setting_suffixes then
+        for _, s in ipairs(base.setting_suffixes) do suffixes[#suffixes + 1] = s end
+    end
     for _, s in ipairs(suffixes) do
         SUISettings:set(pfx    .. inst_id .. s, nil)
         SUISettings:set(qa_pfx .. inst_id .. s, nil)
     end
     -- Per-element text styles (font, size, variant) of the instance.
     local Config = require("infra/sui_config")
-    Config.resetTextStyles(inst_id, { "label" }, pfx)
-    Config.resetTextStyles(inst_id, { "label" }, qa_pfx)
+    local elems = { "label" }
+    local inst = _by_id[inst_id]
+    if inst and type(inst.text_elems) == "table" and #inst.text_elems > 0 then
+        elems = inst.text_elems
+    elseif base and type(base.text_elems) == "table" and #base.text_elems > 0 then
+        elems = base.text_elems
+    end
+    Config.resetTextStyles(inst_id, elems, pfx)
+    Config.resetTextStyles(inst_id, elems, qa_pfx)
     -- Also the bare keys used by build/getHeight.
     SUISettings:set(qa_pfx .. inst_id .. "_items",  nil)
     SUISettings:set(qa_pfx .. inst_id .. "_labels", nil)
