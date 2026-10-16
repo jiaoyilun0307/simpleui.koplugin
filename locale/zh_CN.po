@@ -6688,3 +6688,63 @@ msgstr "The title bar style will change after restart.\n\nRestart now?"
 
 msgid "Flow"
 msgstr "[待翻译] Flow"
+
+msgid "Add Tab"
+msgstr "Add Tab"
+
+msgid "Add at least 2 tabs to arrange."
+msgstr "Add at least 2 tabs to arrange."
+
+msgid "Below Cover"
+msgstr "Below Cover"
+
+msgid "Group Covers"
+msgstr "Group Covers"
+
+msgid "Inside Cover"
+msgstr "Inside Cover"
+
+msgid "No books in this tab"
+msgstr "[待翻译] No books in this tab"
+
+msgid "No groups in this tab"
+msgstr "[待翻译] No groups in this tab"
+
+msgid "No tabs"
+msgstr "[待翻译] No tabs"
+
+msgid "No tabs  —  long press to configure"
+msgstr "No tabs  —  long press to configure"
+
+msgid "No tabs."
+msgstr "No tabs."
+
+msgid "Numbers"
+msgstr "[待翻译] Numbers"
+
+msgid "Pagination"
+msgstr "[待翻译] Pagination"
+
+msgid "Placement"
+msgstr "[待翻译] Placement"
+
+msgid "Round Pill"
+msgstr "Round Pill"
+
+msgid "Scale for the group count badge."
+msgstr "Scale for the group count badge."
+
+msgid "Set cover"
+msgstr "[待翻译] Set cover"
+
+msgid "Size of the tab labels.\n100% matches the homescreen section labels."
+msgstr "Size of the tab labels.\n100% matches the homescreen section labels."
+
+msgid "Square Pill"
+msgstr "Square Pill"
+
+msgid "Swipe Bar"
+msgstr "Swipe Bar"
+
+msgid "Tabbed Grid"
+msgstr "Tabbed Grid"
