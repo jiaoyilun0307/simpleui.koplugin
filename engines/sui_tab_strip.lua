@@ -34,19 +34,19 @@
 --       -- pill style only:
 --       radius        = corner radius of the box in px (default: fully
 --                       rounded); the active pill follows it concentrically
---       strength      = backdrop strength of the box, 0-100 (default 0)
---       border_sz     = frame thickness in px (default: the module frame
---                       thickness; 0 draws no frame). A strip with neither
---                       frame nor backdrop has no box: its pills span the
---                       full height instead of sitting inset
+--       surface       = resolved surface of the box (see sui_backdrop.lua):
+--                       strength, color and frame thickness border_sz. A
+--                       strip with neither frame nor backdrop (the default)
+--                       has no box: its pills span the full height instead
+--                       of sitting inset
 --   }
 --   strip:setActive(id, keep_window)
 --                          -- highlight a tab, scrolling the window to show it
 --                          -- unless `keep_window`; returns true when the view
 --                          -- changed
---   TabStrip.height(style, face, strength, border_sz)
---                          -- minimum strip height of a style; the last two
---                          -- arguments are the pill options of TabStrip.new
+--   TabStrip.height(style, face, surface)
+--                          -- minimum strip height of a style; `surface` is the
+--                          -- pill option of TabStrip.new
 --   strip:setLabel(text)   -- show a static label; nil restores the tabs
 --   strip:setSpan(x, w)    -- move/resize the strip; the next setActive/setLabel
 --                          -- call rebuilds the content for the new width
@@ -84,6 +84,9 @@ local PILL_TEXT_PAD = 6   -- minimum space between a label and its pill edge
 local PILL_V_PAD    = 4   -- space above and below a label inside its pill
 local ARROW_PAD     = 10  -- horizontal space around each chevron
 
+-- Surface of a strip without a box: no fill and no frame.
+local NO_SURFACE = { strength = 0, border_sz = 0 }
+
 local TabStrip = WidgetContainer:extend{
     width         = nil,
     height        = nil,
@@ -96,8 +99,7 @@ local TabStrip = WidgetContainer:extend{
     on_scroll     = nil,
     has_wallpaper = false,
     radius        = nil,
-    strength      = 0,
-    border_sz     = SUIStyle.BORDER_SZ,
+    surface       = NO_SURFACE,
     _first        = 1,
     _view_key     = nil,
 }
@@ -252,9 +254,9 @@ end
 -- Frame thickness and space between the frame and the active pill. A pill
 -- strip with neither frame nor backdrop has no box, so its pill spans the full
 -- height.
-local function pillInsets(strength, border_sz)
-    if strength <= 0 and border_sz <= 0 then return 0, 0 end
-    return border_sz, Screen:scaleBySize(PILL_GAP)
+local function pillInsets(surface)
+    if surface.strength <= 0 and surface.border_sz <= 0 then return 0, 0 end
+    return surface.border_sz, Screen:scaleBySize(PILL_GAP)
 end
 
 -- Builds the cell of one pill tab: the label centred in the cell, on an
@@ -297,7 +299,7 @@ end
 
 -- Builds the pill style: a rounded box holding the visible window of tabs.
 function TabStrip:_buildPillTabs()
-    local border, gap = pillInsets(self.strength, self.border_sz)
+    local border, gap = pillInsets(self.surface)
     local inner_h = self.height - 2 * border
     local radius  = math.min(self.radius or self.height, math.floor(self.height / 2))
     local pill_radius = math.max(0, math.min(radius - border - gap,
@@ -322,12 +324,11 @@ function TabStrip:_buildPillTabs()
     local box = OverlapGroup:new{ allow_mirroring = false, dimen = dimen }
     if gap > 0 then
         box[#box + 1] = Backdrop.BackdropFill:new{
-            width     = self.width,
-            height    = self.height,
-            strength  = self.strength,
-            radius    = radius,
-            border_sz = border,
-            dimen     = dimen,
+            width   = self.width,
+            height  = self.height,
+            surface = self.surface,
+            radius  = radius,
+            dimen   = dimen,
         }
     end
     box[#box + 1] = FrameContainer:new{ bordersize = 0, margin = 0, padding = border, row }
@@ -405,12 +406,12 @@ end
 
 local M = {}
 
--- Height a strip of `style` needs for labels drawn with `face`. `strength` and
--- `border_sz` are the pill options of M.new.
-function M.height(style, face, strength, border_sz)
+-- Height a strip of `style` needs for labels drawn with `face`. `surface` is
+-- the pill option of M.new.
+function M.height(style, face, surface)
     local border, gap = 0, 0
     if style == "pill" then
-        border, gap = pillInsets(strength or TabStrip.strength, border_sz or TabStrip.border_sz)
+        border, gap = pillInsets(surface or NO_SURFACE)
     end
     return SUIStyle.faceHeight(face) + 2 * (border + gap + Screen:scaleBySize(PILL_V_PAD))
 end
@@ -428,8 +429,7 @@ function M.new(opts)
         on_scroll     = opts.on_scroll,
         has_wallpaper = opts.has_wallpaper,
         radius        = opts.radius,
-        strength      = opts.strength,
-        border_sz     = opts.border_sz,
+        surface       = opts.surface,
         dimen         = Geom:new{ w = opts.width, h = opts.height },
         _first        = opts.first or 1,
     }

@@ -60,6 +60,7 @@ local PageState    = SectionLabel.PageState
 local UI          = require("infra/sui_core")
 local SUISettings = require("infra/sui_store")
 local SUIStyle    = require("features/sui_style")
+local Text        = require("infra/sui_text")
 local SUIWallpaper = require("features/sui_wallpaper")
 local PAD    = UI.PAD
 local Screen = require("device").screen
@@ -642,24 +643,25 @@ end
 -- ---------------------------------------------------------------------------
 
 -- ---------------------------------------------------------------------------
--- makeEraser(w, h, pfx, id, strength?) → widget
+-- makeEraser(w, h, chrome) → widget
 --
 -- Non-interactive widget that paints the module chrome background (wallpaper
--- + scrim) over a w × h rect, so a partial rebuild never leaves pixels of the
--- previous content behind. `strength` fixes the scrim instead of reading the
--- module's own (0 restores the bare wallpaper, for modules whose boxes paint
--- their own scrim). Built as a WidgetContainer instance, not a plain
--- table, so it carries the full widget contract (handleEvent, free, ...) that
--- OverlapGroup expects from its children; getSize/paintTo are overridden for
--- its custom appearance. Place it first in an OverlapGroup, under the content.
+-- + scrim in the chrome's tone) over a w × h rect, so a partial rebuild never
+-- leaves pixels of the previous content behind. `chrome` is a resolved module
+-- chrome (see features/sui_module_chrome.lua); ModuleChrome.NO_CHROME restores
+-- the bare wallpaper, for modules whose boxes paint their own scrim. Built as
+-- a WidgetContainer instance, not a plain table, so it carries the full widget
+-- contract (handleEvent, free, ...) that OverlapGroup expects from its
+-- children; getSize/paintTo are overridden for its custom appearance. Place it
+-- first in an OverlapGroup, under the content.
 -- ---------------------------------------------------------------------------
-function GridRenderer.makeEraser(w, h, pfx, id, strength)
+function GridRenderer.makeEraser(w, h, chrome)
     local eraser = WidgetContainer:new{}
     eraser.dimen = Geom:new{ w = w, h = h }
     function eraser:getSize() return self.dimen end
     function eraser:paintTo(bb, x, y)
         SUIWallpaper.paintEraser(bb, x, y, self.dimen.w, self.dimen.h,
-            strength or SUIWallpaper.getModuleBackdropStrength(pfx, id), 0)
+            chrome.strength, 0, chrome.color)
     end
     return eraser
 end
@@ -1053,7 +1055,8 @@ function GridRenderer.build(w, ctx, opts)
         -- mode. Radius 0: this rect is inside the chrome box.
         local content_row = row
         do
-            local eraser = GridRenderer.makeEraser(w, row_h, pfx, id)
+            local eraser = GridRenderer.makeEraser(w, row_h,
+                require("features/sui_module_chrome").resolve(pfx, id))
             content_row = OverlapGroup:new{
                 dimen = Geom:new{ w = w, h = row_h },
                 eraser,
@@ -1366,8 +1369,7 @@ function GridRenderer.getBookTitle(fp)
             pcall(function() ds:close() end)
         end
     end)
-    if #title > 48 then title = title:sub(1, 45) .. "…" end
-    return title
+    return Text.truncate(title, 48)
 end
 
 -- ---------------------------------------------------------------------------

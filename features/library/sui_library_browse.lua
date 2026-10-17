@@ -47,6 +47,7 @@ local lfs     = require("libs/libkoreader-lfs")
 local ffiUtil = require("ffi/util")
 local logger  = require("logger")
 local Memory  = require("infra/sui_memory")
+local Text    = require("infra/sui_text")
 local _ = require("infra/sui_i18n").translate
 local SUISettings = require("infra/sui_store")
 
@@ -524,11 +525,16 @@ local function _appendSubgroupFolders(fc, bim, base_dir, filter_state, collate, 
     return groups
 end
 
+-- Widest secondary text of a listed book, in characters. The list renderer
+-- sizes its right-hand column to this text and gives the title what remains,
+-- so the text has to stay short whatever the metadata holds.
+local CONTEXT_MAX_CHARS = 28
+
 -- Series label of a book: its series name followed by its index.
 local function _seriesLabel(row)
     if not row.series or row.series == "" then return nil end
-    if row.series_index then return row.series .. " #" .. tostring(row.series_index) end
-    return row.series
+    local suffix = row.series_index and (" #" .. tostring(row.series_index)) or ""
+    return Text.truncate(row.series, CONTEXT_MAX_CHARS - #suffix) .. suffix
 end
 
 -- Secondary text of a book listed in a leaf: the detail the trail leaves open.
@@ -536,8 +542,7 @@ end
 -- and once the series is fixed too only the index in it remains.
 local function _bookContext(row, selected)
     if not selected.author then
-        if not row.authors or row.authors == "" then return nil end
-        return (row.authors:gsub("\n.*", " et al."))
+        return Text.truncate(Text.formatAuthors(row.authors), CONTEXT_MAX_CHARS)
     end
     if selected.series then
         return row.series_index and "#" .. tostring(row.series_index) or nil

@@ -318,6 +318,18 @@ local function liveHS()
     return package.loaded["screens/sui_homescreen"]
 end
 
+-- True when the file manager main menu is open above the stack entry at index
+-- `from`. The menu belongs to the screen beneath it, so that screen has to
+-- stay alive for as long as the menu is open.
+local function _mainMenuOpenAbove(stack, from, fm)
+    local container = fm and fm.menu and fm.menu.menu_container
+    if not container then return false end
+    for i = from + 1, #stack do
+        if stack[i].widget == container then return true end
+    end
+    return false
+end
+
 -- ---------------------------------------------------------------------------
 -- FileManager class patches
 -- Patches setupLayout, initGesListener, FileChooser.init, and FileChooser.changeToPath.
@@ -2357,6 +2369,7 @@ function M.patchUIManagerShow(plugin)
         -- Soft-parked HS under the system ScreenSaver is left alive when
         -- KEEP_PARKED_ACROSS_SUSPEND is set (see ScreenEngine), so the
         -- post-wakeup book-close path can still raise instead of cold-rebuild.
+        -- The screen is also left alive while the main menu is open above it.
         if _show_depth == 0 and widget and widget.covers_fullscreen
                 and (widget.title_bar or widget.name)
                 and widget.name ~= "homescreen"
@@ -2366,12 +2379,19 @@ function M.patchUIManagerShow(plugin)
             local keep_parked = SE and SE.SOFT_PARK_ENABLED
                 and SE.KEEP_PARKED_ACROSS_SUSPEND
             local stack = UI.getWindowStack()
-            for _, entry in ipairs(stack) do
+            for i, entry in ipairs(stack) do
                 local w = entry.widget
                 if w and w.name == "homescreen" then
                     if keep_parked and w._parked then
                         break
                     end
+                    -- A widget launched from the open main menu leaves the
+                    -- menu in place; closing it reveals the menu over this
+                    -- screen, and closing the menu reveals the screen.
+                    if _mainMenuOpenAbove(stack, i, plugin.ui) then
+                        break
+                    end
+                    widget._sui_displaced_screen    = w._id
                     w._navbar_closing_intentionally = true
                     w._navbar_closing_from_module   = true
                     UIManager:close(w)
@@ -2422,10 +2442,18 @@ function M.patchUIManagerClose(plugin)
 
     -- Show the homescreen after any fullscreen widget closes, if conditions allow.
     -- Defined once at patch-install time so it is not recreated on every close().
-    local function _doShowHS(fm, plugin_ref)
+    -- Shows screen `screen_id` (the built-in Homescreen when nil) again.
+    local function _doShowHS(fm, plugin_ref, screen_id)
         if isAppExiting() then return end
         local HS = liveHS()
-        if not HS or HS._instance then return end
+        if not HS then return end
+        local is_builtin = screen_id == nil or screen_id == "hs"
+        local SE = package.loaded["engines/sui_screen_engine"]
+        if is_builtin then
+            if HS._instance then return end
+        elseif not SE or SE.getInstance(screen_id) then
+            return
+        end
 
         -- Abort if another fullscreen widget appeared between the scheduleIn(0)
         -- call and this execution (e.g. coll_list opened by onReturn).
@@ -2435,7 +2463,11 @@ function M.patchUIManagerClose(plugin)
         for _, entry in ipairs(UI.getWindowStack()) do
             local w = entry.widget
             if w and w ~= current_fm then
-                if w.covers_fullscreen then return end
+                if w.covers_fullscreen then
+                    -- The screen comes back when that widget closes instead.
+                    w._sui_displaced_screen = w._sui_displaced_screen or screen_id or "hs"
+                    return
+                end
                 -- Non-fullscreen dialog still open (plugin achievement detail,
                 -- Frotz resume UI, ConfirmBox, …). The Tools/TouchMenu close
                 -- path schedules this callback after the dialog is already on
@@ -2454,8 +2486,11 @@ function M.patchUIManagerClose(plugin)
         -- Close leftover auto-dismissing toasts only.
         _closeOrphanedPopups(fm, nil)
 
-        local prev_action = plugin_ref.active_action
-        _showHSCold(plugin_ref, HS, prev_action)
+        if is_builtin then
+            _showHSCold(plugin_ref, HS, plugin_ref.active_action)
+        else
+            require("infra/sui_screen_nav").reopen(screen_id)
+        end
     end
 
     UIManager.close = function(um_self, widget, ...)
@@ -2613,7 +2648,7 @@ function M.patchUIManagerClose(plugin)
         -- closeReaderToHomescreen sets tearing_down=true, so the ReaderUI branch
         -- below is skipped for those paths. This block is a last-resort fallback
         -- for any path not covered above (e.g. a third-party plugin closing the reader).
-        if (widget.name == "ReaderUI" or isStartWithHS())
+        if (widget.name == "ReaderUI" or isStartWithHS() or widget._sui_displaced_screen)
                 and widget.covers_fullscreen
                 and (widget.title_bar or widget.name)
                 and widget.name ~= "homescreen"
@@ -2648,7 +2683,10 @@ function M.patchUIManagerClose(plugin)
             for _, entry in ipairs(UI.getWindowStack()) do
                 local w = entry.widget
                 if w and w ~= fm and w ~= widget and w.covers_fullscreen then
-                    other_open = true; break
+                    other_open = true
+                    -- The screen comes back when that widget closes instead.
+                    w._sui_displaced_screen = w._sui_displaced_screen or widget._sui_displaced_screen
+                    break
                 end
             end
             if not other_open then
@@ -2712,7 +2750,7 @@ function M.patchUIManagerClose(plugin)
                         if not fm2 then return end  -- FM gone = app is exiting
                         local RUI = package.loaded["apps/reader/readerui"]
                         if RUI and RUI.instance then return end
-                        _doShowHS(fm2, active_plugin)
+                        _doShowHS(fm2, active_plugin, widget._sui_displaced_screen)
                     end)
                 end
             end
@@ -4575,6 +4613,14 @@ local function _wallpaperEnabledFM()
     return ok and SUIWallpaper and SUIWallpaper.styleGetWallpaperShowInFM and SUIWallpaper.styleGetWallpaperShowInFM()
 end
 
+-- True while native controls draw over a surface painted behind them: a bar
+-- tone or frame set on the pagination bar or title bar. Their own white
+-- backgrounds must then stay out of the way.
+local function _nativeControlSurface()
+    local ok, SUIWallpaper = pcall(require, "features/sui_wallpaper")
+    return ok and SUIWallpaper and SUIWallpaper.paintsBehindNativeControls() or false
+end
+
 -- Compatibility shim — internal callers replaced with _wallpaperBg().
 local function _getWallpaperBg()
     return _wallpaperBg()
@@ -4744,7 +4790,8 @@ function M.patchWallpaperFM(plugin)
     -- This makes chevrons, coll_back, and other icon Buttons paint a white
     -- rectangle behind them even with bordersize=0.
     -- Fix: wrap Button:paintTo to temporarily nil frame.background while
-    -- wallpaper-in-FM is active, then restore it after the paint call.
+    -- wallpaper-in-FM or a bar surface behind native controls is active, then
+    -- restore it after the paint call.
     -- We guard against double-patching by saving our own orig ref.
     -- -----------------------------------------------------------------------
     local ok_btn, Button = pcall(require, "ui/widget/button")
@@ -4753,10 +4800,11 @@ function M.patchWallpaperFM(plugin)
         installed[#installed + 1] = { Button, "paintTo", orig_btn_pt }
 
         Button.paintTo = function(btn_self, bb, x, y)
-            -- Only intercept when: wallpaper active, no explicit button colour,
-            -- and the frame FrameContainer exists and has a background.
-            if _wallpaperEnabledFM() and not btn_self.background
-                    and btn_self[1] and btn_self[1].background then
+            -- Only intercept when: a backdrop shows behind the button, no
+            -- explicit button colour, and the frame FrameContainer exists and
+            -- has a background.
+            if not btn_self.background and btn_self[1] and btn_self[1].background
+                    and (_wallpaperEnabledFM() or _nativeControlSurface()) then
                 local saved = btn_self[1].background
                 btn_self[1].background = nil
                 orig_btn_pt(btn_self, bb, x, y)
@@ -4810,12 +4858,13 @@ function M.patchWallpaperFM(plugin)
             -- Only intervenes when the icon does not yet have an explicit alpha
             -- defined by the instantiating widget. The FM wallpaper needs the
             -- alpha channel to show through; the night-mode colour option needs
-            -- it to composite the icon over the real background.
+            -- it to composite the icon over the real background, and so does a
+            -- bar surface behind native controls.
             if not iw_self.alpha then
                 if _wallpaperEnabledFM() then
                     iw_self.alpha = true
                     iw_self.original_in_nightmode = false
-                elseif SUIStyle.keepIconColorsInNight() then
+                elseif SUIStyle.keepIconColorsInNight() or _nativeControlSurface() then
                     iw_self.alpha = true
                 end
             end
@@ -4823,9 +4872,9 @@ function M.patchWallpaperFM(plugin)
     end
 
 
--- Reads the current pagination strength on every paint (like the title bar
--- button scrim), so a menu created before an opacity change still reflects
--- it, and a menu created at 0% still picks up a later increase.
+-- Reads the pagination surface (tone, opacity and frame) on every paint, so
+-- a menu created before a change still reflects it, and a menu created while
+-- the surface was not painted still picks up a later change.
 local function _applyPaginationScrim(menu_self)
     local page_info = menu_self and menu_self.page_info
     if not page_info or page_info._sui_pagination_scrim then return end
@@ -4833,17 +4882,15 @@ local function _applyPaginationScrim(menu_self)
     local orig_paint = page_info.paintTo
     function page_info:paintTo(bb, x, y)
         local ok, WP = pcall(require, "features/sui_wallpaper")
-        local strength = ok and WP and WP.getPaginationBackdropStrength and WP.getPaginationBackdropStrength() or 0
-        if strength > 0 then
+        local surface = ok and WP and WP.resolveBar("pagination")
+        if surface and (surface.strength > 0 or surface.border_sz > 0) then
             local h = (self.dimen and self.dimen.h) or 0
             if h <= 0 then
                 local sz = self.getSize and self:getSize()
                 h = sz and sz.h or 0
             end
-            -- Full-width scrim spanning the page bar's height.
-            if h > 0 then
-                Backdrop.paintBackdrop(bb, 0, y, Screen:getWidth(), h, strength)
-            end
+            -- Full-width surface spanning the page bar's height.
+            Backdrop.paintBar(bb, y, h, surface, "top")
         end
         return orig_paint(self, bb, x, y)
     end
@@ -4855,8 +4902,10 @@ end
     -- background = COLOR_WHITE. _injectWallpaperIntoWidget nils it once, but
     -- every setupLayout call re-creates the full widget tree via Menu:init.
     -- Wrap Menu.init so fullscreen FM-style menus always get nil backgrounds
-    -- when wallpaper is active.  We chain on top of whatever Menu.init is
-    -- current (may already be wrapped by patchMenuInitForPagination).
+    -- when wallpaper is active, and paint the pagination bar surface (tone,
+    -- opacity and frame) whether or not one is.  We chain on top of whatever
+    -- Menu.init is current (may already be wrapped by
+    -- patchMenuInitForPagination).
     -- -----------------------------------------------------------------------
     local ok_menu, Menu = pcall(require, "ui/widget/menu")
     if ok_menu and Menu then
@@ -4865,7 +4914,6 @@ end
 
         Menu.init = function(menu_self, ...)
             orig_menu_init(menu_self, ...)
-            if not _wallpaperEnabledFM() then return end
             -- Covers two cases:
             --   1. Fullscreen borderless overlays (Collections, History, etc.)
             --   2. FM FileChooser (name == "filemanager") — does not have
@@ -4886,14 +4934,16 @@ end
                                        and M._WALLPAPER_NAMES
                                        and M._WALLPAPER_NAMES[menu_self.name]
             if (is_fm_file_chooser or is_fullscreen_overlay) and menu_self[1] then
-                -- Clear the outer FrameContainer KOReader always builds white.
-                menu_self[1].background = nil
-                -- Also clear the inner OverlapGroup's first FrameContainer child.
-                local inner = menu_self[1][1]
-                if inner and inner[1] then
-                    inner[1].background = nil
+                if _wallpaperEnabledFM() then
+                    -- Clear the outer FrameContainer KOReader always builds white.
+                    menu_self[1].background = nil
+                    -- Also clear the inner OverlapGroup's first FrameContainer child.
+                    local inner = menu_self[1][1]
+                    if inner and inner[1] then
+                        inner[1].background = nil
+                    end
                 end
-                -- Optional scrim behind the native page/pagination bar.
+                -- Surface behind the native page/pagination bar.
                 pcall(_applyPaginationScrim, menu_self)
             end
         end

@@ -19,6 +19,7 @@ local Topbar       = require("screens/sui_topbar")
 local QSBar        = require("screens/sui_quicksettings_bar")
 local Patches      = require("infra/sui_patches")
 local Memory       = require("infra/sui_memory")
+local Text         = require("infra/sui_text")
 local SUISettings  = require("infra/sui_store")
 
 -- Installer of the main menu entries, loaded on first access by addToMainMenu
@@ -1142,12 +1143,9 @@ function SimpleUIPlugin:init()
                     if not is_file then return nil end
                     if not BM.isEnabled() then return nil end
 
-                    local authors_raw = book_props and book_props.authors
-                    if not authors_raw or authors_raw == "" then return nil end
-                    -- Multi-author: newline-delimited.  Navigate to the first
-                    -- author only; a picker would be over-engineering for v1.
-                    local author = authors_raw:match("^([^\n]+)") or authors_raw
-                    author = author:match("^%s*(.-)%s*$") -- trim whitespace
+                    -- Multi-author: navigates to the first author only.
+                    local author = Text.firstLine(book_props and book_props.authors)
+                    if not author then return nil end
 
                     local fc2 = FM2.instance and FM2.instance.file_chooser
                     local count = BM.getAuthorBookCount(fc2, author)

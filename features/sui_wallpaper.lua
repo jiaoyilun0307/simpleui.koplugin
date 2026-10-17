@@ -313,8 +313,6 @@ end
 
 -- Settings that only make sense while a wallpaper is active.
 local function _resetWallpaperDependents()
-    SUISettings:saveSetting("simpleui_statusbar_transparent", false)
-    SUISettings:saveSetting("simpleui_navbar_transparent", false)
     SUISettings:saveSetting("simpleui_wallpaper_show_in_fm", false)
 end
 
@@ -462,24 +460,46 @@ do
 end
 
 -- ---------------------------------------------------------------------------
--- Per-surface backdrop strengths (scale and painters: infra/sui_backdrop.lua).
+-- Surfaces that sit over the wallpaper (scale, tones and painters:
+-- infra/sui_backdrop.lua).
 --
--- Without a wallpaper the getters return a fixed fallback: solid for surfaces
--- that have a native look, transparent for those with nothing to paint over.
+-- Opacity applies only while a wallpaper is active; without one a surface
+-- keeps the opacity of its native look. Tone and frame always apply.
 -- Setters only store the value; the caller refreshes the UI once afterwards.
--- Legacy booleans migrate once on first read:
---   status / navigation bar transparent true  → 0
---   status / navigation bar transparent false → default
---   module solid_bg true                      → 100
+-- Legacy settings migrate once on first read:
+--   status / navigation bar transparent true  → opacity 0
+--   module solid_bg true                      → opacity 100
 -- ---------------------------------------------------------------------------
 local STRENGTH_MIN, STRENGTH_MAX = Backdrop.STRENGTH_MIN, Backdrop.STRENGTH_MAX
 
-local KEY_STATUSBAR       = "simpleui_statusbar_backdrop"
-local KEY_NAVBAR          = "simpleui_navbar_backdrop"
-local KEY_PAGINATION      = "simpleui_pagination_backdrop"
-local KEY_TITLEBAR        = "simpleui_titlebar_backdrop"
-local KEY_MODULE          = "simpleui_module_backdrop"
-local KEY_COVER_STRIP     = "simpleui_cover_strip_backdrop"
+local KEY_NAVBAR_STYLE = "simpleui_bar_style"
+local KEY_NAVBAR_LAYOUT = "simpleui_bar_layout"
+
+-- The full-width bars, keyed by kind. `legacy_transparent` is the flag older
+-- versions stored instead of an opacity; `native` is the opacity the bar has
+-- without a wallpaper: 100 where the bar paints its own fill, 0 where the
+-- host draws it.
+local BARS = {
+    statusbar  = { key = "simpleui_statusbar",  native = STRENGTH_MAX, legacy_transparent = "simpleui_statusbar_transparent" },
+    navbar     = { key = "simpleui_navbar",     native = STRENGTH_MAX, legacy_transparent = "simpleui_navbar_transparent" },
+    pagination = { key = "simpleui_pagination", native = STRENGTH_MIN },
+    titlebar   = { key = "simpleui_titlebar",   native = STRENGTH_MIN },
+}
+
+local BAR_SURFACE = {}
+for kind, bar in pairs(BARS) do
+    BAR_SURFACE[kind] = Backdrop.surface(kind, bar.key)
+end
+
+-- Surface descriptor of a bar kind, for the menu and for resetting.
+function M.barSurface(kind)
+    return BAR_SURFACE[kind]
+end
+
+-- Surface of the title/author strip below Library covers and the global
+-- opacity of modules that set none of their own.
+M.COVER_STRIP = Backdrop.surface("cover_strip", "simpleui_cover_strip")
+local MODULE_SURFACE = Backdrop.surface("module", "simpleui_module")
 
 -- True while a wallpaper is enabled and selected. Surfaces that only exist
 -- over a wallpaper fall back to their native look otherwise.
@@ -487,79 +507,85 @@ function M.isWallpaperActive()
     return M.styleGetWallpaperEnabled() and M.styleGetWallpaper() ~= nil
 end
 
-local function _migrateBarStrength(bool_key, strength_key, default)
-    local stored = Backdrop.readBackdropStrength(strength_key)
+-- Opacity stored for a bar, whether or not a wallpaper is active.
+function M.getBarStrength(kind)
+    local surface, legacy = BAR_SURFACE[kind], BARS[kind].legacy_transparent
+    if legacy and SUISettings:get(legacy) ~= nil then
+        if SUISettings:get(surface.keys.strength) == nil and SUISettings:isTrue(legacy) then
+            Backdrop.saveStrength(surface, STRENGTH_MIN)
+        end
+        SUISettings:del(legacy)
+    end
+    return Backdrop.readStrength(surface)
+end
+
+function M.setBarStrength(kind, n)
+    Backdrop.saveStrength(BAR_SURFACE[kind], n)
+end
+
+-- Look of a bar as it is painted (see Backdrop.resolve). Without a wallpaper
+-- the opacity is the bar's native one, raised to solid when the user chose a
+-- tone or frame the native look does not have.
+function M.resolveBar(kind)
+    local surface = BAR_SURFACE[kind]
+    if M.isWallpaperActive() then
+        return Backdrop.resolve(surface, M.getBarStrength(kind))
+    end
+    local strength = BARS[kind].native
+    local customised = Backdrop.readTone(surface) ~= Backdrop.TONE.WHITE or Backdrop.readFrame(surface)
+    return Backdrop.resolve(surface, customised and STRENGTH_MAX or strength)
+end
+
+-- Look of a card or button surface as painted. Opacity applies only over a
+-- wallpaper; without one the surface is solid.
+function M.resolveSurface(surface)
+    return Backdrop.resolve(surface, not M.isWallpaperActive() and STRENGTH_MAX or nil)
+end
+
+-- True while a bar surface is painted behind native controls (the pagination
+-- bar and the title bar). Those controls must then draw without their own
+-- white background.
+function M.paintsBehindNativeControls()
+    return M.resolveBar("pagination").strength > 0 or M.resolveBar("titlebar").strength > 0
+end
+
+-- Navigation bar layouts. Older versions stored a style instead:
+--   default → full width; framed → floating with its frame; bare → floating
+--   without frame and fully transparent. A full-width bar keeps the rule it
+--   always had, except when it was transparent.
+M.NAVBAR_LAYOUT = { FULL = "full", FLOATING = "floating" }
+
+function M.getNavbarLayout()
+    local stored = SUISettings:readSetting(KEY_NAVBAR_LAYOUT)
     if stored then return stored end
-    local strength = SUISettings:isTrue(bool_key) and STRENGTH_MIN or default
-    SUISettings:saveSetting(strength_key, strength)
-    return strength
+
+    local style = SUISettings:readSetting(KEY_NAVBAR_STYLE) or "default"
+    local surface = BAR_SURFACE.navbar
+    local layout = style == "default" and M.NAVBAR_LAYOUT.FULL or M.NAVBAR_LAYOUT.FLOATING
+    if style == "bare" then
+        Backdrop.saveStrength(surface, STRENGTH_MIN)
+        Backdrop.saveFrame(surface, false)
+    elseif style == "default" and M.getBarStrength("navbar") <= STRENGTH_MIN
+            and SUISettings:get(surface.keys.frame) == nil then
+        Backdrop.saveFrame(surface, false)
+    end
+    SUISettings:saveSetting(KEY_NAVBAR_LAYOUT, layout)
+    SUISettings:del(KEY_NAVBAR_STYLE)
+    return layout
 end
 
--- Stores a bar strength and keeps the legacy boolean in sync for any
--- external reader.
-local function _saveBarStrength(strength_key, bool_key, n)
-    local v = Backdrop.saveBackdropStrength(strength_key, n)
-    if v then SUISettings:saveSetting(bool_key, v <= STRENGTH_MIN) end
+function M.setNavbarLayout(layout)
+    SUISettings:saveSetting(KEY_NAVBAR_LAYOUT, layout)
 end
 
-function M.getStatusbarBackdropStrength()
-    if not M.isWallpaperActive() then return STRENGTH_MAX end
-    return _migrateBarStrength("simpleui_statusbar_transparent", KEY_STATUSBAR,
-        Backdrop.BACKDROP_DEFAULT.statusbar)
-end
-
-function M.setStatusbarBackdropStrength(n)
-    _saveBarStrength(KEY_STATUSBAR, "simpleui_statusbar_transparent", n)
-end
-
-function M.getNavbarBackdropStrength()
-    if not M.isWallpaperActive() then return STRENGTH_MAX end
-    return _migrateBarStrength("simpleui_navbar_transparent", KEY_NAVBAR,
-        Backdrop.BACKDROP_DEFAULT.navbar)
-end
-
-function M.setNavbarBackdropStrength(n)
-    _saveBarStrength(KEY_NAVBAR, "simpleui_navbar_transparent", n)
-end
-
-function M.getPaginationBackdropStrength()
-    if not M.isWallpaperActive() then return STRENGTH_MAX end
-    return Backdrop.readBackdropStrength(KEY_PAGINATION, Backdrop.BACKDROP_DEFAULT.pagination)
-end
-
-function M.setPaginationBackdropStrength(n)
-    Backdrop.saveBackdropStrength(KEY_PAGINATION, n)
-end
-
--- Without a wallpaper there is no backdrop to paint.
-function M.getTitlebarBackdropStrength()
-    if not M.isWallpaperActive() then return STRENGTH_MIN end
-    return Backdrop.readBackdropStrength(KEY_TITLEBAR, Backdrop.BACKDROP_DEFAULT.titlebar)
-end
-
-function M.setTitlebarBackdropStrength(n)
-    Backdrop.saveBackdropStrength(KEY_TITLEBAR, n)
-end
-
--- Backdrop behind the title/author strip below Library covers. Without a
--- wallpaper the strip keeps its native solid look.
-function M.getCoverStripBackdropStrength()
-    if not M.isWallpaperActive() then return STRENGTH_MAX end
-    return Backdrop.readBackdropStrength(KEY_COVER_STRIP, Backdrop.BACKDROP_DEFAULT.cover_strip)
-end
-
-function M.setCoverStripBackdropStrength(n)
-    Backdrop.saveBackdropStrength(KEY_COVER_STRIP, n)
-end
-
--- Module backdrop strength; without a wallpaper there is no backdrop to paint.
+-- Module opacity; without a wallpaper there is no backdrop to paint.
 -- With (pfx, id): per-module override, migrating legacy solid_bg once. Without
 -- an override the result is `default`, or the global default when that is nil.
 -- With no args: global default.
 function M.getModuleBackdropStrength(pfx, id, default)
     if not M.isWallpaperActive() then return STRENGTH_MIN end
     if type(pfx) ~= "string" or not id then
-        return Backdrop.readBackdropStrength(KEY_MODULE, Backdrop.BACKDROP_DEFAULT.module)
+        return Backdrop.readStrength(MODULE_SURFACE)
     end
     local key = pfx .. id .. "_backdrop"
     local solid_key = pfx .. id .. "_solid_bg"
@@ -580,7 +606,7 @@ function M.getModuleBackdropStrength(pfx, id, default)
 end
 
 function M.setModuleBackdropStrength(n, pfx, id)
-    local key = (type(pfx) == "string" and id) and (pfx .. id .. "_backdrop") or KEY_MODULE
+    local key = (type(pfx) == "string" and id) and (pfx .. id .. "_backdrop") or MODULE_SURFACE.keys.strength
     Backdrop.saveBackdropStrength(key, n)
 end
 
@@ -600,21 +626,21 @@ end
 -- Restore a dirty rect to the same appearance module chrome leaves behind:
 -- wallpaper (or solid surface) plus an optional backdrop scrim.
 --
--- strength / radius are optional. Omit them (or pass 0) for a plain base
--- restore — the historical paintEraser behaviour. Pass the module's chrome
--- strength so gaps inside a card keep the configured opacity after a
--- partial redraw (pagination, swipe).
+-- strength / radius / color are optional. Omit them (or pass strength 0) for
+-- a plain base restore. Pass the module's chrome strength and colour so gaps
+-- inside a card keep the configured opacity and tone after a partial redraw
+-- (pagination, swipe).
 --
 -- The eraser cache is a screen-sized raster produced by ImageWidget:paintTo
 -- (see _styleGetBgWidget), so it already matches full-frame wallpaper paint
 -- including night-mode handling. No extra invert is applied here.
-function M.paintEraser(bb, x, y, w, h, strength, radius)
+function M.paintEraser(bb, x, y, w, h, strength, radius, color)
     if w <= 0 or h <= 0 then return end
     strength = Backdrop.clampBackdropStrength(strength) or STRENGTH_MIN
 
     -- Opaque chrome: surface fill alone is the final pixel state.
     if strength >= STRENGTH_MAX then
-        Backdrop.paintBackdrop(bb, x, y, w, h, STRENGTH_MAX, radius or 0)
+        Backdrop.paintBackdrop(bb, x, y, w, h, STRENGTH_MAX, radius or 0, color)
         return
     end
 
@@ -648,7 +674,7 @@ function M.paintEraser(bb, x, y, w, h, strength, radius)
         end)
     end
 
-    Backdrop.paintBackdrop(bb, x, y, w, h, strength, radius or 0)
+    Backdrop.paintBackdrop(bb, x, y, w, h, strength, radius or 0, color)
 end
 
 -- ---------------------------------------------------------------------------

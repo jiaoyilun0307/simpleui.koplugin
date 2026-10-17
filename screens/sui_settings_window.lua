@@ -54,6 +54,7 @@
 local Device      = require("device")
 local Geom        = require("ui/geometry")
 local UIManager   = require("ui/uimanager")
+local util        = require("util")
 local UI         = require("infra/sui_core")
 local _           = require("infra/sui_i18n").translate
 
@@ -542,7 +543,7 @@ local function buildScreens(st)
                                 is_enter_default = true,
                                 callback         = function()
                                     local name = dialog:getInputText()
-                                    name = name and name:match("^%s*(.-)%s*$") or ""
+                                    name = name and util.trim(name) or ""
                                     UIManager:close(dialog)
                                     if name ~= "" then
                                         CustomScreens.rename(_screen.id, name)
@@ -1167,7 +1168,7 @@ function SettingsWindow:show(on_close, nav_path)
                                     is_enter_default = true,
                                     callback         = function()
                                         local name = dialog:getInputText()
-                                        name = name and name:match("^%s*(.-)%s*$") or ""
+                                        name = name and util.trim(name) or ""
                                         UIManager:close(dialog)
                                         CustomScreens.create(name ~= "" and name or nil)
                                         ctx.repaint()

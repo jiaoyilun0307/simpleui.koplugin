@@ -25,6 +25,7 @@ local Config          = require("infra/sui_config")
 local UI      = require("infra/sui_core")
 local SUISettings = require("infra/sui_store")
 local Backdrop    = require("infra/sui_backdrop")
+local SUIWallpaper = require("features/sui_wallpaper")
 local SUIStyle    = require("features/sui_style")
 local CLR_TEXT_SUB = UI.CLR_TEXT_SUB
 local PAD     = UI.PAD
@@ -69,33 +70,29 @@ local function _clampFs(v, lo, hi)
     return math.max(lo, math.min(hi, math.floor(v)))
 end
 
-local SETTING_TYPE     = "reading_stats_type"            -- style: cards / flat / list
+local RS_ID            = "reading_stats"
+local SETTING_TYPE     = "reading_stats_type"            -- style: cards / list
 local SETTING_ALIGN    = "reading_stats_align"
 local SETTING_CARD_STR = "reading_stats_card_strength"   -- 0–100 fill opacity
+local TYPES            = { "cards", "list" }
+
+-- Style values stored before the card look became a surface, mapped onto the
+-- look they stood for (see Backdrop.migrateLook).
+local LEGACY_STYLE_LOOKS = { cards_transparent = "transparent" }
 
 local function getType(pfx)
-    local t = SUISettings:readSetting(pfx .. SETTING_TYPE) or "cards"
-    -- Legacy alias folded into cards + strength 0.
-    if t == "cards_transparent" then return "cards" end
-    return t
+    return Config.readChoice(pfx .. SETTING_TYPE, TYPES, "cards")
 end
 
 local function getAlign(pfx)
     return Config.getAlignment(pfx .. SETTING_ALIGN)
 end
 
-local function getCardStrength(pfx)
-    local v = Backdrop.readBackdropStrength(pfx .. SETTING_CARD_STR)
-    if v ~= nil then return v end
-    -- Migrate legacy transparent style.
-    if SUISettings:readSetting(pfx .. SETTING_TYPE) == "cards_transparent" then
-        return 0
-    end
-    return 100
-end
-
-local function setCardStrength(pfx, n)
-    Backdrop.saveBackdropStrength(pfx .. SETTING_CARD_STR, n)
+-- Surface of the stat cards.
+local function cardSurface(pfx)
+    local surface = Backdrop.surface("card", pfx .. RS_ID, pfx .. SETTING_CARD_STR)
+    Backdrop.migrateLook(surface, pfx .. SETTING_TYPE, LEGACY_STYLE_LOOKS)
+    return surface
 end
 
 local function _getItems(pfx)
@@ -241,17 +238,16 @@ local function _buildCardInner(stat_id, stats, d, align, clr_blk, clr_sub, max_w
     }
 end
 
--- Cards mode: optional border + strength-based fill.
--- Flat mode: no border, surface_flat fill at the same strength.
+-- Cards mode: a rounded card drawn from the card `surface` (a resolved
+-- surface: tone, opacity and optional frame).
 -- `d` is the scaled-dims table produced once per M.build() call.
-local function buildStatCardWidget(card_w, stat_id, stats, d, align, colors, strength, flat)
+local function buildStatCardWidget(card_w, stat_id, stats, d, align, colors, surface)
     local clr_blk = colors and colors.blk or SUIStyle.COLOR.text_primary
     local clr_sub = colors and colors.sub or CLR_TEXT_SUB
     local cc = CenterContainer:new{
         dimen = Geom:new{ w = card_w, h = d.card_h },
         _buildCardInner(stat_id, stats, d, align, clr_blk, clr_sub, card_w),
     }
-    local fill_color = flat and SUIStyle.COLOR.surface_flat or SUIStyle.COLOR.surface
     local fc = FrameContainer:new{
         dimen      = Geom:new{ w = card_w, h = d.card_h },
         bordersize = 0,
@@ -260,13 +256,11 @@ local function buildStatCardWidget(card_w, stat_id, stats, d, align, colors, str
         cc,
     }
     local fill = Backdrop.BackdropFill:new{
-        width = card_w,
-        height = d.card_h,
-        strength = strength or 100,
-        radius = d.corner_r,
-        color = fill_color,
-        border_sz = flat and 0 or SUIStyle.BORDER_SZ,
-        dimen = Geom:new{ w = card_w, h = d.card_h },
+        width   = card_w,
+        height  = d.card_h,
+        surface = surface,
+        radius  = d.corner_r,
+        dimen   = Geom:new{ w = card_w, h = d.card_h },
     }
     local card = OverlapGroup:new{
         dimen = Geom:new{ w = card_w, h = d.card_h },
@@ -279,9 +273,6 @@ local function buildStatCardWidget(card_w, stat_id, stats, d, align, colors, str
     return card, update_fn
 end
 
-local function buildStatFlatWidget(card_w, stat_id, stats, d, align, colors, strength)
-    return buildStatCardWidget(card_w, stat_id, stats, d, align, colors, strength, true)
-end
 local function buildStatListCell(cell_w, stat_id, stats, show_sep, d, align, colors)
     local clr_blk = colors and colors.blk or SUIStyle.COLOR.text_primary
     local clr_sub = colors and colors.sub or CLR_TEXT_SUB
@@ -543,22 +534,17 @@ function M.build(w, ctx)
         tappable._rs_update_funcs = update_funcs
         return tappable
     else
-        -- Cards / Flat mode: rounded cards with gaps between them.
-        -- Fill opacity from card_strength; flat uses surface_flat, cards use surface + border.
+        -- Cards mode: rounded cards with gaps between them, drawn from the
+        -- card surface.
         -- `w` is already label-aligned via module chrome outer margin.
         local avail_w = w
         local card_w  = math.floor((avail_w - d.gap * (n - 1)) / n)
         local row_w   = n * card_w + math.max(0, n - 1) * d.gap
         local offset_x = math.floor((w - row_w) / 2)
         local colors  = { blk = _CLR_TEXT_BLK_EFF, sub = CLR_TEXT_SUB_EFF }
-        local card_strength = getCardStrength(ctx.pfx)
+        local surface = SUIWallpaper.resolveSurface(cardSurface(ctx.pfx))
         for i = 1, n do
-            local card, update_fn
-            if mode == "flat" then
-                card, update_fn = buildStatFlatWidget(card_w, stat_ids[i], stats, d, align, colors, card_strength)
-            else
-                card, update_fn = buildStatCardWidget(card_w, stat_ids[i], stats, d, align, colors, card_strength, false)
-            end
+            local card, update_fn = buildStatCardWidget(card_w, stat_ids[i], stats, d, align, colors, surface)
             card = card or FrameContainer:new{
                 dimen = Geom:new{ w = card_w, h = d.card_h },
                 bordersize = 0, padding = 0,
@@ -705,21 +691,17 @@ function M.getMenuItems(ctx_menu)
             text    = _lc("Style"),
             options = {
                 { value = "cards", label = _lc("Cards") },
-                { value = "flat",  label = _lc("Flat") },
                 { value = "list",  label = _lc("List") },
             },
             get     = function() return getType(pfx) end,
             set     = function(v) SUISettings:saveSetting(pfx .. SETTING_TYPE, v) end,
             refresh = refresh,
         },
-        Config.makeBackdropStrengthItem({
-            title         = _lc("Card Opacity"),
-            enabled_func  = function() return getType(pfx) ~= "list" end,
-            get           = function() return getCardStrength(pfx) end,
-            set           = function(v) setCardStrength(pfx, v) end,
-            refresh       = refresh,
-            default_value = 100,
-            _lc           = _lc,
+        Config.makeSurfaceMenu({
+            surface      = cardSurface(pfx),
+            enabled_func = function() return getType(pfx) ~= "list" end,
+            refresh      = refresh,
+            _lc          = _lc,
         }),
         Config.makeAlignmentItem{
             key     = pfx .. SETTING_ALIGN,
@@ -759,7 +741,7 @@ function M.getMenuItems(ctx_menu)
             size_rows[#size_rows + 1] = row
         elseif label == _lc("Text") or label == _lc("Fonts") then
             -- provided via text_opts
-        elseif label == _lc("Style") or label == _lc("Alignment") or label == _lc("Card Opacity") then
+        elseif label == _lc("Style") or label == _lc("Alignment") or label == _lc("Background") then
             appearance_extra[#appearance_extra + 1] = row
         elseif label == _lc("Streak Mode") then
             content_rows[#content_rows + 1] = row

@@ -363,18 +363,18 @@ local function _reloadImage(img)
     pcall(img.init, img)
 end
 
--- Wallpaper backdrop painted behind a title bar across the full page width.
--- Strength is read at paint time so opacity changes need no re-hook. The
--- instance-level paintTo is dropped again to return to the class method.
+-- Bar surface (tone, opacity and frame) painted behind a title bar across
+-- the full page width. It is read at paint time so changes need no re-hook.
+-- The instance-level paintTo is dropped again to return to the class method.
 local function _installBarScrim(tb)
     if rawget(tb, "paintTo") then return end
     local orig = tb.paintTo
     function tb:paintTo(bb, x, y)
         local ok, WP = pcall(require, "features/sui_wallpaper")
-        local strength = ok and WP.getTitlebarBackdropStrength() or 0
-        if strength > 0 then
+        local surface = ok and WP.resolveBar("titlebar")
+        if surface and (surface.strength > 0 or surface.border_sz > 0) then
             local h = (self.dimen and self.dimen.h) or self:getHeight()
-            if h > 0 then Backdrop.paintBackdrop(bb, 0, y, Screen:getWidth(), h, strength) end
+            Backdrop.paintBar(bb, y, h, surface, "bottom")
         end
         return orig(self, bb, x, y)
     end

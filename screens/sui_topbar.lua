@@ -27,20 +27,13 @@ local SUIStyle    = require("features/sui_style")
 local M = {}
 
 -- ---------------------------------------------------------------------------
--- Bar color helpers
--- Priority: transparent > default.
+-- Bar surface: tone, opacity and frame (see infra/sui_backdrop.lua). The
+-- bar paints it itself across the full screen width.
 -- ---------------------------------------------------------------------------
-local function _getBarBg()
+local function _getBarSurface()
     local ok, WP = pcall(require, "features/sui_wallpaper")
-    if ok and WP and WP.getStatusbarBackdropStrength then
-        local s = WP.getStatusbarBackdropStrength()
-        if s <= 0 then return nil end
-        if s >= 100 then return SUIStyle.COLOR.surface end
-        -- Partial scrim: no FrameContainer bg; painted in buildTopbarWidget.
-        return nil, s
-    end
-    if SUISettings:isTrue("simpleui_statusbar_transparent") then return nil end
-    return SUIStyle.COLOR.surface
+    if ok and WP then return WP.resolveBar("statusbar") end
+    return Backdrop.resolveDefault("statusbar")
 end
 
 local function _getBarFg()
@@ -487,9 +480,11 @@ local function resolveBar()
         show_swipe = (not center_has_items) and SUISettings:nilOrTrue("simpleui_topbar_swipe_indicator"),
         labels     = {},
     }
-    bar.bg, bar.scrim = _getBarBg()
+    bar.surface = _getBarSurface()
 
-    local shapes = { _layout_gen, (bar.bg and "bg" or "nobg") .. (bar.scrim or ""),
+    local surface = bar.surface
+    local shapes = { _layout_gen,
+                     table.concat({ surface.tone, surface.strength, surface.border_sz }, ":"),
                      bar.show_swipe and "swipe" or "noswipe" }
     for _, zone in ipairs({ "left", "right", "center" }) do
         local parts = {}
@@ -589,20 +584,19 @@ function M.buildTopbarWidget(bar)
     local root = FrameContainer:new{
         bordersize    = 0, padding = 0, margin = 0,
         padding_left  = side_m, padding_right = side_m,
-        background    = bar.bg,
+        background    = nil,
         row,
     }
     root._sui_bar = { shape = bar.shape, labels = label_widgets }
-    local scrim_strength = bar.scrim
-    if scrim_strength and scrim_strength > 0 and scrim_strength < 100 then
+    local surface = bar.surface
+    if surface.strength > 0 or surface.border_sz > 0 then
         local orig_paint = root.paintTo
-        local strength = scrim_strength
         function root:paintTo(bb, x, y)
             local dimen = self.dimen or self[1] and self[1].dimen
             local h = (dimen and dimen.h) or M.TOPBAR_H()
             -- Full screen width: the bar content is inset with side margins,
-            -- but the backdrop should span edge to edge.
-            Backdrop.paintBackdrop(bb, 0, y, Screen:getWidth(), h, strength)
+            -- but the surface spans edge to edge.
+            Backdrop.paintBar(bb, y, h, surface, "bottom")
             return orig_paint(self, bb, x, y)
         end
     end

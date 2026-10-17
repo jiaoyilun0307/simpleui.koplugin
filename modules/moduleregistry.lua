@@ -555,7 +555,7 @@ function Registry.purgeInstanceSettings(inst_id, pfx)
                        -- used by Featured Collection / sui_book_grid.lua:
                        "_coll_name", "_sort_state", "_thumb_scale",
                        "_show_progress", "_show_text", "_show_overlay",
-                       "_show_frame", "_solid_bg", "_backdrop",
+                       "_show_frame", "_tone", "_solid_bg", "_backdrop",
                        "_grid_rows", "_grid_cols" }
     local base = _baseOf(inst_id)
     if base and base.setting_suffixes then

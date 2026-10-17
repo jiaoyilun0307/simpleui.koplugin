@@ -8,6 +8,7 @@ local Device    = require("device")
 local Screen    = Device.screen
 local lfs       = require("libs/libkoreader-lfs")
 local logger    = require("logger")
+local util      = require("util")
 local _ = require("infra/sui_i18n").translate
 local N_ = require("infra/sui_i18n").ngettext
 local T = require("ffi/util").template
@@ -142,6 +143,22 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
         end
     end
 
+    -- Refresh run after a bar surface setting changes: rebuilds the UI once
+    -- and updates the open menu so the new value shows immediately; the
+    -- wallpaper image is untouched.
+    local function makeBarRefresh(ctx_menu)
+        return function(touchmenu)
+            _applyFullLayoutRefresh({ keep_wallpaper = true })
+            if ctx_menu and ctx_menu.refresh then
+                ctx_menu.refresh()
+            elseif touchmenu and touchmenu.updateItems then
+                touchmenu:updateItems()
+            elseif ctx_menu and ctx_menu.updateItems then
+                ctx_menu:updateItems()
+            end
+        end
+    end
+
     -- Background Opacity entry shared by the Wallpaper settings and each bar's
     -- own settings. Every caller reads and writes the same stored strength
     -- through the wallpaper module, so a change in one place shows in the
@@ -152,77 +169,55 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
         opts.enabled_func = function()
             return SUIWallpaper.isWallpaperActive() and (not extra_enabled or extra_enabled())
         end
-        -- Refreshes the UI once after a change and updates the open menu so
-        -- the new value shows immediately; the wallpaper image is untouched.
-        opts.refresh = function(touchmenu)
-            _applyFullLayoutRefresh({ keep_wallpaper = true })
-            if ctx_menu and ctx_menu.refresh then
-                ctx_menu.refresh()
-            elseif touchmenu and touchmenu.updateItems then
-                touchmenu:updateItems()
-            elseif ctx_menu and ctx_menu.updateItems then
-                ctx_menu:updateItems()
-            end
-        end
+        opts.refresh = makeBarRefresh(ctx_menu)
         return Config.makeBackdropStrengthItem(opts)
     end
 
-    -- Strength accessors of each bar, keyed by the bar they belong to.
-    local BAR_BACKDROP_SPECS = {
-        statusbar = function(WP)
-            return {
-                get           = WP.getStatusbarBackdropStrength,
-                set           = WP.setStatusbarBackdropStrength,
-                default_value = Backdrop.BACKDROP_DEFAULT.statusbar,
-            }
-        end,
-        navbar = function(WP)
-            return {
-                get           = WP.getNavbarBackdropStrength,
-                set           = WP.setNavbarBackdropStrength,
-                default_value = Backdrop.BACKDROP_DEFAULT.navbar,
-                enabled_func  = function() return Bottombar.getBarStyle() ~= "bare" end,
-                value_func    = function()
-                    if Bottombar.getBarStyle() == "bare" then return "—" end
-                    return Backdrop.formatBackdropStrength(WP.getNavbarBackdropStrength())
-                end,
-            }
-        end,
-        titlebar = function(WP)
-            return {
-                info          = _("0% transparent, 100% solid. Applies across the full width of the title bar."),
-                get           = WP.getTitlebarBackdropStrength,
-                set           = WP.setTitlebarBackdropStrength,
-                default_value = Backdrop.BACKDROP_DEFAULT.titlebar,
-                enabled_func  = function() return require("screens/sui_titlebar").isEnabled() end,
-            }
-        end,
-        pagination = function(WP)
-            return {
-                info          = _("0% transparent, 100% solid. Applies to the native page bar in Library, History, Collections and similar screens."),
-                get           = WP.getPaginationBackdropStrength,
-                set           = WP.setPaginationBackdropStrength,
-                default_value = Backdrop.BACKDROP_DEFAULT.pagination,
-                enabled_func  = function() return SUISettings:nilOrTrue("simpleui_bar_pagination_visible") end,
-            }
-        end,
+    -- Bars with a surface: the info text of their opacity dialog and the
+    -- condition that enables their menu entries, when they have either.
+    local BAR_MENU_SPECS = {
+        statusbar  = {},
+        navbar     = {},
+        titlebar   = {
+            info         = _("0% transparent, 100% solid. Applies across the full width of the title bar."),
+            enabled_func = function() return require("screens/sui_titlebar").isEnabled() end,
+        },
+        pagination = {
+            info         = _("0% transparent, 100% solid. Applies to the native page bar in Library, History, Collections and similar screens."),
+            enabled_func = function() return SUISettings:nilOrTrue("simpleui_bar_pagination_visible") end,
+        },
     }
 
-    -- Appends `item` to `items` only while a wallpaper is active: opacity
-    -- controls have no effect without one, so they are left out of the menu.
-    local function appendWhenWallpaperActive(items, item)
-        if require("features/sui_wallpaper").isWallpaperActive() then
-            items[#items + 1] = item
-        end
+    local function appendItem(items, item)
+        items[#items + 1] = item
         return items
     end
 
     -- Opacity entry for one bar ("statusbar", "navbar", "titlebar" or
     -- "pagination"), titled "Background Opacity" unless `title` is given.
     local function makeBarBackdropItem(kind, ctx_menu, title)
-        local spec = BAR_BACKDROP_SPECS[kind](require("features/sui_wallpaper"))
-        spec.title = title or _("Background Opacity")
-        return makeBackdropEntry(spec, ctx_menu)
+        local WP, spec = require("features/sui_wallpaper"), BAR_MENU_SPECS[kind]
+        return makeBackdropEntry({
+            title         = title or _("Background Opacity"),
+            info          = spec.info,
+            get           = function() return WP.getBarStrength(kind) end,
+            set           = function(n) WP.setBarStrength(kind, n) end,
+            default_value = Backdrop.SURFACE_DEFAULT[kind].strength,
+            enabled_func  = spec.enabled_func,
+        }, ctx_menu)
+    end
+
+    -- "Background" submenu of one bar: Color, Frame and Opacity. Color and
+    -- Frame always apply; opacity only over a wallpaper.
+    local function makeBarSurfaceMenu(kind, ctx_menu)
+        local WP, spec = require("features/sui_wallpaper"), BAR_MENU_SPECS[kind]
+        return Config.makeSurfaceMenu{
+            surface               = WP.barSurface(kind),
+            refresh               = makeBarRefresh(ctx_menu),
+            enabled_func          = spec.enabled_func,
+            get_strength          = function() return WP.getBarStrength(kind) end,
+            set_strength          = function(n) WP.setBarStrength(kind, n) end,
+        }
     end
 
     local function makeTypeMenu()
@@ -600,7 +595,7 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
             }
         end
 
-        appendWhenWallpaperActive(items, makeBarBackdropItem("pagination", ctx_menu))
+        appendItem(items, makeBarSurfaceMenu("pagination", ctx_menu))
 
         return items
     end
@@ -1108,7 +1103,7 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
                 appearance_extra[#appearance_extra + 1] = row
             end
         end
-        appendWhenWallpaperActive(appearance_extra, makeBarBackdropItem("statusbar", ctx_menu))
+        appendItem(appearance_extra, makeBarSurfaceMenu("statusbar", ctx_menu))
         return Config.buildModuleMenu({
             master     = master,
             items      = item_rows,
@@ -1126,6 +1121,23 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
 
     local function makeNavbarMenu(ctx_menu)
         local Config = require("infra/sui_config")
+
+        -- Radio entry selecting a bar layout ("full" or "floating").
+        local function layoutItem(label, layout)
+            return {
+                text           = label,
+                radio          = true,
+                checked_func   = function() return Bottombar.getBarLayout() == layout end,
+                keep_menu_open = true,
+                callback       = function()
+                    require("features/sui_wallpaper").setNavbarLayout(layout)
+                    UI.invalidateDimCache()
+                    plugin:_scheduleRebuild()
+                    if ctx_menu and ctx_menu.refresh then ctx_menu.refresh() end
+                end,
+            }
+        end
+
         local flat = {
             {
                 text_func    = function()
@@ -1153,44 +1165,10 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
                 sub_item_table_func = makeTypeMenu,
             },
             {
-                text = _("Bar Style"),
+                text = _("Layout"),
                 sub_item_table = {
-                    {
-                        text           = _("Default"),
-                        radio          = true,
-                        checked_func   = function() return require("screens/sui_bottombar").getBarStyle() == "default" end,
-                        keep_menu_open = true,
-                        callback       = function()
-                            SUISettings:saveSetting("simpleui_bar_style", "default")
-                            UI.invalidateDimCache()
-                            plugin:_scheduleRebuild()
-                            if ctx_menu and ctx_menu.refresh then ctx_menu.refresh() end
-                        end,
-                    },
-                    {
-                        text           = _("Framed"),
-                        radio          = true,
-                        checked_func   = function() return require("screens/sui_bottombar").getBarStyle() == "framed" end,
-                        keep_menu_open = true,
-                        callback       = function()
-                            SUISettings:saveSetting("simpleui_bar_style", "framed")
-                            UI.invalidateDimCache()
-                            plugin:_scheduleRebuild()
-                            if ctx_menu and ctx_menu.refresh then ctx_menu.refresh() end
-                        end,
-                    },
-                    {
-                        text           = _("Bare"),
-                        radio          = true,
-                        checked_func   = function() return require("screens/sui_bottombar").getBarStyle() == "bare" end,
-                        keep_menu_open = true,
-                        callback       = function()
-                            SUISettings:saveSetting("simpleui_bar_style", "bare")
-                            UI.invalidateDimCache()
-                            plugin:_scheduleRebuild()
-                            if ctx_menu and ctx_menu.refresh then ctx_menu.refresh() end
-                        end,
-                    },
+                    layoutItem(_("Full-width"), "full"),
+                    layoutItem(_("Floating"),   "floating"),
                 },
             },
             {
@@ -1323,7 +1301,7 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
                 appearance_extra[#appearance_extra + 1] = row
             end
         end
-        appendWhenWallpaperActive(appearance_extra, makeBarBackdropItem("navbar", ctx_menu))
+        appendItem(appearance_extra, makeBarSurfaceMenu("navbar", ctx_menu))
         return Config.buildModuleMenu({
             master     = master,
             items      = items,
@@ -1915,7 +1893,7 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
             items      = items,
             appearance = {
                 size  = { size_row },
-                extra = appendWhenWallpaperActive({ style_row }, makeBarBackdropItem("titlebar", ctx_menu)),
+                extra = appendItem({ style_row }, makeBarSurfaceMenu("titlebar", ctx_menu)),
             },
         }, ctx_menu)
     end
@@ -3408,7 +3386,7 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
                             -- ── Title and Author Below Covers ─────────────────────────────────
                             {
                                 text         = _("Title and Author Below Covers"),
-                                sub_item_table_func = function() return appendWhenWallpaperActive({
+                                sub_item_table_func = function() return appendItem({
                                     {
                                         text           = _("Off"),
                                         radio          = true,
@@ -3477,16 +3455,13 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
                                             })
                                         end,
                                     },
-                                }, Config.makeBackdropStrengthItem({
-                                    title         = _("Background Opacity"),
-                                    get           = SUIWallpaper.getCoverStripBackdropStrength,
-                                    set           = SUIWallpaper.setCoverStripBackdropStrength,
-                                    default_value = Backdrop.BACKDROP_DEFAULT.cover_strip,
-                                    enabled_func  = function()
-                                        return SUIWallpaper.styleGetWallpaperShowInFM()
-                                            and (FC.getShowTitleStrip() or FC.getShowAuthorStrip())
+                                }, Config.makeSurfaceMenu{
+                                    surface      = SUIWallpaper.COVER_STRIP,
+                                    enabled_func = function()
+                                        return FC.getShowTitleStrip() or FC.getShowAuthorStrip()
                                     end,
-                                    refresh       = function(touchmenu)
+                                    with_strength = SUIWallpaper.styleGetWallpaperShowInFM,
+                                    refresh      = function(touchmenu)
                                         _refreshFC()
                                         if ctx_menu and ctx_menu.refresh then
                                             ctx_menu.refresh()
@@ -3494,7 +3469,7 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
                                             touchmenu:updateItems()
                                         end
                                     end,
-                                })) end,
+                                }) end,
                             },
                         },
                     },
@@ -4048,7 +4023,7 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
                                                 is_enter_default = true,
                                                 callback         = function()
                                                     local name = dialog:getInputText()
-                                                    name = name and name:match("^%s*(.-)%s*$") or ""
+                                                    name = name and util.trim(name) or ""
                                                     if name == "" then
                                                         UI.Notify.toast(_("Please enter a name for the preset."), 2)
                                                         return
@@ -4116,7 +4091,7 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
                                                                 { text = _("Cancel"), id = "close", callback = function() UIManager:close(dialog2) end },
                                                                 { text = _("Rename"), is_enter_default = true, callback = function()
                                                                     local new_name = dialog2:getInputText()
-                                                                    new_name = new_name and new_name:match("^%s*(.-)%s*$") or ""
+                                                                    new_name = new_name and util.trim(new_name) or ""
                                                                     if new_name == "" or new_name == _name then UIManager:close(dialog2); return end
                                                                     if IP and IP.exists(new_name) then
                                                                         UI.Notify.toast(string.format(_("A preset named \"%s\" already exists."), new_name), 2)
@@ -4201,7 +4176,7 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
                                                                                         { text = _("Cancel"), id = "close", callback = function() UIManager:close(dialog2) end },
                                                                                         { text = _("Rename"), is_enter_default = true, callback = function()
                                                                                             local new_name = dialog2:getInputText()
-                                                                                            new_name = new_name and new_name:match("^%s*(.-)%s*$") or ""
+                                                                                            new_name = new_name and util.trim(new_name) or ""
                                                                                             if new_name == "" or new_name == _name then UIManager:close(dialog2); return end
                                                                                             if IP and IP.exists(new_name) then
                                                                                                 UI.Notify.toast(string.format(_("A preset named \"%s\" already exists."), new_name), 2)

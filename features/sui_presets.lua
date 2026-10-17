@@ -35,6 +35,7 @@
 
 local SUISettings = require("infra/sui_store")
 local logger      = require("logger")
+local util = require("util")
 local _           = require("infra/sui_i18n").translate
 
 -- ============================================================================
@@ -55,9 +56,17 @@ local HS_EXACT = {
     ["simpleui_statusbar_transparent"]        = true,
     ["simpleui_navbar_transparent"]           = true,
     ["simpleui_statusbar_backdrop"]           = true,
+    ["simpleui_statusbar_tone"]               = true,
+    ["simpleui_statusbar_show_frame"]         = true,
     ["simpleui_navbar_backdrop"]              = true,
+    ["simpleui_navbar_tone"]                  = true,
+    ["simpleui_navbar_show_frame"]            = true,
     ["simpleui_pagination_backdrop"]          = true,
+    ["simpleui_pagination_tone"]              = true,
+    ["simpleui_pagination_show_frame"]        = true,
     ["simpleui_titlebar_backdrop"]            = true,
+    ["simpleui_titlebar_tone"]                = true,
+    ["simpleui_titlebar_show_frame"]          = true,
     ["simpleui_module_backdrop"]              = true,
     ["simpleui_wallpaper_show_in_fm"]         = true,  -- "show wallpaper in file manager" toggle
     ["simpleui_reading_goals_show_annual"]    = true,
@@ -877,7 +886,7 @@ function SUIPresets.makeMenuItems(opts)
                         is_enter_default = true,
                         callback         = function()
                             local name = dialog:getInputText()
-                            name = name and name:match("^%s*(.-)%s*$") or ""
+                            name = name and util.trim(name) or ""
                             if name == "" then
                                 UI.Notify.toast(_("Please enter a name for the preset."), 2)
                                 return
@@ -948,7 +957,7 @@ function SUIPresets.makeMenuItems(opts)
                                         { text = _("Cancel"), id = "close", callback = function() closeDialog(d) end },
                                         { text = _("Rename"), is_enter_default = true, callback = function()
                                             local new_name = d:getInputText()
-                                            new_name = new_name and new_name:match("^%s*(.-)%s*$") or ""
+                                            new_name = new_name and util.trim(new_name) or ""
                                             if new_name == "" or new_name == _name then closeDialog(d); return end
                                             if isBuiltinName(new_name) then
                                                 UI.Notify.toast(_("This name is reserved by a built-in preset."), 2)
@@ -1034,7 +1043,7 @@ function SUIPresets.makeMenuItems(opts)
                                                                 { text = _("Cancel"), id = "close", callback = function() closeDialog(d) end },
                                                                 { text = _("Rename"), is_enter_default = true, callback = function()
                                                                     local new_name = d:getInputText()
-                                                                    new_name = new_name and new_name:match("^%s*(.-)%s*$") or ""
+                                                                    new_name = new_name and util.trim(new_name) or ""
                                                                     if new_name == "" or new_name == _name then closeDialog(d); return end
                                                             if isBuiltinName(new_name) then
                                                                 UI.Notify.toast(_("This name is reserved by a built-in preset."), 2)

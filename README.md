@@ -104,7 +104,7 @@ A persistent tab bar at the bottom of the screen for one-tap navigation:
 
 - Up to **5 fully customisable tabs**: Library, History, Collections, Favourites, Continue Reading, Home Screen, Wi-Fi Toggle, Brightness, Stats, Bookmark Browser, and custom folder, collection, or Custom Screen shortcuts
 - **3 display modes**: icons only, text only, or icons + text
-- **3 bar styles**: Default, Framed, Bare
+- **2 navigation bar layouts**: Full-width and Floating, each with white or gray tone, optional frame and adjustable opacity
 - **Adjustable bar size, icon size, and label size**
 - **Navpager mode** — replaces the pagination bar with Prev/Next arrows at the edges of the Navigation Bar; arrows dim when there is no previous or next page
 - **Hold anywhere on the bar** to instantly open navigation settings

@@ -52,6 +52,7 @@ local UIManager       = require("ui/uimanager")
 local UI           = require("infra/sui_core")
 local SUISettings  = require("infra/sui_store")
 local SUIStyle     = require("features/sui_style")
+local Text         = require("infra/sui_text")
 
 local PAD          = UI.PAD
 
@@ -538,7 +539,7 @@ local function _collectFromSidecar(fp, DocSettings, pool, remaining)
 
         if type(props.authors) == "string" and props.authors ~= "" then
 
-            authors = props.authors:match("^[^\n]+") or props.authors
+            authors = Text.firstLine(props.authors)
 
         end
 
@@ -915,29 +916,17 @@ local function controlLineBreaks(text, face, max_w)
     return bind(text)
 end
 
-local function buildWidget(inner_w, text_str, attr_str, fonts, vspan_gap, has_wallpaper, clr_quote, clr_attr, alignment)
+local function buildWidget(inner_w, text_str, attr_str, fonts, vspan_gap, text_alpha, clr_quote, clr_attr, alignment)
 
- local function makeTBW(text, face, fgcolor, bold)
-        local args = {
+    local function makeTBW(text, face, fgcolor, bold)
+        return UI.makeTextBox({
             text      = controlLineBreaks(text, face, inner_w),
             face      = face,
             bold      = bold,
             width     = inner_w,
             alignment = alignment or "center",
             fgcolor   = fgcolor,
-        }
-
-        if has_wallpaper then
-                local ok_tbx, tbx = pcall(UI.makeAlphaTextBox, args)
-                if ok_tbx then
-                    return tbx
-                else
-                    logger.warn("simpleui: module_quote: makeAlphaTextBox failed, falling back: " .. tostring(tbx))
-                    return TextBoxWidget:new(args)
-                end
-            else
-                return TextBoxWidget:new(args)
-            end
+        }, text_alpha)
     end
 
     local vg = VerticalGroup:new{ align = "center" }
@@ -952,13 +941,13 @@ end
 
 
 
-local function buildFromCustomQuote(inner_w, fonts, vspan_gap, pfx, has_wallpaper, clr_quote, clr_attr, alignment)
+local function buildFromCustomQuote(inner_w, fonts, vspan_gap, pfx, text_alpha, clr_quote, clr_attr, alignment)
 
     local q = pickCustomQuote(pfx)
 
     if not q then
 
-        return TextBoxWidget:new{
+        return UI.makeTextBox({
 
             text    = _("No custom quotes found. Add a .lua file to the plugin's sui_quotes/ folder and select it in Settings."),
 
@@ -968,13 +957,8 @@ local function buildFromCustomQuote(inner_w, fonts, vspan_gap, pfx, has_wallpape
 
             fgcolor = clr_attr or CLR_TEXT_SUB,
 
-            bgcolor = nil,
-
             width   = inner_w,
-
-            alpha   = true,
-
-        }
+        }, text_alpha)
 
     end
 
@@ -982,19 +966,19 @@ local function buildFromCustomQuote(inner_w, fonts, vspan_gap, pfx, has_wallpape
 
     if q.b and q.b ~= "" then attr = attr .. (attr ~= "" and ",  " or "") .. q.b end
 
-    return buildWidget(inner_w, "“" .. q.q .. "”", attr, fonts, vspan_gap, has_wallpaper, clr_quote, clr_attr, alignment)
+    return buildWidget(inner_w, "“" .. q.q .. "”", attr, fonts, vspan_gap, text_alpha, clr_quote, clr_attr, alignment)
 
 end
 
 
 
-local function buildFromQuote(inner_w, fonts, vspan_gap, has_wallpaper, clr_quote, clr_attr, alignment)
+local function buildFromQuote(inner_w, fonts, vspan_gap, text_alpha, clr_quote, clr_attr, alignment)
 
     local q = pickQuote()
 
     if not q then
 
-        return TextBoxWidget:new{
+        return UI.makeTextBox({
 
             text    = _("No quotes found."),
 
@@ -1004,13 +988,8 @@ local function buildFromQuote(inner_w, fonts, vspan_gap, has_wallpaper, clr_quot
 
             fgcolor = clr_attr or CLR_TEXT_SUB,
 
-            bgcolor = nil,
-
             width   = inner_w,
-
-            alpha   = true,
-
-        }
+        }, text_alpha)
 
     end
 
@@ -1018,13 +997,13 @@ local function buildFromQuote(inner_w, fonts, vspan_gap, has_wallpaper, clr_quot
 
     if q.b and q.b ~= "" then attr = attr .. (attr ~= "" and ",  " or "") .. q.b end
 
-    return buildWidget(inner_w, "\u{201C}" .. q.q .. "\u{201D}", attr, fonts, vspan_gap, has_wallpaper, clr_quote, clr_attr, alignment)
+    return buildWidget(inner_w, "\u{201C}" .. q.q .. "\u{201D}", attr, fonts, vspan_gap, text_alpha, clr_quote, clr_attr, alignment)
 
 end
 
 
 
-local function buildFromHighlight(inner_w, fonts, vspan_gap, has_wallpaper, clr_quote, clr_attr, alignment)
+local function buildFromHighlight(inner_w, fonts, vspan_gap, text_alpha, clr_quote, clr_attr, alignment)
 
     local h = pickHighlight()
 
@@ -1040,7 +1019,7 @@ local function buildFromHighlight(inner_w, fonts, vspan_gap, has_wallpaper, clr_
 
             _("Your highlights"),
 
-            fonts, vspan_gap, has_wallpaper
+            fonts, vspan_gap, text_alpha
 
         ), nil
 
@@ -1065,14 +1044,14 @@ local function buildFromHighlight(inner_w, fonts, vspan_gap, has_wallpaper, clr_
     local TRAILING_QUOTES = '["\'\u{201D}\u{2019}\u{201E}\u{201A}\u{00BB}\u{203A}%s]+$'
     local text = h.text:gsub(LEADING_QUOTES, ''):gsub(TRAILING_QUOTES, '')
     text = text:gsub('^[\u{2014}\u{2013}]%s*', '')
-    return buildWidget(inner_w, "\u{201C}" .. text .. "\u{201D}", attr, fonts, vspan_gap, has_wallpaper, clr_quote, clr_attr, alignment),
+    return buildWidget(inner_w, "\u{201C}" .. text .. "\u{201D}", attr, fonts, vspan_gap, text_alpha, clr_quote, clr_attr, alignment),
            h.filepath, h.title, h.pos0, h.page
 
 end
 
 
 
-local function buildFromMixed(inner_w, fonts, vspan_gap, has_wallpaper, clr_quote, clr_attr, alignment)
+local function buildFromMixed(inner_w, fonts, vspan_gap, text_alpha, clr_quote, clr_attr, alignment)
 
     local has_highlights = #getPool() > 0
 
@@ -1082,21 +1061,21 @@ local function buildFromMixed(inner_w, fonts, vspan_gap, has_wallpaper, clr_quot
 
         if math.random(2) == 1 then
 
-            return buildFromHighlight(inner_w, fonts, vspan_gap, has_wallpaper, clr_quote, clr_attr, alignment)
+            return buildFromHighlight(inner_w, fonts, vspan_gap, text_alpha, clr_quote, clr_attr, alignment)
 
         else
 
-            return buildFromQuote(inner_w, fonts, vspan_gap, has_wallpaper, clr_quote, clr_attr, alignment), nil, nil, nil, nil
+            return buildFromQuote(inner_w, fonts, vspan_gap, text_alpha, clr_quote, clr_attr, alignment), nil, nil, nil, nil
 
         end
 
     elseif has_highlights then
 
-        return buildFromHighlight(inner_w, fonts, vspan_gap, has_wallpaper, clr_quote, clr_attr, alignment)
+        return buildFromHighlight(inner_w, fonts, vspan_gap, text_alpha, clr_quote, clr_attr, alignment)
 
     else
 
-        return buildFromQuote(inner_w, fonts, vspan_gap, has_wallpaper, clr_quote, clr_attr, alignment), nil, nil, nil, nil
+        return buildFromQuote(inner_w, fonts, vspan_gap, text_alpha, clr_quote, clr_attr, alignment), nil, nil, nil, nil
 
     end
 
@@ -1106,7 +1085,7 @@ end
 
 -- Same as buildFromMixed, but pairs the user's highlights with the selected
 -- custom quotes file instead of the built-in quotes.lua pool.
-local function buildFromCustomMixed(inner_w, fonts, vspan_gap, pfx, has_wallpaper, clr_quote, clr_attr, alignment)
+local function buildFromCustomMixed(inner_w, fonts, vspan_gap, pfx, text_alpha, clr_quote, clr_attr, alignment)
 
     local has_highlights = #getPool() > 0
 
@@ -1117,21 +1096,21 @@ local function buildFromCustomMixed(inner_w, fonts, vspan_gap, pfx, has_wallpape
 
         if math.random(2) == 1 then
 
-            return buildFromHighlight(inner_w, fonts, vspan_gap, has_wallpaper, clr_quote, clr_attr, alignment)
+            return buildFromHighlight(inner_w, fonts, vspan_gap, text_alpha, clr_quote, clr_attr, alignment)
 
         else
 
-            return buildFromCustomQuote(inner_w, fonts, vspan_gap, pfx, has_wallpaper, clr_quote, clr_attr, alignment), nil, nil, nil, nil
+            return buildFromCustomQuote(inner_w, fonts, vspan_gap, pfx, text_alpha, clr_quote, clr_attr, alignment), nil, nil, nil, nil
 
         end
 
     elseif has_highlights then
 
-        return buildFromHighlight(inner_w, fonts, vspan_gap, has_wallpaper, clr_quote, clr_attr, alignment)
+        return buildFromHighlight(inner_w, fonts, vspan_gap, text_alpha, clr_quote, clr_attr, alignment)
 
     else
 
-        return buildFromCustomQuote(inner_w, fonts, vspan_gap, pfx, has_wallpaper, clr_quote, clr_attr, alignment), nil, nil, nil, nil
+        return buildFromCustomQuote(inner_w, fonts, vspan_gap, pfx, text_alpha, clr_quote, clr_attr, alignment), nil, nil, nil, nil
 
     end
 
@@ -1217,7 +1196,7 @@ function M.build(w, ctx)
     local source    = getSource(ctx and ctx.pfx)
     local alignment = getAlignment(ctx and ctx.pfx)
 
-    local has_wallpaper = ctx and ctx.has_wallpaper
+    local text_alpha = ctx and ctx.text_alpha
 
     local content
     local hl_filepath
@@ -1227,23 +1206,23 @@ function M.build(w, ctx)
 
     if source == "highlights" then
 
-        content, hl_filepath, hl_title, hl_pos0, hl_page = buildFromHighlight(w, fonts, vspan_gap, has_wallpaper, _clr_quote, _clr_attr, alignment)
+        content, hl_filepath, hl_title, hl_pos0, hl_page = buildFromHighlight(w, fonts, vspan_gap, text_alpha, _clr_quote, _clr_attr, alignment)
 
     elseif source == "mixed" then
 
-        content, hl_filepath, hl_title, hl_pos0, hl_page = buildFromMixed(w, fonts, vspan_gap, has_wallpaper, _clr_quote, _clr_attr, alignment)
+        content, hl_filepath, hl_title, hl_pos0, hl_page = buildFromMixed(w, fonts, vspan_gap, text_alpha, _clr_quote, _clr_attr, alignment)
 
     elseif source == "custom" then
 
-        content = buildFromCustomQuote(w, fonts, vspan_gap, ctx and ctx.pfx, has_wallpaper, _clr_quote, _clr_attr, alignment)
+        content = buildFromCustomQuote(w, fonts, vspan_gap, ctx and ctx.pfx, text_alpha, _clr_quote, _clr_attr, alignment)
 
     elseif source == "custom_mixed" then
 
-        content, hl_filepath, hl_title, hl_pos0, hl_page = buildFromCustomMixed(w, fonts, vspan_gap, ctx and ctx.pfx, has_wallpaper, _clr_quote, _clr_attr, alignment)
+        content, hl_filepath, hl_title, hl_pos0, hl_page = buildFromCustomMixed(w, fonts, vspan_gap, ctx and ctx.pfx, text_alpha, _clr_quote, _clr_attr, alignment)
 
     else
 
-        content = buildFromQuote(w, fonts, vspan_gap, has_wallpaper, _clr_quote, _clr_attr, alignment)
+        content = buildFromQuote(w, fonts, vspan_gap, text_alpha, _clr_quote, _clr_attr, alignment)
 
     end
 

@@ -65,8 +65,10 @@ local N_ = require("infra/sui_i18n").ngettext
 
 local Config      = require("infra/sui_config")
 local SUISettings = require("infra/sui_store")
+local Backdrop    = require("infra/sui_backdrop")
 local UI          = require("infra/sui_core")
 local SUIStyle    = require("features/sui_style")
+local Text        = require("infra/sui_text")
 
 -- Landscape-aware scaling for the raw pixel/font sizes below that build
 -- SUIWindow modal content directly in this file (icon picker previews, the
@@ -1589,7 +1591,7 @@ function QA.sui_show_custom_qa_list(plugin, ctx_menu, ctx)
                 desc = "⊞ " .. c.collection
             else
                 desc = c.path or ctx_menu._("not configured")
-                if #desc > 34 then desc = "…" .. desc:sub(-31) end
+                desc = Text.truncateStart(desc, 32)
             end
 
             rows[#rows + 1] = {
@@ -2937,7 +2939,7 @@ function QA.makeMenuItems(plugin, ctx_menu)
                     desc = "⊞ " .. c.collection
                 else
                     desc = c.path or _("not configured")
-                    if #desc > 34 then desc = "…" .. desc:sub(-31) end
+                    desc = Text.truncateStart(desc, 32)
                 end
                 return c.label .. "  |  " .. desc
             end,
@@ -2956,7 +2958,7 @@ function QA.makeMenuItems(plugin, ctx_menu)
                             desc = "⊞ " .. c.collection
                         else
                             desc = c.path or _("not configured")
-                            if #desc > 38 then desc = "…" .. desc:sub(-35) end
+                            desc = Text.truncateStart(desc, 36)
                         end
                         return c.label .. "  |  " .. desc
                     end,
@@ -3218,7 +3220,8 @@ function QA.showQAFolderDialog(qa_id, title, fm, show_unavailable_fn)
                     local row_w = math.min(inner_w,
                         n * d.frame_sz + math.max(0, n - 1) * gap_w + pad2)
                     local tile_row = mqa.buildQAWidget(
-                        row_w, chunk, true, on_tap_fn, d, "rounded_square", "solid", nil)
+                        row_w, chunk, true, on_tap_fn, d, "rounded_square",
+                        Backdrop.resolveDefault("button"), nil)
                     rows[#rows + 1] = VerticalGroup:new{ align = "left",
                         VerticalSpan:new{ width = gap_h },
                         tile_row,

@@ -21,6 +21,7 @@ local QARenderer      = require("engines/sui_quickactions_render")
 local UI  = require("infra/sui_core")
 local SUISettings = require("infra/sui_store")
 local Backdrop    = require("infra/sui_backdrop")
+local SUIWallpaper = require("features/sui_wallpaper")
 local SUIStyle    = require("features/sui_style")
 local PAD = UI.PAD
 local LABEL_H = UI.LABEL_H
@@ -141,7 +142,7 @@ end
 -- ---------------------------------------------------------------------------
 -- Core widget builder (shared by all slots)
 -- ---------------------------------------------------------------------------
-local function buildQAWidget(w, action_ids, show_labels, on_tap_fn, d, shape, bg, colors, align, strength)
+local function buildQAWidget(w, action_ids, show_labels, on_tap_fn, d, shape, surface, colors, align)
     local clr_blk = colors and colors.blk or SUIStyle.COLOR.text_primary
     local clr_sub = colors and colors.sub or CLR_TEXT_SUB
     local ph_fs = math.max(8, math.floor(_BASE_PH_FS * (d.frame_sz / (_BASE_ICON_SZ + _BASE_FRAME_PAD * 2))))
@@ -197,8 +198,7 @@ local function buildQAWidget(w, action_ids, show_labels, on_tap_fn, d, shape, bg
             frame_pad      = d.frame_pad,
             corner_r       = d.corner_r,
             shape          = shape,
-            bg             = bg,
-            strength       = strength,
+            surface        = surface,
             fgcolor        = clr_blk,
             show_label     = show_labels,
             lbl_sp         = lbl_sp,
@@ -247,32 +247,21 @@ local function makeInstance(inst_id)
     -- Keys built at call-time using ctx.pfx — works for any page prefix.
     local slot_suffix = inst_id
     local SHAPE_KEY    = slot_suffix .. "_shape"
-    local BG_KEY       = slot_suffix .. "_bg"
+    local LOOK_KEY     = slot_suffix .. "_bg"            -- single-choice look of earlier versions
     local ALIGN_KEY    = slot_suffix .. "_align"
-    local STRENGTH_KEY = slot_suffix .. "_btn_strength"
+    local SURFACE_KEY  = slot_suffix .. "_btn"
+    local STRENGTH_KEY = SURFACE_KEY .. "_strength"
 
     local function getShape(pfx)
         return SUISettings:readSetting(pfx .. SHAPE_KEY) or "rounded_square"
     end
 
-    -- Color style: solid | flat (transparent folds into strength 0).
-    local function getBg(pfx)
-        local v = SUISettings:readSetting(pfx .. BG_KEY) or "solid"
-        if v == "transparent" then return "solid" end
-        return v
-    end
-
-    local function getBtnStrength(pfx)
-        local v = Backdrop.readBackdropStrength(pfx .. STRENGTH_KEY)
-        if v ~= nil then return v end
-        if SUISettings:readSetting(pfx .. BG_KEY) == "transparent" then
-            return 0
-        end
-        return 100
-    end
-
-    local function setBtnStrength(pfx, n)
-        Backdrop.saveBackdropStrength(pfx .. STRENGTH_KEY, n)
+    -- Surface of the buttons; the look stored by earlier versions is
+    -- converted on first use (see Backdrop.migrateLook).
+    local function buttonSurface(pfx)
+        local surface = Backdrop.surface("button", pfx .. SURFACE_KEY, pfx .. STRENGTH_KEY)
+        Backdrop.migrateLook(surface, pfx .. LOOK_KEY)
+        return surface
     end
 
     -- "current" (default) = existing behaviour, icons spread across the full
@@ -405,7 +394,7 @@ local function makeInstance(inst_id)
         local styles = Config.resolveTextStyles(ctx, S.id, S.text_elems)
         d.lbl_fs = math.max(6, math.floor(d.lbl_fs * lf * (styles.label.scale or 1)))
         d.lbl_face, d.lbl_bold = SUIStyle.getTextFace(styles.label, d.lbl_fs)
-        return buildQAWidget(w, qa_ids, show_labels, ctx.on_qa_tap, d, getShape(ctx.pfx), getBg(ctx.pfx), nil, getAlign(ctx.pfx), getBtnStrength(ctx.pfx))
+        return buildQAWidget(w, qa_ids, show_labels, ctx.on_qa_tap, d, getShape(ctx.pfx), SUIWallpaper.resolveSurface(buttonSurface(ctx.pfx)), nil, getAlign(ctx.pfx))
     end
 
     function S.getHeight(ctx)
@@ -475,26 +464,12 @@ local function makeInstance(inst_id)
             set     = function(v) SUISettings:saveSetting(pfx .. SHAPE_KEY, v) end,
             refresh = refresh,
         }
-        appearance_extra[#appearance_extra + 1] = Config.makeRadioSubmenuItem{
-            text         = _lc("Button Style"),
+        appearance_extra[#appearance_extra + 1] = Config.makeSurfaceMenu{
+            surface      = buttonSurface(pfx),
             enabled_func = function() return getShape(pfx) ~= "bare" end,
-            options      = {
-                { value = "solid", label = _lc("Solid") },
-                { value = "flat",  label = _lc("Flat") },
-            },
-            get          = function() return getBg(pfx) end,
-            set          = function(v) SUISettings:saveSetting(pfx .. BG_KEY, v) end,
             refresh      = refresh,
+            _lc          = _lc,
         }
-        appearance_extra[#appearance_extra + 1] = Config.makeBackdropStrengthItem({
-            title         = _lc("Button Opacity"),
-            enabled_func  = function() return getShape(pfx) ~= "bare" end,
-            get           = function() return getBtnStrength(pfx) end,
-            set           = function(v) setBtnStrength(pfx, v) end,
-            refresh       = refresh,
-            default_value = 100,
-            _lc           = _lc,
-        })
         appearance_extra[#appearance_extra + 1] = Config.makeRadioSubmenuItem{
             text    = _lc("Alignment"),
             options = {
@@ -529,6 +504,8 @@ M.name         = _("Quick Actions Row")
 M.instanciable = true
 M.makeInstance = makeInstance
 M.menu_group   = "quick_actions"
+-- Settings of an instance's buttons: opacity, tone and frame of their surface.
+M.setting_suffixes = { "_btn_strength", "_btn_tone", "_btn_show_frame" }
 
 -- Layout-editor summary of an instance: the labels of its configured actions.
 function M.getInstanceSubtitle(inst_id, _pfx, pfx_qa)

@@ -69,6 +69,7 @@ local Event             = require("ui/event")
 
 local BookStats   = require("infra/sui_book_stats")
 local SUISettings = require("infra/sui_store")
+local Backdrop    = require("infra/sui_backdrop")
 local SUIStyle    = require("features/sui_style")
 local MenuHooks   = require("infra/sui_menu_hooks")
 local _           = require("infra/sui_i18n").translate
@@ -101,7 +102,8 @@ local _showQSBarSettingsWindow
 local SLOTS_KEY      = "simpleui_qs_bar_slots"
 local ENABLED_KEY    = "simpleui_qs_bar_enabled"
 local SHAPE_KEY      = "simpleui_qs_bar_shape"
-local BG_KEY         = "simpleui_qs_bar_bg"
+local LOOK_KEY       = "simpleui_qs_bar_bg"        -- single-choice look of earlier versions
+local SURFACE_KEY    = "simpleui_qs_bar"
 local FRONTLIGHT_KEY = "simpleui_qs_bar_frontlight"
 local WARMTH_KEY     = "simpleui_qs_bar_warmth"
 local SLIDER_STYLE_KEY = "simpleui_qs_bar_slider_style"
@@ -154,8 +156,13 @@ local function getShape()
     return SUISettings:readSetting(SHAPE_KEY) or "rounded_square"
 end
 
-local function getBg()
-    return SUISettings:readSetting(BG_KEY) or "solid"
+local BUTTON_SURFACE = Backdrop.surface("quick_settings", SURFACE_KEY)
+
+-- Surface of the buttons; the look stored by earlier versions is converted on
+-- first use (see Backdrop.migrateLook).
+local function buttonSurface()
+    Backdrop.migrateLook(BUTTON_SURFACE, LOOK_KEY)
+    return BUTTON_SURFACE
 end
 
 local function showLabels()
@@ -361,16 +368,15 @@ local function sliderFontSize()
 end
 
 -- Cell spec of a button of `btn_size` pixels, built from the configured shape
--- and background. With `label_w`, the button shows its label, following the
+-- and surface. With `label_w`, the button shows its label, following the
 -- label settings, truncated to that many pixels.
 local function buttonSpec(btn_size, label_w)
     local spec = {
         icon_sz    = math.floor(btn_size * BTN_ICON_PCT),
         frame_sz   = btn_size,
         fixed_size = true,
-        border_sz  = SUIStyle.BORDER_SZ,
         shape      = getShape(),
-        bg         = getBg(),
+        surface    = Backdrop.resolve(buttonSurface(), Backdrop.STRENGTH_MAX),
         fgcolor    = SUIStyle.COLOR.text_primary,
         show_label = label_w ~= nil,
     }
@@ -1031,9 +1037,8 @@ local function buildBookExitButton(touch_menu, refs, m)
     local frame = _QARenderer().buildFrame(content, m.btn_size, {
         width      = content:getSize().w + m.exit_pad * 2,
         fixed_size = true,
-        border_sz  = spec.border_sz,
         shape      = spec.shape,
-        bg         = spec.bg,
+        surface    = spec.surface,
     })
     table.insert(refs.buttons, {
         widget   = frame,
@@ -1673,17 +1678,12 @@ function QSBar.makeMenuItems(ctx_menu)
             set     = function(v) SUISettings:saveSetting(SHAPE_KEY, v) end,
             refresh = refresh,
         },
-        Config.makeRadioSubmenuItem{
-            text         = _("Button Background"),
-            enabled_func = function() return getShape() ~= "bare" end,
-            options      = {
-                { value = "transparent", label = _("Transparent") },
-                { value = "solid",       label = _("Solid") },
-                { value = "flat",        label = _("Flat") },
-            },
-            get          = getBg,
-            set          = function(v) SUISettings:saveSetting(BG_KEY, v) end,
-            refresh      = refresh,
+        Config.makeSurfaceMenu{
+            surface       = buttonSurface(),
+            enabled_func  = function() return getShape() ~= "bare" end,
+            with_strength = false,
+            refresh       = refresh,
+            _lc          = _,
         },
     }
 

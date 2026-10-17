@@ -21,6 +21,7 @@ local OverlapGroup    = require("ui/widget/overlapgroup")
 local RenderText      = require("ui/rendertext")
 local TextBoxWidget   = require("ui/widget/textboxwidget")
 local SUIStyle        = require("features/sui_style")
+local Text            = require("infra/sui_text")
 local _               = require("infra/sui_i18n").translate
 
 local math_floor = math.floor
@@ -125,10 +126,6 @@ local function placeCentered(box, inner_w, top, area_h)
     return box
 end
 
-local function firstLine(text)
-    return text:match("^([^\n]+)") or text
-end
-
 -- ---------------------------------------------------------------------------
 -- Public
 -- ---------------------------------------------------------------------------
@@ -146,7 +143,7 @@ function Placeholder.build(w, h, title, authors)
 
     local has_author = authors ~= nil and authors ~= ""
     title   = (title and title ~= "") and title or _("Unknown")
-    authors = has_author and firstLine(authors) or nil
+    authors = has_author and Text.firstLine(authors) or nil
 
     local text_w   = inner_w - 2 * math_floor(inner_w * TEXT_MARGIN)
     local title_top = math_floor(inner_h * TITLE_TOP)

@@ -54,6 +54,7 @@
 local SUISettings     = require("infra/sui_store")
 local MenuHooks       = require("infra/sui_menu_hooks")
 local logger          = require("logger")
+local Text            = require("infra/sui_text")
 local _               = require("infra/sui_i18n").translate
 local Blitbuffer      = require("ffi/blitbuffer")
 local Device          = require("device")
@@ -1295,7 +1296,8 @@ M.FS_ICON     = _fs(30)
 --  text_dim             — inactive/dim text or icons (e.g. opts.dim
 --                         variants, chart axis labels).
 --  surface              — solid light background / "eraser" fill.
---  surface_flat         — flat dark background (flat-style cards, bars).
+--  surface_flat         — light gray background: the gray tone of every
+--                         surface (cards, buttons, bars, modules).
 --  gray                 — medium-weight gray: card and frame borders, the
 --                         bottom bar separator, the book cover spine/edge
 --                         line, accent borders on active controls (progress
@@ -1462,7 +1464,7 @@ function M.buildIconPreview(size, opts)
 
     if not content then
         content = TextWidget:new{
-            text    = opts.label and opts.label:sub(1, 1):upper() or "?",
+            text    = opts.label and Text.cut(opts.label, 1):upper() or "?",
             face    = M.letterFace(icon_size),
             fgcolor = M.COLOR.text_primary,
         }

@@ -16,7 +16,6 @@ local LineWidget      = require("ui/widget/linewidget")
 local OverlapGroup    = require("ui/widget/overlapgroup")
 local RightContainer  = require("ui/widget/container/rightcontainer")
 local TextWidget      = require("ui/widget/textwidget")
-local TextBoxWidget   = require("ui/widget/textboxwidget")
 local UIManager       = require("ui/uimanager")
 local VerticalGroup   = require("ui/widget/verticalgroup")
 local VerticalSpan    = require("ui/widget/verticalspan")
@@ -1026,10 +1025,8 @@ function M.build(w, ctx)
     
     if not ok then
         logger.warn("simpleui reading_goals build error: " .. tostring(res))
-        -- Wrapping TextBoxWidget rather than the single-line TextWidget behind
-        -- makeColoredText, so this message wraps within the module's width
-        -- instead of overflowing past it (same pattern as the book modules'
-        -- empty-state placeholders).
+        -- Wrapping text box rather than the single-line TextWidget behind
+        -- makeColoredText, so the message wraps within the module's width.
         local err_h = require("device").screen:scaleBySize(60)
         local err_args = {
             text      = _("Error in Reading Goals: check crash.log"),
@@ -1042,22 +1039,9 @@ function M.build(w, ctx)
             fgcolor   = SUIStyle.COLOR.text_primary,
         }
 
-        local err_w
-        if ctx.has_wallpaper then
-            local ok_tbx, tbx = pcall(UI.makeAlphaTextBox, err_args)
-            if ok_tbx then
-                err_w = tbx
-            else
-                logger.warn("simpleui: module_reading_goals: makeAlphaTextBox failed, falling back to TextBoxWidget: " .. tostring(tbx))
-                err_w = TextBoxWidget:new(err_args)
-            end
-        else
-            err_w = TextBoxWidget:new(err_args)
-        end
-
         return CenterContainer:new{
             dimen = Geom:new{ w = w, h = err_h },
-            err_w,
+            UI.makeTextBox(err_args, ctx.text_alpha),
         }
     end
     return res

@@ -15,7 +15,6 @@ local Geom             = require("ui/geometry")
 local GestureRange     = require("ui/gesturerange")
 local InputContainer   = require("ui/widget/container/inputcontainer")
 local OverlapGroup     = require("ui/widget/overlapgroup")
-local TextBoxWidget    = require("ui/widget/textboxwidget")
 local UIManager        = require("ui/uimanager")
 local VerticalGroup    = require("ui/widget/verticalgroup")
 local CoverPlaceholder = require("engines/sui_cover_placeholder")
@@ -31,6 +30,7 @@ local UI           = require("infra/sui_core")
 local SUISettings  = require("infra/sui_store")
 local SUIStyle     = require("features/sui_style")
 local BookStats    = require("infra/sui_book_stats")
+local Text         = require("infra/sui_text")
 local LRU          = require("infra/sui_lru")
 local Memory       = require("infra/sui_memory")
 local PAD          = UI.PAD
@@ -68,60 +68,11 @@ local _CENTER_W_MIN  = Screen:scaleBySize(60)  -- floor so covers never collapse
 -- ScreenWidget:_refreshBookModSlot), so this truncates by an estimated
 -- character budget rather than TextWidget's max_width +
 -- truncate_with_ellipsis, which remeasures glyph-by-glyph against the
--- font on every call. Counts Unicode codepoints, not bytes, so
--- CJK/Arabic text truncates correctly.
+-- font on every call.
 local _AVG_CHAR_WIDTH_RATIO = 0.55  -- rough glyph-advance-to-font-size ratio
 
 local function truncateToWidth(s, face, max_px)
-    if not s or s == "" then return s end
-    local max_chars = math.max(1, math.floor(max_px / (face.size * _AVG_CHAR_WIDTH_RATIO)))
-    local count = 0
-    local i = 1
-    local last_safe = 0  -- byte offset of the last complete codepoint boundary
-    while i <= #s do
-        local byte = s:byte(i)
-        local char_len
-        if     byte >= 240 then char_len = 4
-        elseif byte >= 224 then char_len = 3
-        elseif byte >= 192 then char_len = 2
-        else                     char_len = 1
-        end
-        count = count + 1
-        if count == max_chars then
-            last_safe = i + char_len - 1
-        end
-        if count > max_chars then
-            return s:sub(1, last_safe) .. "…"
-        end
-        i = i + char_len
-    end
-    return s  -- fits within max_chars
-end
-
--- ---------------------------------------------------------------------------
--- Author list rendering
--- ---------------------------------------------------------------------------
--- Author strings arrive as a single newline-separated string ("A\nB\nC").
--- _formatAuthors returns nil when there is no usable name (caller hides the
--- row, same policy as description), a single name verbatim, or "Name et al."
--- when there are two or more.
-local function _splitAuthors(s)
-    local parts = {}
-    if not s or s == "" then return parts end
-    for piece in (s .. "\n"):gmatch("(.-)\r?\n") do
-        local trimmed = piece:match("^%s*(.-)%s*$")
-        if trimmed and trimmed ~= "" then
-            parts[#parts + 1] = trimmed
-        end
-    end
-    return parts
-end
-
-local function _formatAuthors(authors_str)
-    local parts = _splitAuthors(authors_str)
-    if #parts == 0 then return nil end
-    if #parts == 1 then return parts[1] end
-    return parts[1] .. _(" et al.")
+    return Text.truncate(s, math.floor(max_px / (face.size * _AVG_CHAR_WIDTH_RATIO)))
 end
 
 -- ---------------------------------------------------------------------------
@@ -938,12 +889,10 @@ end
 
 -- Empty placeholder when the chosen source has no books (same pattern as
 -- Quick Actions / Featured Collection / Collections).
--- Uses a wrapping TextBoxWidget rather than the single-line TextWidget
--- behind makeColoredText, since this message is long enough to need
--- multiple lines at the module's own width; falls back to a plain
--- TextBoxWidget when there's no wallpaper to composite over, mirroring
--- module_currently.lua's own text elements.
-local function _emptyPlaceholder(w, h, has_wallpaper)
+-- Uses a wrapping text box rather than the single-line TextWidget behind
+-- makeColoredText, since this message is long enough to need multiple lines
+-- at the module's own width.
+local function _emptyPlaceholder(w, h, text_alpha)
     local face = Font:getFace(SUIStyle.FACE_REGULAR, SUIStyle.FS_BODY)
     local line_h = math.floor(1.3 * face.size + 0.5)
     local args = {
@@ -957,22 +906,9 @@ local function _emptyPlaceholder(w, h, has_wallpaper)
         fgcolor   = CLR_TEXT_SUB,
     }
 
-    local text_w
-    if has_wallpaper then
-        local ok_tbx, tbx = pcall(UI.makeAlphaTextBox, args)
-        if ok_tbx then
-            text_w = tbx
-        else
-            logger.warn("simpleui: module_coverdeck: makeAlphaTextBox failed, falling back to TextBoxWidget: " .. tostring(tbx))
-            text_w = TextBoxWidget:new(args)
-        end
-    else
-        text_w = TextBoxWidget:new(args)
-    end
-
     return CenterContainer:new{
         dimen = Geom:new{ w = w, h = h },
-        text_w,
+        UI.makeTextBox(args, text_alpha),
     }
 end
 
@@ -1001,12 +937,12 @@ function M.build(w, ctx)
     local fps = getFps(source, ctx)
     if not fps or #fps == 0 then
         logger.dbg(string.format("coverdeck: no books found (source=%s)", tostring(source)))
-        return _emptyPlaceholder(w, M.getHeight(ctx), ctx.has_wallpaper)
+        return _emptyPlaceholder(w, M.getHeight(ctx), ctx.text_alpha)
     end
 
     local SH = getSH()
     if not SH then
-        return _emptyPlaceholder(w, M.getHeight(ctx), ctx.has_wallpaper)
+        return _emptyPlaceholder(w, M.getHeight(ctx), ctx.text_alpha)
     end
 
     local CLR_TEXT_EFF     = SUIStyle.COLOR.text_primary
@@ -1230,7 +1166,7 @@ function M.build(w, ctx)
     -- Author widget (hidden when no usable name, same as description)
     local author_widget
     if show_author then
-        local author_text = _formatAuthors(bd.authors)
+        local author_text = Text.formatAuthors(bd.authors)
         if author_text then
             local face_author, bold_author = SUIStyle.getTextFace(styles.author, author_fs)
             author_widget = UI.makeColoredText{

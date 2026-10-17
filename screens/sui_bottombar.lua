@@ -124,16 +124,23 @@ end
 
 local M = {}
 
-local function _navbarBackdropStrength()
+-- Surface of the bar (tone, opacity and frame; see infra/sui_backdrop.lua),
+-- resolved on every use so a change shows on the next build.
+local function _navbarSurface()
     local ok, WP = pcall(require, "features/sui_wallpaper")
-    if ok and WP and WP.getNavbarBackdropStrength then
-        return WP.getNavbarBackdropStrength()
-    end
-    return SUISettings:isTrue("simpleui_navbar_transparent") and 0 or 100
+    if ok and WP then return WP.resolveBar("navbar") end
+    return Backdrop.resolveDefault("navbar")
 end
 
-local function _navbarIsTransparent()
-    return _navbarBackdropStrength() <= 0
+-- Layout of the bar: "full" spans the screen width with a rule along its top
+-- edge, "floating" is a rounded box inset from the sides.
+function M.getBarLayout()
+    local ok, WP = pcall(require, "features/sui_wallpaper")
+    return ok and WP and WP.getNavbarLayout() or "full"
+end
+
+local function _isFullWidth()
+    return M.getBarLayout() == "full"
 end
 
 
@@ -144,43 +151,18 @@ local function _barColorInactiveText()
     M.COLOR_INACTIVE_TEXT = M.COLOR_INACTIVE_TEXT or _SUIStyle().COLOR.text_dim
     return M.COLOR_INACTIVE_TEXT
 end
-local function _barColorSeparator()
-    M.COLOR_SEPARATOR = M.COLOR_SEPARATOR or _SUIStyle().COLOR.gray
-    return M.COLOR_SEPARATOR
-end
 
--- Returns the separator colour: transparent when the user has hidden it,
--- otherwise the default grey.
-local function _sepColor()
-    return _barColorSeparator()
-end
--- Public accessor used by sui_core.lua to draw the full-width separator line.
-function M.sepColor() return _sepColor() end
-
--- ---------------------------------------------------------------------------
--- Bar color helpers
--- Priority: transparent > default.
--- ---------------------------------------------------------------------------
-local function _getBarBg()
-    if M.getBarStyle() == "bare" or _navbarIsTransparent() then return nil end
-    local s = _navbarBackdropStrength()
-    if s >= 100 then return _SUIStyle().COLOR.surface end
-    -- Partial scrim: no opaque FrameContainer background.
-    return nil
-end
-
--- Full-width scrim over the entire bottom-bar footprint (TOP_SP + BAR_H +
--- BOT_SP). Used by the default bar style when strength is 1–99.
-local function _applyNavbarScrim(widget)
-    local s = _navbarBackdropStrength()
-    if s <= 0 or s >= 100 then return widget end
+-- Fill of a full-width bar across its entire footprint (TOP_SP + BAR_H +
+-- BOT_SP), in the tone and opacity of `surface`.
+local function _applyNavbarFill(widget, surface)
+    if surface.strength <= 0 then return widget end
     local orig_paint = widget.paintTo
     function widget:paintTo(bb, x, y)
         local dimen = self.dimen
         -- Prefer measured height; fall back to TOTAL_H so TOP/BOT padding is
         -- never left as bare wallpaper when dimen is not yet assigned.
         local h = (dimen and dimen.h and dimen.h > 0) and dimen.h or M.TOTAL_H()
-        Backdrop.paintBackdrop(bb, 0, y, Screen:getWidth(), h, s)
+        Backdrop.paintBackdrop(bb, 0, y, Screen:getWidth(), h, surface.strength, 0, surface.color)
         return orig_paint(self, bb, x, y)
     end
     return widget
@@ -231,10 +213,6 @@ local function _getBottomMarginPct()
     return _cached("bot_margin_pct", function() return Config.getBottomMarginPct() end)
 end
 
-function M.getBarStyle()
-    return SUISettings:readSetting("simpleui_bar_style") or "default"
-end
-
 -- VerticalSpan and LineWidget singletons — created once per layout, reused
 -- across all tab cell renders. Declared before invalidateDimCache and
 -- buildTabCell so all references resolve correctly.
@@ -270,15 +248,6 @@ function M.INDIC_H()     return _cached("indic_h", function() return math.floor(
 -- Structural dimensions — not affected by the size setting.
 function M.TOP_SP()      return _cached("top_sp",  function() return Screen:scaleBySize(2)  end) end
 function M.BOT_SP()      return _cached("bot_sp",  function() return math.floor(Screen:scaleBySize(12) * _getBottomMarginPct() / 100) end) end
-function M.SEP_H()
-    return _cached("sep_h", function()
-        local style = M.getBarStyle()
-        if style == "framed" or style == "bare" then
-            return 0
-        end
-        return Screen:scaleBySize(1)
-    end)
-end
 
 -- Height the bar strip occupies when it is shown, whether or not it is
 -- enabled. Surfaces that keep clear of the bar's area regardless of its state
@@ -498,13 +467,14 @@ end
 -- function is now just the sizing/settings adapter between this bar's own
 -- dimension accessors and that shared builder.
 function M.buildTabCell(action_id, active, tab_w, mode)
-    local bar_style = M.getBarStyle()
+    local full_width = _isFullWidth()
+    local surface = _navbarSurface()
     -- Inactive top rule only when the bar fill is fully opaque. With a
     -- wallpaper scrim (or transparent bar) a solid surface line reads as a
-    -- white strip across the top of the bar.
+    -- strip across the top of the bar.
     local inactive_indicator_color = nil
-    if bar_style == "default" and _navbarBackdropStrength() >= 100 then
-        inactive_indicator_color = _getBarBg() or _SUIStyle().COLOR.surface
+    if full_width and surface.strength >= 100 then
+        inactive_indicator_color = surface.color
     end
 
     local lbl_face, lbl_bold = M.LABEL_FONT(active)
@@ -517,7 +487,7 @@ function M.buildTabCell(action_id, active, tab_w, mode)
         icon_txt_sp              = M.ICON_TXT_SP(),
         indic_h                  = M.INDIC_H(),
         mode                     = mode,
-        bar_style                = bar_style,
+        full_width               = full_width,
         fgcolor                  = _getBarFg(),
         inactive_indicator_color = inactive_indicator_color,
     })
@@ -590,11 +560,11 @@ function M.buildNavpagerArrowCell(is_prev, enabled, tab_w, mode)
         content,
     }
 
-    local bar_style = M.getBarStyle()
-    if bar_style == "default" and not _navbarIsTransparent() then
+    local surface = _navbarSurface()
+    if _isFullWidth() and surface.strength > 0 then
         og[#og + 1] = LineWidget():new{
             dimen          = Geom():new{ w = tab_w, h = M.INDIC_H() },
-            background     = _getBarBg() or _SUIStyle().COLOR.surface,
+            background     = surface.color,
             overlap_offset = { 0, 0 },
         }
     end
@@ -650,97 +620,75 @@ function M.updateNavpagerArrows(widget, has_prev, has_next)
     return true
 end
 
--- Shared helper to assemble the final FrameContainer for all bottom bar variants.
-local function _buildBarContainer(hg_args, is_navpager)
-    local side_m = _UI().SIDE_M()
-    local style = M.getBarStyle()
-    if style == "framed" then
-        local radius = math.floor(Screen:scaleBySize(12) * _getNavbarScale())
-        local border_color = _SUIStyle().COLOR.gray
-        local inner_bg = _getBarBg()
-        local strength = _navbarBackdropStrength()
-        local border_sz = require("features/sui_style").BORDER_SZ
-        local hg = HorizontalGroup():new(hg_args)
-
-        -- Content frame: native fill + border when strength is 0 or 100 (a
-        -- single native draw keeps them consistent); at partial strength the
-        -- border moves into the BackdropFill below so it shares the scrim's
-        -- rounded-corner geometry.
-        local partial = strength > 0 and strength < 100
-        local fc = FrameContainer():new{
-            bordersize = partial and 0 or border_sz,
-            color      = border_color,
-            background = (strength >= 100) and inner_bg or nil,
-            radius     = radius,
-            padding    = 0, margin = 0,
-            hg,
-        }
-
-        local inner
-        if partial then
-            local sz = fc:getSize()
-            local box_w = math.max(1, sz.w)
-            local box_h = math.max(1, sz.h)
-            local fill = Backdrop.BackdropFill:new{
-                width = box_w,
-                height = box_h,
-                strength = strength,
-                radius = radius,
-                border_sz = border_sz,
-                border_color = border_color,
-            }
-            fill.dimen = Geom():new{ w = box_w, h = box_h }
-            fc.dimen = Geom():new{ w = box_w, h = box_h }
-            inner = OverlapGroup():new{
-                dimen = Geom():new{ w = box_w, h = box_h },
-                fill,
-                fc,
-            }
-        else
-            inner = fc
-        end
-
-        local wrapper = FrameContainer():new{
-            bordersize     = 0, padding = 0, margin = 0,
-            padding_left   = side_m,
-            padding_right  = side_m,
-            padding_top    = M.TOP_SP(),
-            padding_bottom = M.BOT_SP(),
-            background     = nil,
-            inner,
-        }
-
-        if is_navpager then
-            wrapper._navpager_has_arrows = true
-            wrapper._navpager_hg = hg
-        end
-        return wrapper
-    end
-
+-- Floating layout: the tab row in a rounded box inset from the screen sides.
+-- The box surface (fill and frame) is painted behind the row; a frame adds
+-- its thickness around the row.
+local function _buildFloatingBar(hg_args, is_navpager, surface)
+    local radius = math.floor(Screen:scaleBySize(12) * _getNavbarScale())
     local hg = HorizontalGroup():new(hg_args)
     local fc = FrameContainer():new{
-        bordersize      = 0,
-        padding         = 0,
-        padding_left    = side_m,
-        padding_right   = side_m,
-        padding_bottom  = M.BOT_SP(),
-        margin          = 0,
-        background      = _getBarBg(),
+        bordersize = 0,
+        padding    = surface.border_sz,
+        margin     = 0,
+        hg,
+    }
+    local sz = fc:getSize()
+    local box_w = math.max(1, sz.w)
+    local box_h = math.max(1, sz.h)
+    local fill = Backdrop.BackdropFill:new{
+        width   = box_w,
+        height  = box_h,
+        surface = surface,
+        radius  = radius,
+    }
+    fill.dimen = Geom():new{ w = box_w, h = box_h }
+    fc.dimen = Geom():new{ w = box_w, h = box_h }
+
+    local side_m = _UI().SIDE_M()
+    local wrapper = FrameContainer():new{
+        bordersize     = 0, padding = 0, margin = 0,
+        padding_left   = side_m,
+        padding_right  = side_m,
+        padding_top    = M.TOP_SP(),
+        padding_bottom = M.BOT_SP(),
+        OverlapGroup():new{
+            dimen = Geom():new{ w = box_w, h = box_h },
+            fill,
+            fc,
+        },
+    }
+    if is_navpager then
+        wrapper._navpager_has_arrows = true
+        wrapper._navpager_hg = hg
+    end
+    return wrapper
+end
+
+-- Full-width layout: the tab row under a rule across its top edge (drawn while
+-- the frame is on); the surface fills the whole bar footprint.
+local function _buildFullWidthBar(hg_args, is_navpager, surface)
+    local side_m = _UI().SIDE_M()
+    local hg = HorizontalGroup():new(hg_args)
+    local fc = FrameContainer():new{
+        bordersize     = 0,
+        padding        = 0,
+        padding_left   = side_m,
+        padding_right  = side_m,
+        padding_bottom = M.BOT_SP(),
+        margin         = 0,
         hg,
     }
 
     local top_vg = VerticalGroup():new{ align = "center" }
-    local sep_h = M.SEP_H()
-    
-    if style == "default" and sep_h > 0 then
-        local sep_bg = _navbarIsTransparent() and nil or M.sepColor()
+    local sep_h = surface.border_sz
+    if sep_h > 0 then
         local pad_above = M.TOP_SP() - sep_h
         if pad_above > 0 then
             top_vg[#top_vg + 1] = VerticalSpan():new{ width = pad_above }
         end
         top_vg[#top_vg + 1] = LineWidget():new{
             dimen      = Geom():new{ w = _UI().getUsableW(), h = sep_h },
-            background = sep_bg,
+            background = _SUIStyle().COLOR.gray,
         }
     else
         top_vg[#top_vg + 1] = VerticalSpan():new{ width = M.TOP_SP() }
@@ -750,7 +698,6 @@ local function _buildBarContainer(hg_args, is_navpager)
         bordersize = 0, padding = 0, margin = 0,
         padding_left  = side_m,
         padding_right = side_m,
-        background = nil,
         top_vg,
     }
 
@@ -759,13 +706,20 @@ local function _buildBarContainer(hg_args, is_navpager)
         top_fc,
         fc,
     }
-
-    if is_navpager then 
-        wrapper._navpager_has_arrows = true 
+    if is_navpager then
+        wrapper._navpager_has_arrows = true
         wrapper._navpager_hg = hg
     end
-    
-    return _applyNavbarScrim(wrapper)
+    return _applyNavbarFill(wrapper, surface)
+end
+
+-- Assembles the final bar container for the current layout and surface.
+local function _buildBarContainer(hg_args, is_navpager)
+    local surface = _navbarSurface()
+    if _isFullWidth() then
+        return _buildFullWidthBar(hg_args, is_navpager, surface)
+    end
+    return _buildFloatingBar(hg_args, is_navpager, surface)
 end
 
 -- Assembles the full bottom bar FrameContainer from all tab cells.

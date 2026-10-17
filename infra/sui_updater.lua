@@ -18,8 +18,10 @@
 local UIManager   = require("ui/uimanager")
 local ConfirmBox  = require("ui/widget/confirmbox")
 local logger      = require("logger")
+local util        = require("util")
 local _           = require("infra/sui_i18n").translate
 local UI          = require("infra/sui_core")
+local Text        = require("infra/sui_text")
 
 -- ---------------------------------------------------------------------------
 -- Configuration
@@ -303,8 +305,8 @@ local function _parseRelease(body)
         notes = notes:gsub("%*%*(.-)%*%*", "%1")  -- bold **
         notes = notes:gsub("`(.-)`", "%1")         -- code inline
         notes = notes:gsub("\r\n", "\n"):gsub("\r", "\n")
-        if #notes > 600 then notes = notes:sub(1, 597) .. "..." end
-        notes = notes:match("^%s*(.-)%s*$")        -- trim
+        notes = Text.truncate(notes, 600)
+        notes = util.trim(notes)
     end
 
     return {

@@ -819,7 +819,8 @@ function CoverWidgets.buildLabel(item, size, border, display)
     if not display.show_name            then return nil end
     local layout   = _LABEL_LAYOUTS[display.label_layout] or _LABEL_LAYOUTS[_DEFAULT_LABEL_LAYOUT]
     local dark     = display.label_color == "dark"
-    local bg_color = dark and SUIStyle.COLOR.text_primary or SUIStyle.COLOR.surface
+    local bg_color = dark and SUIStyle.COLOR.text_primary
+        or Backdrop.toneColor(display.label_color == "gray" and Backdrop.TONE.GRAY or Backdrop.TONE.WHITE)
     local fg_color = dark and SUIStyle.COLOR.surface or SUIStyle.COLOR.text_primary
 
     local cover_w  = size.w + border * 2

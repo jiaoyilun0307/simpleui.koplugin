@@ -6,7 +6,7 @@
 -- A set of label options is a plain table of fields:
 --   layout     "floating" | "band"
 --   position   "top" | "center" | "bottom"
---   color      "light" | "dark"
+--   color      "light" | "gray" | "dark"
 --   opacity    0–100, opacity of the background (the text stays solid)
 --   scale_pct  50–200, text size
 --
@@ -27,7 +27,7 @@ local LabelOptions = {}
 
 local LAYOUTS   = { "floating", "band" }
 local POSITIONS = { "top", "center", "bottom" }
-local COLORS    = { "light", "dark" }
+local COLORS    = { "light", "gray", "dark" }
 
 local SCALE_MIN, SCALE_MAX = 50, 200
 
@@ -35,7 +35,7 @@ LabelOptions.DEFAULTS = {
     layout    = "floating",
     position  = "bottom",
     color     = "light",
-    opacity   = Backdrop.BACKDROP_DEFAULT.folder_label,
+    opacity   = Backdrop.SURFACE_DEFAULT.folder_label.strength,
     scale_pct = 100,
 }
 local DEFAULTS = LabelOptions.DEFAULTS
@@ -137,6 +137,7 @@ function LabelOptions.makeMenuItems(opts)
         }),
         radioItem("color", _lc("Color"), {
             { value = "light", label = _lc("Light") },
+            { value = "gray",  label = _lc("Gray") },
             { value = "dark",  label = _lc("Dark") },
         }),
         Config.makeBackdropStrengthItem{

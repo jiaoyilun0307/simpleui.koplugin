@@ -21,7 +21,6 @@ local InputContainer  = require("ui/widget/container/inputcontainer")
 local LineWidget      = require("ui/widget/linewidget")
 local OverlapGroup    = require("ui/widget/overlapgroup")
 local TextWidget      = require("ui/widget/textwidget")
-local TextBoxWidget   = require("ui/widget/textboxwidget")
 local VerticalGroup   = require("ui/widget/verticalgroup")
 local VerticalSpan    = require("ui/widget/verticalspan")
 local Size            = require("ui/size")
@@ -33,6 +32,7 @@ local UI           = require("infra/sui_core")
 local SUISettings  = require("infra/sui_store")
 local SUIStyle     = require("features/sui_style")
 local BookStats    = require("infra/sui_book_stats")
+local Text         = require("infra/sui_text")
 local Chrome       = require("features/sui_module_chrome")
 local PAD          = UI.PAD
 local LABEL_H      = UI.LABEL_H
@@ -324,33 +324,6 @@ local function _getStatsOrder(saved)
     return Config.mergeOrder(saved, STAT_IDS)
 end
 
--- ---------------------------------------------------------------------------
--- Author list rendering
--- ---------------------------------------------------------------------------
--- Author strings arrive as a single newline-separated string ("A\nB\nC").
--- _formatAuthors returns nil when there is no usable name (caller hides the
--- row, same policy as description), a single name verbatim, or "Name et al."
--- when there are two or more.
-local function _splitAuthors(s)
-    local parts = {}
-    if not s or s == "" then return parts end
-    for piece in (s .. "\n"):gmatch("(.-)\r?\n") do
-        local trimmed = piece:match("^%s*(.-)%s*$")
-        if trimmed and trimmed ~= "" then
-            parts[#parts + 1] = trimmed
-        end
-    end
-    return parts
-end
-
-local function _formatAuthors(authors_str)
-    local parts = _splitAuthors(authors_str)
-    if #parts == 0 then return nil end
-    if #parts == 1 then return parts[1] end
-    return parts[1] .. _(" et al.")
-end
-
-
 -- Module API
 local M = {}
 
@@ -474,12 +447,10 @@ end
 
 -- Empty placeholder when history has no existing books (same pattern as
 -- Quick Actions / Featured Collection / Collections).
--- Uses a wrapping TextBoxWidget rather than the single-line TextWidget
--- behind makeColoredText, since this message is long enough to need
--- multiple lines at the module's own width; falls back to a plain
--- TextBoxWidget when there's no wallpaper to composite over, same as
--- the title/description elements in M.build below.
-local function _emptyPlaceholder(w, h, has_wallpaper)
+-- Uses a wrapping text box rather than the single-line TextWidget behind
+-- makeColoredText, since this message is long enough to need multiple lines
+-- at the module's own width.
+local function _emptyPlaceholder(w, h, text_alpha)
     local face = Font:getFace(SUIStyle.FACE_REGULAR, SUIStyle.FS_BODY)
     local line_h = math.floor(1.3 * face.size + 0.5)
     local args = {
@@ -493,22 +464,9 @@ local function _emptyPlaceholder(w, h, has_wallpaper)
         fgcolor   = CLR_TEXT_SUB,
     }
 
-    local text_w
-    if has_wallpaper then
-        local ok_tbx, tbx = pcall(UI.makeAlphaTextBox, args)
-        if ok_tbx then
-            text_w = tbx
-        else
-            logger.warn("simpleui: module_currently: makeAlphaTextBox failed, falling back to TextBoxWidget: " .. tostring(tbx))
-            text_w = TextBoxWidget:new(args)
-        end
-    else
-        text_w = TextBoxWidget:new(args)
-    end
-
     return CenterContainer:new{
         dimen = Geom:new{ w = w, h = h },
-        text_w,
+        UI.makeTextBox(args, text_alpha),
     }
 end
 
@@ -516,12 +474,12 @@ end
 -- Elements in the text column are rendered in user-configured order.
 function M.build(w, ctx)
     if not ctx.current_fp then
-        return _emptyPlaceholder(w, M.getHeight(ctx), ctx.has_wallpaper)
+        return _emptyPlaceholder(w, M.getHeight(ctx), ctx.text_alpha)
     end
 
     local SH = getSH()
     if not SH then
-        return _emptyPlaceholder(w, M.getHeight(ctx), ctx.has_wallpaper)
+        return _emptyPlaceholder(w, M.getHeight(ctx), ctx.text_alpha)
     end
 
     -- Use pre-read settings bundle from ctx when available (normal HS path).
@@ -712,24 +670,11 @@ function M.build(w, ctx)
                 fgcolor   = _CLR_DARK_EFF,
             }
 
-            local title_w
-            if ctx.has_wallpaper then
-                local ok_tbx, tbx = pcall(UI.makeAlphaTextBox, title_args)
-                if ok_tbx then
-                    title_w = tbx
-                else
-                    logger.warn("simpleui: module_currently: makeAlphaTextBox failed, falling back to TextBoxWidget: " .. tostring(tbx))
-                    title_w = TextBoxWidget:new(title_args)
-                end
-            else
-                title_w = TextBoxWidget:new(title_args)
-            end
-
-            meta[#meta+1] = title_w
+            meta[#meta+1] = UI.makeTextBox(title_args, ctx.text_alpha)
             meta_has_content = true
 
         elseif elem == "author" and show.author then
-            local author_text = _formatAuthors(bd.authors)
+            local author_text = Text.formatAuthors(bd.authors)
             if author_text then
                 gap_before(author_gap)
                 meta[#meta+1] = UI.makeColoredText{
@@ -779,20 +724,7 @@ function M.build(w, ctx)
                 fgcolor   = CLR_TEXT_SUB_EFF,
             }
 
-            local desc_w
-            if ctx.has_wallpaper then
-                local ok_tbx, tbx = pcall(UI.makeAlphaTextBox, desc_args)
-                if ok_tbx then
-                    desc_w = tbx
-                else
-                    logger.warn("simpleui: module_currently: makeAlphaTextBox failed, falling back to TextBoxWidget: " .. tostring(tbx))
-                    desc_w = TextBoxWidget:new(desc_args)
-                end
-            else
-                desc_w = TextBoxWidget:new(desc_args)
-            end
-
-            meta[#meta+1] = desc_w
+            meta[#meta+1] = UI.makeTextBox(desc_args, ctx.text_alpha)
             meta_has_content = true
 
         elseif elem == "progress" and show.progress then

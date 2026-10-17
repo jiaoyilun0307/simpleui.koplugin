@@ -61,7 +61,7 @@ local VerticalGroup   = require("ui/widget/verticalgroup")
 local VerticalSpan    = require("ui/widget/verticalspan")
 local Screen          = require("device").screen
 local lfs             = require("libs/libkoreader-lfs")
-local util            = require("util")
+local Text            = require("infra/sui_text")
 local _               = require("infra/sui_i18n").translate
 
 local Config         = require("infra/sui_config")
@@ -415,8 +415,7 @@ end
 
 -- First characters of a name, whole UTF-8 characters.
 local function initialsOf(name)
-    local chars = util.splitToChars(name or "")
-    return table.concat(chars, "", 1, math.min(INITIALS_LENGTH, #chars)):upper()
+    return Text.cut(name or "", INITIALS_LENGTH):upper()
 end
 
 -- The name label laid over the cover, or nil while the name is under it.

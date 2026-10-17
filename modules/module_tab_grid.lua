@@ -54,7 +54,7 @@
 --   _tab_style   one of STYLES
 --   _pager_*     style (one of PAGER_STYLES), position (one of
 --                PAGER_POSITIONS) and alignment of the numbers
---   _tabbar_*    frame and background of the tab bar (see ModuleChrome)
+--   _tabbar_*    tone, frame and opacity of the tab bar (see ModuleChrome)
 --   _group_*     cover style, book stack, count badge and name label of the
 --                group cells, shared by every group tab
 --
@@ -78,7 +78,6 @@ local Screen          = require("device").screen
 local Size            = require("ui/size")
 
 local Arrange      = require("features/sui_arrange")
-local Backdrop     = require("infra/sui_backdrop")
 local Config       = require("infra/sui_config")
 local ModuleChrome = require("features/sui_module_chrome")
 local GridRenderer = require("engines/sui_book_grid")
@@ -144,8 +143,8 @@ local ALIGN_CONTAINER = {
     right  = RightContainer,
 }
 
--- The tab bar starts framed and, over a wallpaper, solid.
-local BAR_CHROME_DEFAULTS = { frame = true, strength = Backdrop.BACKDROP_DEFAULT.tab_bar }
+-- Surface kind of the tab bar: it starts framed and, over a wallpaper, solid.
+local BAR_KIND = "tab_bar"
 
 -- Tabs of an instance that has none stored yet.
 local DEFAULT_TABS = {
@@ -386,13 +385,11 @@ end
 -- The tabs style draws neither frame nor background.
 local function barLook(pfx, inst_id)
     local shape  = tabStyle(pfx, inst_id)
-    local chrome = ModuleChrome.resolve(pfx, barId(inst_id), BAR_CHROME_DEFAULTS)
-    if shape == STYLE_TABS then chrome.strength, chrome.border_sz = 0, 0 end
     return {
-        shape     = shape,
-        style     = STRIP_STYLE[shape],
-        strength  = chrome.strength,
-        border_sz = chrome.border_sz,
+        shape   = shape,
+        style   = STRIP_STYLE[shape],
+        surface = shape == STYLE_TABS and ModuleChrome.NO_CHROME
+            or ModuleChrome.resolve(pfx, barId(inst_id), BAR_KIND),
     }
 end
 
@@ -527,7 +524,7 @@ local function compose(w, h, ctx, inst_id, content)
     return OverlapGroup:new{
         allow_mirroring = false,
         dimen           = Geom:new{ w = w, h = h },
-        GridRenderer.makeEraser(w, h, ctx.pfx, inst_id, 0),
+        GridRenderer.makeEraser(w, h, ModuleChrome.NO_CHROME),
         content,
     }
 end
@@ -614,8 +611,7 @@ local function makeInstance(inst_id)
             visible_count = VISIBLE_TABS,
             has_wallpaper = ctx.has_wallpaper,
             radius        = bar.shape == STYLE_SQUARE and ModuleChrome.frameRadius(layout.scale) or nil,
-            strength      = bar.strength,
-            border_sz     = bar.border_sz,
+            surface       = bar.surface,
             active        = active.id,
             first         = state.first,
             on_select     = function(id)
@@ -692,7 +688,7 @@ local function makeInstance(inst_id)
         local refresh = ctx_menu.refresh
         local pfx     = ctx_menu.pfx
 
-        local background = ModuleChrome.makeBackgroundItem(pfx, barId(inst_id), refresh, _lc, BAR_CHROME_DEFAULTS)
+        local background = ModuleChrome.makeBackgroundItem(pfx, barId(inst_id), refresh, _lc, BAR_KIND)
         background.enabled_func = function() return tabStyle(pfx, inst_id) ~= STYLE_TABS end
 
         return {
@@ -946,7 +942,7 @@ local function makeInstance(inst_id)
             bar      = bar,
             pager    = pager,
             face     = face,
-            strip_h  = TabStrip.height(bar.style, face, bar.strength, bar.border_sz),
+            strip_h  = TabStrip.height(bar.style, face, bar.surface),
             grid_h   = gridHeight(ctx, chrome, tabs),
             bottom_h = bottomPagerHeight(ctx, tabs, pager),
         }
@@ -1030,7 +1026,7 @@ M.instanciable     = true
 M.instances_key    = "simpleui_tab_grid_instances"
 M.setting_suffixes = {
     "_tabs", "_active_tab", "_tab_options", "_tab_style",
-    "_pager_style", "_pager_position", "_pager_align", "_tabbar_show_frame", "_tabbar_backdrop",
+    "_pager_style", "_pager_position", "_pager_align", "_tabbar_show_frame", "_tabbar_backdrop", "_tabbar_tone",
     "_group_cover_style", "_group_hide_pile", "_group_badge_position",
     "_group_badge_color", "_group_badge_hidden", "_group_badge_scale", "_group_label",
 }

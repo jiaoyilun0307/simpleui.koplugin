@@ -39,6 +39,7 @@ local CoverWidgets   = require("features/library/sui_cover_widgets")
 local LabelOptions   = require("features/library/sui_label_options")
 local GroupCell      = require("engines/sui_group_cell")
 local RasterCache    = require("infra/sui_raster_cache")
+local Text           = require("infra/sui_text")
 local CoverOverrides = require("features/library/sui_cover_overrides")
 local GroupActions   = require("features/library/sui_group_actions")
 local Backdrop       = require("infra/sui_backdrop")
@@ -121,7 +122,7 @@ function M.setHideUnderline(v) _setFlag(SK.hide_underline, v)     end
 -- it follows the former solid/transparent choice.
 function M.getLabelOpacity()
     local default = SUISettings:readSetting(SK.label_style) == "solid"
-        and 100 or Backdrop.BACKDROP_DEFAULT.folder_label
+        and 100 or Backdrop.SURFACE_DEFAULT.folder_label.strength
     return Backdrop.readBackdropStrength(SK.label_opacity, default)
 end
 function M.setLabelOpacity(v) Backdrop.saveBackdropStrength(SK.label_opacity, v) end
@@ -135,7 +136,8 @@ function M.setLabelLayout(v)  SUISettings:saveSetting(SK.label_layout, v)       
 function M.getLabelPosition()  return LabelOptions.normalize("position", SUISettings:readSetting(SK.label_position)) end
 function M.setLabelPosition(v) SUISettings:saveSetting(SK.label_position, v)                 end
 
--- "light" (default, white background / black text) | "dark" (black background / white text)
+-- "light" (default, white background / black text) | "gray" (gray background / black text)
+-- | "dark" (black background / white text)
 function M.getLabelColor()  return LabelOptions.normalize("color", SUISettings:readSetting(SK.label_color)) end
 function M.setLabelColor(v) SUISettings:saveSetting(SK.label_color, v)                end
 
@@ -1006,10 +1008,8 @@ local function _installStripPatch(MosaicMenuItem, BookInfoManager, _STRIP_H,
                                 end
                             end)
 
-                            -- Use only the first author when multiple are newline-separated.
-                            if authors and authors:find("\n") then
-                                authors = authors:match("^([^\n]+)")
-                            end
+                            -- Only the first author is shown.
+                            authors = Text.firstLine(authors)
                             if title or authors then
                                 self._simpleui_strip_data = { title = title, authors = authors }
                             else
@@ -1054,16 +1054,20 @@ local function _installStripPatch(MosaicMenuItem, BookInfoManager, _STRIP_H,
                 end
             end
 
-            -- Blit the strip directly below the cover.
+            -- Paint the strip directly below the cover. Opacity applies over
+            -- a wallpaper only; tone and frame always apply.
             if self._simpleui_strip_bb then
                 local wp_active = SUIWallpaper.styleGetWallpaperShowInFM()
                     and SUIWallpaper.styleGetBgWidget() ~= nil
+                local look = Backdrop.resolve(SUIWallpaper.COVER_STRIP,
+                    wp_active and Backdrop.readStrength(SUIWallpaper.COVER_STRIP) or Backdrop.STRENGTH_MAX)
 
-                if wp_active then
+                -- Plain white without a frame, over no wallpaper, is the
+                -- cached bitmap itself.
+                if wp_active or look.frame or look.tone ~= Backdrop.TONE.WHITE then
                     local strip_y = y + self._simpleui_strip_top
-                    Backdrop.paintBackdrop(bb, x + BACKDROP_MARGIN_X, strip_y,
-                        self.width - 2 * BACKDROP_MARGIN_X, _STRIP_H,
-                        SUIWallpaper.getCoverStripBackdropStrength(), BACKDROP_RADIUS)
+                    Backdrop.paintSurface(bb, x + BACKDROP_MARGIN_X, strip_y,
+                        self.width - 2 * BACKDROP_MARGIN_X, _STRIP_H, look, BACKDROP_RADIUS)
                     UI_core.paintWithAlphaMask(self, bb,
                         x, strip_y, self.width, _STRIP_H,
                         Blitbuffer_s.COLOR_BLACK,

@@ -498,8 +498,11 @@ function M.wrapWithNavbar(inner_widget, active_action_id, tabs, force_no_arrows)
 
     local topbar_idx       = topbar_on and #overlap_items or nil
     local navbar_container = OverlapGroup():new(overlap_items)
-    local is_bare_bar = SUISettings:readSetting("simpleui_bar_style") == "bare"
-    local wrapper_bg = (SUISettings:isTrue("simpleui_navbar_transparent") or SUISettings:isTrue("simpleui_statusbar_transparent") or is_bare_bar) and nil or SUIStyle.COLOR.surface
+    -- The plain surface behind the bars and content stays unless a bar is
+    -- fully transparent, so the wallpaper shows through.
+    local WP = require("features/sui_wallpaper")
+    local bars_opaque = WP.resolveBar("navbar").strength > 0 and WP.resolveBar("statusbar").strength > 0
+    local wrapper_bg = bars_opaque and SUIStyle.COLOR.surface or nil
 
     return navbar_container,
            FrameContainer():new{
@@ -970,6 +973,23 @@ function M.makeAlphaTextBox(opts)
     }
 
     return M.makeAlphaMaskWidget(inner, fgcolor)
+end
+
+-- ---------------------------------------------------------------------------
+-- makeTextBox — wrapping text box for text drawn over a painted surface.
+--
+-- With `alpha` the text composites over whatever is already on the
+-- framebuffer (a wallpaper or a gray surface) instead of painting its own
+-- white background; without it a plain TextBoxWidget is returned. Takes the
+-- fields of makeAlphaTextBox.
+-- ---------------------------------------------------------------------------
+function M.makeTextBox(opts, alpha)
+    if alpha then
+        local ok, box = pcall(M.makeAlphaTextBox, opts)
+        if ok then return box end
+        logger.warn("simpleui: makeTextBox: alpha text box failed, using a plain one: " .. tostring(box))
+    end
+    return _TBW():new(opts)
 end
 
 -- ---------------------------------------------------------------------------

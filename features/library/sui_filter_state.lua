@@ -55,7 +55,7 @@ function FilterState.parseSeries(raw)
     raw = raw:gsub("\u{00A0}", " ")
     local name, suffix = raw:match("^(.-)%s+#(%d+)%s*$")
     name = (name or raw):gsub("%s+", " ")
-    name = name:match("^ *(.-) *$")
+    name = util.trim(name)
     if name == "" then return nil end
     return name, tonumber(suffix)
 end

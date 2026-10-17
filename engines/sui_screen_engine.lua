@@ -2048,8 +2048,14 @@ function ScreenWidget:_buildModWidget(mod, col_w, ctx)
         build_w = ModuleChrome.contentWidth(col_w, chrome)
     end
     -- Expose the full column width so modules that re-wrap later (clock tick)
-    -- can recover the same chrome geometry the page build used.
-    if ctx then ctx.col_w = col_w end
+    -- can recover the same chrome geometry the page build used. `text_alpha`
+    -- tells the module whether its text sits over a painted surface (a
+    -- wallpaper or a filled module surface) and must not draw its own
+    -- background.
+    if ctx then
+        ctx.col_w      = col_w
+        ctx.text_alpha = ctx.has_wallpaper or (chrome ~= nil and ModuleChrome.hasFill(chrome))
+    end
     local ok_w, widget = pcall(mod.build, build_w, ctx)
     if not ok_w then
         return nil, widget

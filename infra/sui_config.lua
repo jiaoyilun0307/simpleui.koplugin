@@ -15,6 +15,8 @@ local Memory            = require("infra/sui_memory")
 local Backdrop          = require("infra/sui_backdrop")
 local logger            = require("logger")
 local _ = require("infra/sui_i18n").translate
+local Text = require("infra/sui_text")
+local util = require("util")
 local T = require("ffi/util").template
 
 local M = {}
@@ -217,16 +219,7 @@ end
 
 function M.setTopbarCustomText(s)
     if type(s) == "string" then
-        local count, i, out = 0, 1, {}
-        while i <= #s do
-            local byte = s:byte(i)
-            local clen = byte >= 240 and 4 or byte >= 224 and 3 or byte >= 192 and 2 or 1
-            count = count + 1
-            if count > TOPBAR_CUSTOM_TEXT_MAX then break end
-            out[#out + 1] = s:sub(i, i + clen - 1)
-            i = i + clen
-        end
-        s = table.concat(out)
+        s = Text.cut(s, TOPBAR_CUSTOM_TEXT_MAX)
     else
         s = ""
     end
@@ -547,10 +540,8 @@ end
 
 function M.sanitizeLabel(s)
     if type(s) ~= "string" then return nil end
-    s = s:match("^%s*(.-)%s*$")
-    if #s == 0 then return nil end
-    if #s > M.MAX_LABEL_LEN then s = s:sub(1, M.MAX_LABEL_LEN) end
-    return s
+    s = Text.cut(util.trim(s), M.MAX_LABEL_LEN)
+    return s ~= "" and s or nil
 end
 
 -- Converts a "nerd:XXXX" hex string to a UTF-8 character.
@@ -1333,6 +1324,71 @@ function M.makeBackdropStrengthItem(opts)
                 end,
             })
         end,
+    }
+end
+
+-- Rows editing a surface (see infra/sui_backdrop.lua), the same on every
+-- surface: Color (white or gray), Frame and Background Opacity.
+-- opts: {
+--   surface      — surface descriptor (Backdrop.surface)
+--   refresh      — called once a value is applied
+--   with_strength — false, or a function returning false when the menu is
+--                  opened, leaves out the Opacity row. Default: the row is
+--                  listed only while a wallpaper is active, the only case
+--                  where opacity shows
+--   get_strength — optional opacity getter, instead of the stored value
+--   set_strength — optional opacity setter, instead of the stored value
+--   _lc          — optional translator (defaults to the plugin translator)
+-- }
+function M.makeSurfaceItems(opts)
+    local _lc, surface, refresh = opts._lc or _, opts.surface, opts.refresh
+    local with_strength = opts.with_strength
+    if with_strength == nil then
+        with_strength = require("features/sui_wallpaper").isWallpaperActive
+    end
+    if type(with_strength) == "function" then with_strength = with_strength() end
+    local items = {
+        M.makeRadioSubmenuItem{
+            text    = _lc("Color"),
+            options = {
+                { value = Backdrop.TONE.WHITE, label = _lc("White") },
+                { value = Backdrop.TONE.GRAY,  label = _lc("Gray") },
+            },
+            get     = function() return Backdrop.readTone(surface) end,
+            set     = function(tone) Backdrop.saveTone(surface, tone) end,
+            refresh = refresh,
+        },
+    }
+    items[#items + 1] = {
+        text           = _lc("Frame"),
+        checked_func   = function() return Backdrop.readFrame(surface) end,
+        keep_menu_open = true,
+        callback       = function()
+            Backdrop.saveFrame(surface, not Backdrop.readFrame(surface))
+            refresh()
+        end,
+    }
+    if with_strength ~= false then
+        items[#items + 1] = M.makeBackdropStrengthItem{
+            title         = _lc("Background Opacity"),
+            get           = opts.get_strength or function() return Backdrop.readStrength(surface) end,
+            set           = opts.set_strength or function(n) Backdrop.saveStrength(surface, n) end,
+            refresh       = refresh,
+            default_value = surface.defaults.strength,
+            _lc           = _lc,
+        }
+    end
+    return items
+end
+
+-- The "Background" submenu holding the rows of makeSurfaceItems. `opts` is as
+-- there, plus
+--   enabled_func — optional enabled state of the submenu
+function M.makeSurfaceMenu(opts)
+    return {
+        text           = (opts._lc or _)("Background"),
+        enabled_func        = opts.enabled_func,
+        sub_item_table_func = function() return M.makeSurfaceItems(opts) end,
     }
 end
 
@@ -3009,7 +3065,6 @@ function M.applyFirstRunDefaults()
     def("simpleui_qs_bar_frontlight",       false)
     def("simpleui_qs_bar_warmth",           false)
     def("simpleui_qs_bar_shape",            "round")
-    def("simpleui_qs_bar_bg",              "flat")
     def("simpleui_qs_bar_settings_on_hold", true)
     def("simpleui_qs_bar_open_reader",      true)
     def("simpleui_qs_bar_open_fm",          true)

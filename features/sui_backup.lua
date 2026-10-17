@@ -45,6 +45,7 @@
 --   Backup.runQuickExport()           — one-tap export for backup_export QA
 
 local logger = require("logger")
+local util   = require("util")
 local _      = require("infra/sui_i18n").translate
 
 local SUISettings = require("infra/sui_store")
@@ -177,7 +178,7 @@ local CLASSIFY_RULES = {
       }),
     },
     { "library",
-      prefixes = { "simpleui_fc_", "simpleui_browsemeta_", "simpleui_reader_cover_" },
+      prefixes = { "simpleui_fc_", "simpleui_cover_strip_", "simpleui_browsemeta_", "simpleui_reader_cover_" },
       exact    = { simpleui_toggle_home_library = true },
     },
     -- Homescreen-scoped keys must classify before generic bar/qa prefixes.
@@ -207,13 +208,13 @@ local CLASSIFY_RULES = {
     { "bars",
       prefixes = {
           "simpleui_bar_", "simpleui_topbar_", "simpleui_tb_", "simpleui_qs_bar_",
-          "simpleui_titlebar", "simpleui_statusbar_transparent", "simpleui_bars_transparent",
-          "simpleui_statusbar_backdrop", "simpleui_navbar_backdrop", "simpleui_pagination_backdrop", "simpleui_titlebar_backdrop", "simpleui_module_backdrop",
+          "simpleui_titlebar", "simpleui_statusbar_", "simpleui_pagination_", "simpleui_bars_transparent",
+          "simpleui_navbar_backdrop", "simpleui_navbar_tone", "simpleui_navbar_show_frame", "simpleui_navbar_transparent",
+          "simpleui_module_backdrop",
           "simpleui_menu_tap", "simpleui_menu_swipe",
           "navbar_",
       },
       exact    = {
-          simpleui_navbar_transparent    = true,
           simpleui_titlebar_custom       = true,
       },
     },
@@ -1117,7 +1118,7 @@ function Backup.makeMenuItems(ctx_menu)
                         is_enter_default = true,
                         callback         = function()
                             local name = dialog:getInputText()
-                            name = (name or ""):match("^%s*(.-)%s*$")
+                            name = util.trim(name or "")
                             if name == "" then name = suggested end
                             if not name:match("%.sui$") then name = name .. ".sui" end
                             UIManager:close(dialog)
