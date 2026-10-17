@@ -6748,3 +6748,12 @@ msgstr "Swipe Bar"
 
 msgid "Tabbed Grid"
 msgstr "Tabbed Grid"
+
+msgid "Full-width"
+msgstr "Full-width"
+
+msgid "Gray"
+msgstr "[待翻译] Gray"
+
+msgid "White"
+msgstr "[待翻译] White"
