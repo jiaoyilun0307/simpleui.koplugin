@@ -41,7 +41,8 @@
 -- The module height is the same for every tab and page: the tab bar and the
 -- pager row are always reserved and the grid area is as tall as the tallest
 -- kind of cell among the tabs, so switching tabs never moves the modules
--- below it. The room a shorter tab leaves goes at the bottom of the grid box.
+-- below it. The grid box wraps the content of the active tab; the room a
+-- shorter tab leaves stays empty under the box.
 --
 -- Persistence (per instance, under pfx .. inst_id):
 --   _tabs        { { id, source, params }, ... }   ids and params only, never
@@ -983,16 +984,15 @@ local function makeInstance(inst_id)
             body[#body + 1] = buildPager(grid_w, ctx, inst_id, pager)
             used = used + gap + pagerRowHeight(ctx, pager)
         end
-        -- What the tallest tab needs beyond the active one stays at the bottom.
-        body[#body + 1] = VerticalSpan:new{
-            width = math.max(0, layout.grid_h + layout.bottom_h - used),
-        }
-
         local column = VerticalGroup:new{ align = "left", buildTabBar(col_w, ctx, tabs, active, layout) }
         if pager.position == POSITION_TOP then
             column[#column + 1] = buildTopPager(col_w, grid_w, ctx, inst_id, pager)
         end
         column[#column + 1] = ModuleChrome.wrap(body, layout.chrome, col_w, layout.scale)
+        -- What the tallest tab needs beyond the active one stays under the box.
+        column[#column + 1] = VerticalSpan:new{
+            width = math.max(0, layout.grid_h + layout.bottom_h - used),
+        }
         local widget = compose(col_w, layout.total, ctx, inst_id, column)
         -- The grid is the widget the cover and stats updaters operate on.
         widget._grid = grid

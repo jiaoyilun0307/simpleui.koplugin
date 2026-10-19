@@ -59,7 +59,9 @@ local SUIStyle         = require("features/sui_style")
 local SectionLabel     = require("engines/sui_section_label")
 local ImageWidget      = require("ui/widget/imagewidget")
 local lfs              = require("libs/libkoreader-lfs")
+local VirtualPaths     = require("infra/sui_virtual_paths")
 local SUIWallpaper     = require("features/sui_wallpaper")
+local Backdrop         = require("infra/sui_backdrop")
 
 -- ---------------------------------------------------------------------------
 -- Wallpaper background override — state and logic now live in
@@ -144,13 +146,27 @@ local DotWidget = _BaseWidget:extend{
     dot_size     = 0,
     bar_h        = 0,
     touch_w      = 0,
+    pill_h       = 0,
 }
 
 function DotWidget:getSize()
     return Geom:new{ w = self.total_pages * self.touch_w, h = self.bar_h }
 end
 
+-- Pill behind the dots, in the surface of the pagination bar (tone, opacity and
+-- frame), so the dots stay legible over a wallpaper. Each end cap is centred on
+-- the first or last dot.
+function DotWidget:_paintPill(bb, x, y)
+    local surface = SUIWallpaper.resolveBar("pagination")
+    if surface.strength <= 0 and surface.border_sz <= 0 then return end
+    local pill_x = x + math.floor((self.touch_w - self.pill_h) / 2)
+    local pill_y = y + math.floor((self.bar_h - self.pill_h) / 2)
+    local pill_w = (self.total_pages - 1) * self.touch_w + self.pill_h
+    Backdrop.paintSurface(bb, pill_x, pill_y, pill_w, self.pill_h, surface, math.floor(self.pill_h / 2))
+end
+
 function DotWidget:paintTo(bb, x, y)
+    self:_paintPill(bb, x, y)
     local dot_r = math.floor(self.dot_size / 2)
     local cy    = y + math.floor(self.bar_h / 2)
     local tw    = self.touch_w
@@ -368,6 +384,15 @@ end
 -- Footer helpers
 -- ---------------------------------------------------------------------------
 
+-- Page bar of the KOReader style: the chevrons and page label over the
+-- pagination bar surface.
+local ChevronBar = InputContainer:extend{}
+
+function ChevronBar:paintTo(bb, x, y)
+    SUIWallpaper.paintPaginationBar(bb, y, self.dimen.h)
+    InputContainer.paintTo(self, bb, x, y)
+end
+
 local function buildChevronFooter(goto_fn)
     local icon_size  = Bottombar.getPaginationIconSize()
     local font_size  = Bottombar.getPaginationFontSize()
@@ -394,9 +419,10 @@ local function buildChevronFooter(goto_fn)
         icon = chev_last, icon_width = icon_size, icon_height = icon_size,
         callback = function() goto_fn("last") end, bordersize = 0,
     }
+    -- Page label: stays enabled (regular text color) and inert, as it has no callback.
     local btn_text = Button:new{
         text = " ", text_font_bold = false, text_font_size = font_size,
-        bordersize = 0, enabled = false,
+        bordersize = 0,
     }
 
     Bottombar.patchDimmedIcon(btn_first)
@@ -411,7 +437,7 @@ local function buildChevronFooter(goto_fn)
     }
     local chev_w    = Screen:getWidth()
     local chev_h    = Bottombar.getPaginationIconSize() + Screen:scaleBySize(8)
-    local chev_input = InputContainer:new{
+    local chev_input = ChevronBar:new{
         dimen = Geom:new{ w = chev_w, h = chev_h },
         CenterContainer:new{
             dimen = Geom:new{ w = chev_w, h = chev_h },
@@ -447,10 +473,11 @@ local function buildDotFooter(goto_fn)
     local DOT_SIZE = Screen:scaleBySize(7)
     local BAR_H    = Screen:scaleBySize(28)
     local TOUCH_W  = Screen:scaleBySize(32)
+    local PILL_H   = Screen:scaleBySize(18)
 
     local dot_widget = DotWidget:new{
         current_page = 1, total_pages = 1,
-        dot_size = DOT_SIZE, bar_h = BAR_H, touch_w = TOUCH_W,
+        dot_size = DOT_SIZE, bar_h = BAR_H, touch_w = TOUCH_W, pill_h = PILL_H,
     }
     local dot_sz    = dot_widget:getSize()
     local bar_input = InputContainer:new{
@@ -532,52 +559,10 @@ end
 local function _updateNavpager(tgt, current_page, total_pages)
     if not Config.isNavpagerEnabled() then return end
     if not tgt then return end
-    local has_prev = current_page > 1
-    local has_next = current_page < total_pages
-    if not Bottombar.updateNavpagerArrows(tgt, has_prev, has_next) then
-        local tabs    = Config.loadTabConfig()
-        local mode    = Config.getNavbarMode()
-        local new_bar = Bottombar.buildBarWidgetWithArrows(
-            _bottombarActionIdFor(tgt), tabs, mode, has_prev, has_next)
-        Bottombar.replaceBar(tgt, new_bar, tabs)
-    end
-    UIManager:setDirty(tgt, "ui")
+    Bottombar.syncNavpagerArrows(tgt, _bottombarActionIdFor(tgt),
+        current_page > 1, current_page < total_pages)
 end
 
--- Normalises a filepath for use with the kobo.koplugin's patched
--- DocumentRegistry.openDocument, which handles DRM decryption and provider
--- selection only for KOBO_VIRTUAL:// paths.
---
--- Two cases are handled:
---   • KOBO_VIRTUAL:// paths  — returned unchanged so DocumentRegistry's patch
---     can perform decryption and route to the correct provider.
---   • Real kepub paths (e.g. /mnt/onboard/.kobo/kepub/<id>) that were saved
---     into ReadHistory by KOReader after the kobo.koplugin resolved a virtual
---     path — converted back to KOBO_VIRTUAL:// so the same patch fires.
---
--- Any other path is returned unchanged.
--- Falls back gracefully (returns filepath as-is) when kobo.koplugin is absent.
-local function _normalizeKoboPath(filepath)
-    if not filepath then return filepath end
-    local ok, PluginLoader = pcall(require, "pluginloader")
-    if not ok or not PluginLoader then return filepath end
-    local kobo = PluginLoader:getPluginInstance("kobo_plugin")
-    if not kobo or not kobo.virtual_library then return filepath end
-    local vl = kobo.virtual_library
-    -- Ensure path mappings are populated (lazy-built on first access).
-    if not next(vl.virtual_to_real) then
-        local ok2, err = pcall(function() vl:buildPathMappings() end)
-        if not ok2 then
-            logger.warn("sui_homescreen: kobo buildPathMappings failed:", err)
-            return filepath
-        end
-    end
-    -- Already a virtual path — DocumentRegistry's patch will handle it.
-    if vl:isVirtualPath(filepath) then return filepath end
-    -- Real path from ReadHistory → convert back to virtual so decryption fires.
-    local virtual = vl:getVirtualPath(filepath)
-    return virtual or filepath
-end
 
 local function openBook(filepath, pos0, page)
     -- ReaderUI:showReader() broadcasts ShowingReader before its first paint,
@@ -585,7 +570,7 @@ local function openBook(filepath, pos0, page)
     local doOpen = function()
         local ReaderUI = package.loaded["apps/reader/readerui"]
             or require("apps/reader/readerui")
-        ReaderUI:showReader(_normalizeKoboPath(filepath))
+        ReaderUI:showReader(VirtualPaths.toVirtual(filepath))
         if pos0 or page then
             UIManager:scheduleIn(0.5, function()
                 local rui = package.loaded["apps/reader/readerui"]
@@ -1897,8 +1882,7 @@ function ScreenWidget:_refreshLiveData()
 end
 
 -- ---------------------------------------------------------------------------
--- _showBookHoldDialog — opens the per-book action dialog (mirrors KOReader's
--- FM long-press dialog, trimmed to book-only actions) for a single cover
+-- _showBookHoldDialog — opens the per-book action sheet for a single cover
 -- long-pressed inside a module whose "Long press on cover" setting is
 -- "book_dialog" (see engines/sui_book_grid.lua's per-cell Hold handling and
 -- Config.getCoverHoldMode). Reached via ctx.hold_fn(fp, mod_id).
@@ -1930,15 +1914,10 @@ function ScreenWidget:_showBookHoldDialog(fp, mod_id)
             self_ref._ctx_cache          = nil
             self_ref:_refreshImmediate(true)
         end,
-        -- "More by <Author>" (sui_browse_author, registered in main.lua)
-        -- repaints FM.instance.file_chooser to the virtual author leaf, but
-        -- the homescreen is what's actually on screen here, on top of FM —
-        -- so that repaint happens invisibly underneath unless we close the
-        -- homescreen too, revealing the now-updated FM view. A plain
-        -- refresh_fn (repaint the homescreen in place) would just leave the
-        -- person looking at the homescreen with nothing having happened.
+        -- Rows that navigate inside the file browser (e.g. "More by <Author>")
+        -- act on the file manager underneath this screen, so the screen
+        -- closes to reveal the result.
         navigate_fn      = function() self_ref:onClose() end,
-        navigate_row_ids = { sui_browse_author = true },
         open_settings_fn = mod and function() self_ref:_openModuleSettingsFor(mod) end or nil,
         -- "Collections…" and "Book information" open a native FM/ReaderUI
         -- sub-screen on top of us; closing that sub-screen should reveal us
@@ -3321,13 +3300,11 @@ function ScreenWidget:onShow()
                 -- mechanism exists for, and it stops a dangling path from ever
                 -- reaching cover extraction / doc-open code further down.
                 --
-                -- KOBO_VIRTUAL:// paths (module_books_shared.lua's
-                -- _koboVirtualPath) are skipped: lfs.attributes cannot resolve
-                -- them, and there is no exported real-path lookup to reverse the
-                -- mapping here, so a real-file check would false-negative every
-                -- kepub on Kobo devices instead of only catching deleted books.
+                -- Virtual paths are skipped: lfs.attributes cannot resolve them,
+                -- so a real-file check would report every virtual book as
+                -- missing instead of only catching deleted ones.
                 local function _existsOrVirtual(fp)
-                    if fp:match("^KOBO_VIRTUAL://") then return true end
+                    if VirtualPaths.isVirtual(fp) then return true end
                     return lfs.attributes(fp, "mode") == "file"
                 end
                 if stale.current_fp and not _existsOrVirtual(stale.current_fp) then

@@ -339,9 +339,10 @@ function M.genTBRButton(file, close_cb)
     local indicator = string.format("(%d)", count)
 
     return {
-        text    = (in_tbr and _("Remove from To Be Read") or _("Add to To Be Read"))
-                  .. "  " .. indicator,
-        enabled = true,
+        text     = (in_tbr and _("Remove from To Be Read") or _("Add to To Be Read"))
+                   .. "  " .. indicator,
+        sui_icon = "bookmark",
+        enabled  = true,
         callback = function()
             if in_tbr then
                 removeTBR(file)

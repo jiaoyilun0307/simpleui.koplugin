@@ -1567,7 +1567,7 @@ function M.getBentoWidth(mod_id, pfx)
     if not mod_id then return BENTO_DEF end
     local v = SUISettings:get(_bentoKey(mod_id, pfx))
     if v == nil then
-        -- One-shot migration from the old userpatch key (G_reader_settings).
+        -- One-shot migration from the legacy key (G_reader_settings).
         local legacy = _G.G_reader_settings and _G.G_reader_settings:readSetting("simpleui_bento_width_" .. mod_id)
         if legacy ~= nil then
             local n = _clampBento(legacy)
@@ -2142,8 +2142,9 @@ local _BookInfoManager = nil
 local _bbBytes = Memory.bbBytes
 
 -- Listeners told when a book's record in the book info store changes:
--- fn(filepath, method). Records written by background extraction happen in a
--- separate process and are not reported.
+-- fn(filepath, method, ...), where `...` are the arguments the method was
+-- called with. Records written by background extraction happen in a separate
+-- process and are not reported.
 local _bookinfo_listeners = {}
 
 function M.onBookInfoChanged(fn)
@@ -2162,7 +2163,7 @@ local function _hookBookInfoChanges(bim)
             bim["_sui_orig_" .. name] = orig
             bim[name] = function(self, filepath, ...)
                 if filepath then
-                    for _, fn in ipairs(_bookinfo_listeners) do fn(filepath, name) end
+                    for _, fn in ipairs(_bookinfo_listeners) do fn(filepath, name, ...) end
                 end
                 return orig(self, filepath, ...)
             end
@@ -2171,10 +2172,13 @@ local function _hookBookInfoChanges(bim)
     return bim
 end
 
--- The store forgetting a book (cover or metadata changes, manual refresh)
--- invalidates the cover state cached here.
-M.onBookInfoChanged(function(filepath, method)
-    if method == "deleteBookInfo" then M.dropCoverCaches(filepath) end
+-- The store forgetting a book (cover or metadata changes, manual refresh), or
+-- the cover being ignored or restored, invalidates the cover state cached here.
+M.onBookInfoChanged(function(filepath, method, props)
+    if method == "deleteBookInfo"
+            or (method == "setBookInfoProperties" and props and props.ignore_cover ~= nil) then
+        M.dropCoverCaches(filepath)
+    end
 end)
 
 function M.getBookInfoManager()
@@ -2532,6 +2536,12 @@ local function _getCoverInfo(bim, filepath, w, h)
     return nil
 end
 
+-- True when the record holds a cover that may be shown: the book has one and
+-- the user has not chosen to ignore it.
+local function _hasShowableCover(bookinfo)
+    return bookinfo.has_cover and not bookinfo.ignore_cover
+end
+
 function M.getStretchedCoverBB(filepath, w, h)
     if M.isCoverMissing(filepath) then return nil end
 
@@ -2542,7 +2552,7 @@ function M.getStretchedCoverBB(filepath, w, h)
     if not bim then return nil end
     local bookinfo = _getCoverInfo(bim, filepath, w, h)
     if not bookinfo then return nil end
-    if not bookinfo.has_cover then return _noCover(filepath) end
+    if not _hasShowableCover(bookinfo) then return _noCover(filepath) end
 
     -- Undersized book info thumbnail: serve a stretched placeholder and
     -- re-extract larger. Local caches are dropped so the upgraded bitmap can
@@ -2585,7 +2595,7 @@ function M.getCroppedCoverBB(filepath, w, h, align)
     if not bim then return nil end
     local bookinfo = _getCoverInfo(bim, filepath, w, h)
     if not bookinfo then return nil end
-    if not bookinfo.has_cover then return _noCover(filepath) end
+    if not _hasShowableCover(bookinfo) then return _noCover(filepath) end
 
     if _coverTooSmall(bim, bookinfo, w, h) then
         _dropLocalCoverCaches(filepath)
@@ -2829,6 +2839,7 @@ end
 
 -- Navpager
 function M.isNavpagerEnabled() return SUISettings:isTrue("simpleui_bar_navpager_enabled") end
+
 function M.isDotPagerEnabled() return SUISettings:nilOrTrue("simpleui_bar_dotpager_always") end
 function M.effectiveMaxTabs() return M.isNavpagerEnabled() and M.MAX_TABS_NAVPAGER or M.MAX_TABS end
 

@@ -515,7 +515,7 @@ end
 
 -- ---------------------------------------------------------------------------
 -- Applies all navbar state fields to a widget in one call (RF2).
--- Eliminates the repeated 9-field block scattered across patches/bottombar.
+-- Replaces a 9-field block otherwise repeated at every call site.
 -- ---------------------------------------------------------------------------
 
 function M.applyNavbarState(widget, container, bar, topbar, bar_idx, topbar_on, topbar_idx, tabs)

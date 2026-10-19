@@ -30,6 +30,7 @@ local UIManager      = require("ui/uimanager")
 local _              = require("gettext")
 local T              = require("ffi/util").template
 
+local VirtualPaths   = require("infra/sui_virtual_paths")
 local LibraryScan    = require("engines/sui_library_scan")
 local MetadataSource = require("features/library/sui_metadata_source")
 local SUIWindow      = require("engines/sui_window")
@@ -40,7 +41,7 @@ local LibrarySearch = {}
 local MAX_RESULTS = 400 -- keeps result collection/sorting bounded on e-readers
 
 -- Opens a book by path. Mirrors engines/sui_screen_engine.lua's openBook():
--- normalizes a kobo virtual path (when the kobo integration is active) and
+-- resolves the virtual path (when a virtual library is active) and
 -- respects the "confirm before opening" setting. ReaderUI:showReader()
 -- closes whatever is on screen (this results list included) atomically
 -- before its first paint, so no explicit close is needed here.
@@ -48,19 +49,7 @@ local function _openBook(filepath)
     local function doOpen()
         local ReaderUI = package.loaded["apps/reader/readerui"]
             or require("apps/reader/readerui")
-        local path = filepath
-        local ok, PluginLoader = pcall(require, "pluginloader")
-        local kobo = ok and PluginLoader and PluginLoader:getPluginInstance("kobo_plugin")
-        if kobo and kobo.virtual_library then
-            local vl = kobo.virtual_library
-            if not next(vl.virtual_to_real) then
-                pcall(function() vl:buildPathMappings() end)
-            end
-            if not vl:isVirtualPath(path) then
-                path = vl:getVirtualPath(path) or path
-            end
-        end
-        ReaderUI:showReader(path)
+        ReaderUI:showReader(VirtualPaths.toVirtual(filepath))
     end
     if G_reader_settings:isTrue("file_ask_to_open") then
         local ConfirmBox = require("ui/widget/confirmbox")
@@ -171,6 +160,7 @@ end
 local function showResults(query, results)
     local win = SUIWindow:new{
         name          = "sui_win_library_search_results",
+        icon          = "search",
         title         = T(_("Search results: %1"), query),
         position      = "bottom",
         navpager_mode = require("infra/sui_config").isNavpagerEnabled(),

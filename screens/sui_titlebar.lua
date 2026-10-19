@@ -12,6 +12,7 @@ local _ = require("infra/sui_i18n").translate
 local Config = require("infra/sui_config")
 local SUISettings = require("infra/sui_store")
 local Backdrop = require("infra/sui_backdrop")
+local SUIWallpaper = require("features/sui_wallpaper")
 
 -- Lazy reference to the style module — avoids a circular-require at load time.
 local _SUIStyle
@@ -370,9 +371,8 @@ local function _installBarScrim(tb)
     if rawget(tb, "paintTo") then return end
     local orig = tb.paintTo
     function tb:paintTo(bb, x, y)
-        local ok, WP = pcall(require, "features/sui_wallpaper")
-        local surface = ok and WP.resolveBar("titlebar")
-        if surface and (surface.strength > 0 or surface.border_sz > 0) then
+        local surface = SUIWallpaper.resolveBar("titlebar")
+        if surface.strength > 0 or surface.border_sz > 0 then
             local h = (self.dimen and self.dimen.h) or self:getHeight()
             Backdrop.paintBar(bb, y, h, surface, "bottom")
         end
@@ -1027,15 +1027,11 @@ local function _applyClassic(fm_self, tb)
                         -- Improvement #4: use cached _BrowseMeta().
                         local BM = _BrowseMeta()
                         if not BM then return end
-                        local ButtonDialog = require("ui/widget/buttondialog")
+                        local ActionSheet  = require("engines/sui_action_sheet")
                         local fc_ref       = fm_self.file_chooser
                         local cur_mode     = fc_ref and BM.getCurrentMode(fc_ref) or "normal"
-                        local function _check(mode)
-                            return cur_mode == mode and "\u{2713} " or "  "
-                        end
-                        -- Closes dialog, navigates to mode, and refreshes the icon.
-                        local function _navigate(dlg, mode)
-                            UIManager:close(dlg)
+                        -- Navigates to mode, and refreshes the icon.
+                        local function _navigate(mode)
                             BM.navigateTo(fm_self, mode)
                             local _ss = SUIStyle()
                             if not (_ss and _ss.applyIconToBtn(_BM_SLOT[mode], browse_btn)) then
@@ -1051,19 +1047,23 @@ local function _applyClassic(fm_self, tb)
                             end
                             UIManager:setDirty(tb.show_parent or fm_self, "ui", tb.dimen)
                         end
-                        local dlg
-                        dlg = ButtonDialog:new{
-                            title       = _("Browse library"),
-                            title_align = "center",
-                            buttons = {
-                                {{ text = _check("normal") .. _("Default"),   callback = function() _navigate(dlg, "normal") end }},
-                                {{ text = _check("author") .. _("By author"), callback = function() _navigate(dlg, "author") end }},
-                                {{ text = _check("series") .. _("By series"), callback = function() _navigate(dlg, "series") end }},
-                                {{ text = _check("tags")   .. _("By tags"),   callback = function() _navigate(dlg, "tags")   end }},
-                                {{ text = _("Cancel"),                         callback = function() UIManager:close(dlg)     end }},
-                            },
+                        local function _mode(mode, icon, label)
+                            return { text = label, sui_icon = icon, checked = cur_mode == mode,
+                                     callback = function() _navigate(mode) end }
+                        end
+                        ActionSheet.show{
+                            name       = "sui_win_browse_mode",
+                            title      = _("Browse library"),
+                            icon       = "library",
+                            fit_width  = true,
+                            auto_close = true,
+                            sections   = { ActionSheet.list{
+                                _mode("normal", "folder", _("Default")),
+                                _mode("author", "author", _("By author")),
+                                _mode("series", "series", _("By series")),
+                                _mode("tags",   "tags",   _("By tags")),
+                            } },
                         }
-                        UIManager:show(dlg)
                     end,
                 }
 

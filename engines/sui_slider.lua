@@ -1,15 +1,17 @@
 -- sui_slider.lua — Simple UI
--- Horizontal slider with a round knob, drawn with anti-aliased shapes, plus a
--- caption line that can repaint itself without redrawing its parent and the
--- controls that sit beside the slider.
+-- Horizontal slider with a hollow round knob and the value above it, drawn with
+-- anti-aliased shapes, plus a caption line that can repaint itself without
+-- redrawing its parent and the controls that sit beside the slider.
 --
 -- Usage:
 --   local slider = SUISlider:new{
 --       width      = px,
---       height     = px,        -- the knob and the bars are sized from it
+--       height     = px,        -- height of the bar row; the knob and the bars are sized from it
 --       min        = number,
 --       max        = number,
 --       value      = number,
+--       face       = face,      -- font of the value shown above the knob
+--       bold       = bool,      -- emboldens a face without a bold file
 --       on_change  = function(value, dragging) end,  -- a tap, drag or flick picked a new value
 --       on_release = function() end,                 -- a drag ended
 --   }
@@ -25,19 +27,17 @@
 --   local caption = SUISlider.Caption:new{
 --       name = "", value = "", width = px, gap = px,   -- the value follows the name, left-aligned
 --       name_face = face,  name_bold = bool,
---       value_face = face, value_bold = bool,
+--       value_face = face, value_bold = bool,          -- omitted: the caption is the name only
 --   }
 --   caption:setValue(text)
---   caption:refresh(refresh_type)   -- repaint the caption on its own
+--   caption:refresh(refresh_type)   -- repaint the caption on its own (a name-only caption stays as is)
 --
--- A control sits beside the slider, for example a step or a maximum button.
--- Its content is a text or a drawn symbol:
+-- A control sits beside the slider, for example a step button. Its content is
+-- a drawn symbol:
 --
 --   local control = SUISlider.Control:new{
---       text     = "Max",               -- or: symbol = "minus" | "plus"
---       face     = face,                -- text only
---       bold     = bool,                -- text only; emboldens a face without a bold file
---       height   = px,                  -- height of the tap area; a symbol is sized from it
+--       symbol   = "minus" | "plus",
+--       height   = px,                  -- height of the tap area; the symbol is sized from it
 --       inset    = px,                  -- tap area added around the content, on the sides facing the slider
 --       edge     = "left" | "right",    -- row end the content is flush with; omitted between two widgets
 --       callback = function() end,
@@ -94,12 +94,13 @@ local SUISlider = InputContainer:extend{
 }
 
 function SUISlider:init()
-    self.dimen   = Geom:new{ w = self.width, h = self.height }
     self.knob_r  = math.max(2, math.floor(self.height * KNOB_PCT / 2))
-    self.halo    = math.max(1, Screen:scaleBySize(2))
+    self.ring    = math.max(1, Screen:scaleBySize(1))
     self.track_h = math.max(2, math.floor(self.height * TRACK_PCT))
     self.fill_h  = math.max(self.track_h, math.floor(self.height * FILL_PCT))
     self._value  = self:_clamp(self.value)
+    self:_initValueLabel()
+    self.dimen   = Geom:new{ w = self.width, h = self.bar_top + self.height }
 
     -- Drags can leave the slider's own area, so the gestures that continue
     -- or end one are matched on the whole screen.
@@ -111,6 +112,16 @@ function SUISlider:init()
     self.ges_events.PanReleaseSlider = { GestureRange:new{ ges = "pan_release", range = screen } }
     self.ges_events.SwipeSlider = { GestureRange:new{ ges = "swipe", range = screen } }
     self.ges_events.MultiSwipeSlider = { GestureRange:new{ ges = "multiswipe", range = screen } }
+end
+
+-- Sets up the value shown above the knob. `bar_top` is the room it takes above
+-- the bar; the knob travels in the row below it.
+function SUISlider:_initValueLabel()
+    -- The longest value fixes the room reserved and the margin to repaint.
+    self.label = TextWidget:new{ text = tostring(self.max), face = self.face, bold = self.bold }
+    local size = self.label:getSize()
+    self.label_w = size.w
+    self.bar_top = size.h + math.max(1, Screen:scaleBySize(2))
 end
 
 function SUISlider:_clamp(value)
@@ -152,16 +163,35 @@ end
 -- Painting
 -- ---------------------------------------------------------------------------
 
+-- Hollow knob centred on (cx, cy): a ring around the surface, which hides the
+-- track beneath it.
+function SUISlider:_paintKnob(bb, cx, cy)
+    fillCircle(bb, cx, cy, self.knob_r, SUIStyle.COLOR.text_primary)
+    fillCircle(bb, cx, cy, self.knob_r - self.ring, SUIStyle.COLOR.surface)
+end
+
+-- Value above the knob at `knob_x`, kept within the slider's width.
+function SUISlider:_paintValue(bb, x, y, knob_x)
+    local text = tostring(self._value)
+    if self.label.text ~= text then self.label:setText(text) end
+    local w = self.label:getSize().w
+    self.label:paintTo(bb, math.max(x, math.min(x + self.width - w, knob_x - math.floor(w / 2))), y)
+end
+
 function SUISlider:paintTo(bb, x, y)
     self.dimen.x, self.dimen.y = x, y
-    local cy     = y + math.floor(self.height / 2)
+    local cy     = y + self.bar_top + math.floor(self.height / 2)
     local knob_x = x + self:_knobOffset()
 
-    bb:paintRect(x, y, self.width, self.height, SUIStyle.COLOR.surface)
+    bb:paintRect(x, y, self.width, self.dimen.h, SUIStyle.COLOR.surface)
     fillPill(bb, x, cy, self.width, self.track_h, SUIStyle.COLOR.track)
     fillPill(bb, x, cy, knob_x - x, self.fill_h, SUIStyle.COLOR.text_primary)
-    fillCircle(bb, knob_x, cy, self.knob_r, SUIStyle.COLOR.surface)
-    fillCircle(bb, knob_x, cy, self.knob_r - self.halo, SUIStyle.COLOR.text_primary)
+    self:_paintKnob(bb, knob_x, cy)
+    self:_paintValue(bb, x, y, knob_x)
+end
+
+function SUISlider:free()
+    self.label:free()
 end
 
 -- Paints the slider onto the screen buffer and queues a `refresh_type`
@@ -169,11 +199,11 @@ end
 function SUISlider:_repaint(prev_knob_x, refresh_type)
     self:paintTo(Screen.bb, self.dimen.x, self.dimen.y)
     local cur_knob_x = self.dimen.x + self:_knobOffset()
-    local pad = self.knob_r + 1
+    local pad = math.max(self.knob_r, math.ceil(self.label_w / 2)) + 1
     local x0 = math.max(self.dimen.x, math.min(prev_knob_x, cur_knob_x) - pad)
     local x1 = math.min(self.dimen.x + self.width, math.max(prev_knob_x, cur_knob_x) + pad)
     UIManager:setDirty(nil, refresh_type, Geom:new{
-        x = x0, y = self.dimen.y, w = x1 - x0, h = self.height,
+        x = x0, y = self.dimen.y, w = x1 - x0, h = self.dimen.h,
     })
 end
 
@@ -243,7 +273,7 @@ end
 
 -- ---------------------------------------------------------------------------
 -- Control
--- A tappable text or symbol, centred on the slider's axis and flush with the
+-- A tappable symbol, centred on the slider's axis and flush with the
 -- row end named by `edge`; the tap area extends by `inset` on the other sides,
 -- so the control is easy to hit without moving its content off the edge.
 -- ---------------------------------------------------------------------------
@@ -268,8 +298,8 @@ local function odd(n)
     return n % 2 == 0 and n + 1 or n
 end
 
--- Content of a control: its width, a `paint(bb, x, y)` of the content in a row
--- `height` tall whose top is `y`, and an optional `free()`.
+-- Content of a control: its width and a `paint(bb, x, y)` of the content in a
+-- row `height` tall whose top is `y`.
 local function symbolContent(symbol, height)
     local len    = odd(Math.round(height * SYMBOL_PCT))
     local stroke = odd(math.max(1, Math.round(height * STROKE_PCT)))
@@ -281,25 +311,13 @@ local function symbolContent(symbol, height)
     }
 end
 
-local function textContent(text, face, bold, height)
-    local label = TextWidget:new{ text = text, face = face, bold = bold }
-    local text_y = math.floor((height - label:getSize().h) / 2) + SUIStyle.inkCentreShift(face, text, bold)
-    return {
-        w     = label:getSize().w,
-        paint = function(bb, x, y) label:paintTo(bb, x, y + text_y) end,
-        free  = function() label:free() end,
-    }
-end
-
 local Control = InputContainer:extend{
     height = 0,
     inset  = 0,
 }
 
 function Control:init()
-    self.content = self.symbol
-        and symbolContent(self.symbol, self.height)
-        or textContent(self.text, self.face, self.bold, self.height)
+    self.content = symbolContent(self.symbol, self.height)
     self.content_x = self.edge == "left" and 0 or self.inset
     local trailing = self.edge == "right" and 0 or self.inset
     self.dimen = Geom:new{ w = self.content_x + self.content.w + trailing, h = self.height }
@@ -320,10 +338,6 @@ end
 function Control:onTapControl()
     self.callback()
     return true
-end
-
-function Control:free()
-    if self.content.free then self.content.free() end
 end
 
 SUISlider.Control = Control
@@ -348,15 +362,16 @@ function Caption:init()
         bold      = self.name_bold,
         max_width = self.width,
     }
-    self.value_label = TextWidget:new{
-        text    = self.value,
-        face    = self.value_face,
-        bold    = self.value_bold,
-    }
-    self.dimen = Geom:new{
-        w = self.width,
-        h = math.max(self.name_label:getSize().h, self.value_label:getSize().h),
-    }
+    local height = self.name_label:getSize().h
+    if self.value_face then
+        self.value_label = TextWidget:new{
+            text    = self.value,
+            face    = self.value_face,
+            bold    = self.value_bold,
+        }
+        height = math.max(height, self.value_label:getSize().h)
+    end
+    self.dimen = Geom:new{ w = self.width, h = height }
 end
 
 function Caption:getSize()
@@ -364,18 +379,22 @@ function Caption:getSize()
 end
 
 function Caption:setValue(value)
-    self.value_label:setText(value)
+    if self.value_label then self.value_label:setText(value) end
 end
 
 function Caption:paintTo(bb, x, y)
     self.dimen.x, self.dimen.y = x, y
     self.name_label:paintTo(bb, x, y)
-    self.value_label:paintTo(bb, x + self.name_label:getSize().w + self.gap, y)
+    if self.value_label then
+        self.value_label:paintTo(bb, x + self.name_label:getSize().w + self.gap, y)
+    end
 end
 
 -- Repaints the caption onto the screen buffer and queues a `refresh_type`
--- refresh of its area (normal when omitted).
+-- refresh of its area (normal when omitted). A caption without a value never
+-- changes, so it is left alone.
 function Caption:refresh(refresh_type)
+    if not self.value_label then return end
     local d = self.dimen
     Screen.bb:paintRect(d.x, d.y, d.w, d.h, SUIStyle.COLOR.surface)
     self:paintTo(Screen.bb, d.x, d.y)
@@ -384,7 +403,7 @@ end
 
 function Caption:free()
     self.name_label:free()
-    self.value_label:free()
+    if self.value_label then self.value_label:free() end
 end
 
 SUISlider.Caption = Caption

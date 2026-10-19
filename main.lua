@@ -8,7 +8,7 @@ local Dispatcher      = require("dispatcher")
 
 -- Each simpleui module captures its own local translation proxy from sui_i18n.
 -- The native package.loaded["gettext"] is never wrapped or replaced, which
--- prevents state-mutation conflicts with other plugins (e.g. zlibrary).
+-- prevents state-mutation conflicts with other plugins.
 local I18n = require("infra/sui_i18n")
 local _    = I18n.translate
 
@@ -18,6 +18,7 @@ local Bottombar    = require("screens/sui_bottombar")
 local Topbar       = require("screens/sui_topbar")
 local QSBar        = require("screens/sui_quicksettings_bar")
 local Patches      = require("infra/sui_patches")
+local WindowHooks  = require("infra/sui_window_hooks")
 local Memory       = require("infra/sui_memory")
 local Text         = require("infra/sui_text")
 local SUISettings  = require("infra/sui_store")
@@ -79,8 +80,6 @@ local SimpleUIPlugin = WidgetContainer:new{
     _topbar_timer             = nil,
     _power_dialog             = nil,
 
-    _orig_uimanager_show      = nil,
-    _orig_uimanager_close     = nil,
     _orig_booklist_new        = nil,
     _orig_menu_new            = nil,
     _orig_fmcoll_show         = nil,
@@ -1152,7 +1151,8 @@ function SimpleUIPlugin:init()
                     if count < 2 then return nil end
 
                     return {{
-                        text = string.format(_("More by %s (%d)"), author, count),
+                        text     = string.format(_("More by %s (%d)"), author, count),
+                        sui_icon = "author",
                         callback = function()
                             if close_cb then close_cb() end
                             local fm2 = FM2.instance
@@ -1203,7 +1203,8 @@ function SimpleUIPlugin:init()
                         or (ok_bl and BL and BL.hasBookBeenOpened(file))
                     if not is_book then return nil end
                     return {{
-                        text = _("Book statistics"),
+                        text     = _("Book statistics"),
+                        sui_icon = "chart",
                         callback = function()
                             if close_cb then close_cb() end
                             require("screens/sui_stats_launcher").open("book", { filepath = file })
@@ -1761,7 +1762,7 @@ function SimpleUIPlugin:onCloseDocument()
     if not is_reload then
         local Patches = package.loaded["infra/sui_patches"]
         if Patches and Patches.CoverTransition and Patches.CoverTransition.isCloseEnabled() then
-            local orig_show = UIManager._simpleui_show_orig or UIManager.show
+            local orig_show = WindowHooks.origShow()
             local live_doc  = self.ui and self.ui.document
             local ok_ct, shown = pcall(Patches.CoverTransition.show, closed_fp, orig_show, live_doc)
             cover_shown = ok_ct and shown

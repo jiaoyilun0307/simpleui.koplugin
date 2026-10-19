@@ -365,10 +365,18 @@ end
 
 --- Consumed by sui_patches.lua to decide whether to paint the wallpaper into
 --- fullscreen overlays (Collections, History, etc.) and the FM.
-function M.styleGetWallpaperShowInFM()
+M.styleGetWallpaperShowInFM = SUISettings.memoize(function()
     if not M.styleGetWallpaperEnabled() or not M.styleGetWallpaper() then return false end
     return SUISettings:isTrue("simpleui_wallpaper_show_in_fm")
-end
+end)
+-- True while a wallpaper is painted behind the file manager: it is shown there
+-- and its image could be loaded. Whether an image exists does not depend on
+-- the screen size or night mode, which only change the widget built for it, so
+-- the answer is kept until a setting changes.
+M.isWallpaperPaintedInFM = SUISettings.memoize(function()
+    return M.styleGetWallpaperShowInFM() and _styleGetBgWidget() ~= nil
+end)
+
 function M.styleSetWallpaperShowInFM(on)
     SUISettings:saveSetting("simpleui_wallpaper_show_in_fm", on and true or false)
 end
@@ -523,10 +531,7 @@ function M.setBarStrength(kind, n)
     Backdrop.saveStrength(BAR_SURFACE[kind], n)
 end
 
--- Look of a bar as it is painted (see Backdrop.resolve). Without a wallpaper
--- the opacity is the bar's native one, raised to solid when the user chose a
--- tone or frame the native look does not have.
-function M.resolveBar(kind)
+local function _resolveBar(kind)
     local surface = BAR_SURFACE[kind]
     if M.isWallpaperActive() then
         return Backdrop.resolve(surface, M.getBarStrength(kind))
@@ -536,18 +541,43 @@ function M.resolveBar(kind)
     return Backdrop.resolve(surface, customised and STRENGTH_MAX or strength)
 end
 
+local _resolvedBars = {}  -- kind -> memoized _resolveBar
+
+-- Look of a bar as it is painted (see Backdrop.resolve). Without a wallpaper
+-- the opacity is the bar's native one, raised to solid when the user chose a
+-- tone or frame the native look does not have. Rebuilt only when a setting
+-- changes, so the returned table is shared and must not be modified.
+function M.resolveBar(kind)
+    local resolved = _resolvedBars[kind]
+    if not resolved then
+        resolved = SUISettings.memoize(function() return _resolveBar(kind) end)
+        _resolvedBars[kind] = resolved
+    end
+    return resolved()
+end
+
 -- Look of a card or button surface as painted. Opacity applies only over a
 -- wallpaper; without one the surface is solid.
 function M.resolveSurface(surface)
     return Backdrop.resolve(surface, not M.isWallpaperActive() and STRENGTH_MAX or nil)
 end
 
+-- Paints the pagination bar surface (tone, opacity and frame) across the full
+-- width of the rows y .. y + h. Nothing is painted while the surface is fully
+-- transparent and has no frame.
+function M.paintPaginationBar(bb, y, h)
+    local surface = M.resolveBar("pagination")
+    if surface.strength > 0 or surface.border_sz > 0 then
+        Backdrop.paintBar(bb, y, h, surface, "top")
+    end
+end
+
 -- True while a bar surface is painted behind native controls (the pagination
 -- bar and the title bar). Those controls must then draw without their own
 -- white background.
-function M.paintsBehindNativeControls()
+M.paintsBehindNativeControls = SUISettings.memoize(function()
     return M.resolveBar("pagination").strength > 0 or M.resolveBar("titlebar").strength > 0
-end
+end)
 
 -- Navigation bar layouts. Older versions stored a style instead:
 --   default → full width; framed → floating with its frame; bare → floating

@@ -430,4 +430,6 @@ To report a bug, open an **Issue** and include your KOReader version and device 
 
 ## License
 
-MIT — see [LICENSE](LICENSE) for details.
+Copyright (c) 2026 doctorhetfield-cmd
+
+Licensed under the GNU General Public License, version 3 or (at your option) any later version (GPL-3.0-or-later) — see [LICENSE](LICENSE) for details.

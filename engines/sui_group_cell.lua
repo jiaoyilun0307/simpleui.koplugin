@@ -33,8 +33,8 @@
 --   books          function?   () -> { { path, title? }, ... } every book of the
 --                              group, offered by the cover picker
 --   set_cover_text string?     label of the cover picker action
---   extra_actions  function?   () -> { { text, callback }, ... } rows added to
---                              the long-press dialog
+--   extra_actions  function?   () -> { { text, sui_icon?, callback }, ... } rows
+--                              added to the long-press sheet
 --
 -- Public API
 -- ----------
@@ -56,7 +56,6 @@ local ImageWidget     = require("ui/widget/imagewidget")
 local InputContainer  = require("ui/widget/container/inputcontainer")
 local OverlapGroup    = require("ui/widget/overlapgroup")
 local TextWidget      = require("ui/widget/textwidget")
-local UIManager       = require("ui/uimanager")
 local VerticalGroup   = require("ui/widget/verticalgroup")
 local VerticalSpan    = require("ui/widget/verticalspan")
 local Screen          = require("device").screen
@@ -569,19 +568,17 @@ end
 -- Interaction
 -- ---------------------------------------------------------------------------
 
--- Long-press dialog of a group: choose its cover (single style only), the
+-- Long-press sheet of a group: choose its cover (single style only), the
 -- actions of the group and the settings of the owner module.
 local function showGroupDialog(group, style, owner_id, ctx)
-    local ButtonDialog = require("ui/widget/buttondialog")
-    local dialog
-    local function close() UIManager:close(dialog) end
+    local ActionSheet = require("engines/sui_action_sheet")
 
-    local buttons = {}
+    local items = {}
     if style == STYLE_SINGLE and group.cover_key and group.books then
-        buttons[#buttons + 1] = {{
+        items[#items + 1] = {
             text     = group.set_cover_text or _("Set cover"),
+            sui_icon = "cover",
             callback = function()
-                close()
                 GroupActions.openCoverPicker{
                     title         = string.format(_("Cover for \"%s\""), group.name),
                     override_key  = group.cover_key,
@@ -590,29 +587,26 @@ local function showGroupDialog(group, style, owner_id, ctx)
                     empty_message = _("No books found."),
                 }
             end,
-        }}
+        }
     end
     for _i, action in ipairs(group.extra_actions and group.extra_actions() or {}) do
-        buttons[#buttons + 1] = {{
-            text     = action.text,
-            callback = function() close(); action.callback() end,
-        }}
+        items[#items + 1] = { text = action.text, sui_icon = action.sui_icon, callback = action.callback }
     end
-    buttons[#buttons + 1] = {{
+    items[#items + 1] = {
         text     = _("Open Module Settings"),
+        sui_icon = "settings",
         callback = function()
-            close()
             if ctx.open_settings_fn then ctx.open_settings_fn(owner_id) end
         end,
-    }}
-
-    dialog = ButtonDialog:new{
-        title       = group.name,
-        title_align = "center",
-        buttons     = buttons,
-        dismissable = true,
     }
-    UIManager:show(dialog)
+
+    ActionSheet.show{
+        name       = "sui_win_group_actions",
+        title      = group.name,
+        icon       = "folder",
+        auto_close = true,
+        sections   = { ActionSheet.list(items) },
+    }
 end
 
 -- Wraps `content` in a widget reacting to tap and, when the owner module

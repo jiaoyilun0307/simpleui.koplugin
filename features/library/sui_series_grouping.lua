@@ -361,13 +361,11 @@ function SeriesGrouping.install()
         return _sg_orig_onMenuSelect(fc, item)
     end
 
-    -- Long-press on a series-group shows a dialog with cover picker and
-    -- "Create collection". Cover picker is hidden in quad mode.
+    -- Long-press on a series group opens a sheet with the cover picker and
+    -- "Create collection". The cover picker is hidden in quad mode.
     FileChooser.onMenuHold = function(fc, item)
         if item and item.is_series_group and SeriesGrouping.isEnabled() then
             if not FolderCovers.isEnabled() then return true end
-            local UIManager    = require("ui/uimanager")
-            local ButtonDialog = require("ui/widget/buttondialog")
 
             local in_list_view    = fc and fc.display_mode_type == "list"
             local cover_available = not (
@@ -376,41 +374,34 @@ function SeriesGrouping.install()
 
             local series_name = (item.text or ""):gsub("/$", "")
             local vpath       = item.path
-            local dialog
-            local buttons     = {}
+            local items       = {}
 
             if cover_available then
-                buttons[#buttons + 1] = {{
-                    text = _("Set folder cover"),
+                items[#items + 1] = {
+                    text     = _("Set folder cover"),
+                    sui_icon = "cover",
                     callback = function()
-                        UIManager:close(dialog)
                         local ok_bim, BookInfoManager = pcall(require, "bookinfomanager")
                         if ok_bim and BookInfoManager then
                             SeriesGrouping.openCoverPicker(vpath, fc, BookInfoManager)
                         end
                     end,
-                }}
+                }
             end
-
-            buttons[#buttons + 1] = {{
-                text = _("Create collection"),
-                callback = function()
-                    UIManager:close(dialog)
-                    SeriesGrouping.createCollection(vpath, series_name)
-                end,
-            }}
-
-            buttons[#buttons + 1] = {{
-                text     = _("Cancel"),
-                callback = function() UIManager:close(dialog) end,
-            }}
-
-            dialog = ButtonDialog:new{
-                title       = series_name,
-                title_align = "center",
-                buttons     = buttons,
+            items[#items + 1] = {
+                text     = _("Create collection"),
+                sui_icon = "collections",
+                callback = function() SeriesGrouping.createCollection(vpath, series_name) end,
             }
-            UIManager:show(dialog)
+
+            local ActionSheet = require("engines/sui_action_sheet")
+            ActionSheet.show{
+                name       = "sui_win_series_actions",
+                title      = series_name,
+                icon       = "folder",
+                auto_close = true,
+                sections   = { ActionSheet.list(items) },
+            }
             return true
         end
         return _sg_orig_onMenuHold(fc, item)

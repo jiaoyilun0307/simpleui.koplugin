@@ -118,6 +118,7 @@ function M.show(opts)
 
     local win = SUIWindow:new{
         name          = "sui_win_heatmap",
+        icon          = "calendar_select",
         on_back       = opts.on_back,
         title         = _("Reading Heatmap"),
         height        = math.floor((select(2, UI.getPortraitDims())) * 23 / 30),

@@ -78,6 +78,8 @@ Open the existing `.po` file for your language, correct or complete the `msgstr`
 
 ## Contributing code
 
+By submitting a contribution you agree that it is licensed under the project's license, GPL-3.0-or-later (see [LICENSE](LICENSE)).
+
 ### Setup
 
 SimpleUI is a standard KOReader plugin written in Lua. No build system or compilation step is required. The plugin runs directly from the source files.
@@ -209,7 +211,7 @@ If you are adding a new feature that requires user-supplied files, always resolv
 
 Run `make build` from inside the plugin folder. This produces `simpleui.koplugin.zip` in the parent directory.
 
-The Makefile automatically excludes development-only files (README, LICENSE, Makefile itself, `.git`, etc.) and the contents of the user data directories (`icons/custom/` and `desktop_modules/custom_quotes/`) so that user files on a device are never overwritten by an update.
+The Makefile automatically excludes development-only files (README, Makefile itself, `.git`, etc.) and the contents of the user data directories (`icons/custom/` and `desktop_modules/custom_quotes/`) so that user files on a device are never overwritten by an update.
 
 ### File structure
 

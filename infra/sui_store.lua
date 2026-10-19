@@ -91,14 +91,44 @@ function SUISettings:get(key, default_value)
     return _getStore():readSetting(key, default_value)
 end
 
---- Write a value and persist to disk immediately.
---- Passing nil is equivalent to SUISettings:del(key).
-function SUISettings:set(key, value)
+-- Incremented on every write. Derived caches compare it against the value
+-- they were built at, so a single integer check tells them whether any
+-- setting changed.
+local _generation = 0
+
+local function _write(key, value)
+    _generation = _generation + 1
     if value == nil then
         _getStore():delSetting(key)
     else
         _getStore():saveSetting(key, value)
     end
+end
+
+--- Number of writes since startup. Changes whenever any setting changes.
+function SUISettings:generation()
+    return _generation
+end
+
+--- Wraps a function of no arguments so that its result is recomputed only
+--- when a setting has changed since the previous call. Meant for values
+--- derived from settings and read on hot paths such as widget painting.
+function SUISettings.memoize(fn)
+    local value, built_at
+    return function()
+        if built_at ~= _generation then
+            value = fn()
+            -- Taken after the call: reading a setting may migrate a stored value.
+            built_at = _generation
+        end
+        return value
+    end
+end
+
+--- Write a value and persist to disk immediately.
+--- Passing nil is equivalent to SUISettings:del(key).
+function SUISettings:set(key, value)
+    _write(key, value)
     -- LuaSettings:saveSetting() only updates in-memory data; KOReader does
     -- NOT automatically flush our file on exit (only G_reader_settings gets
     -- that treatment).  Flush here so every write is immediately durable.
@@ -119,23 +149,18 @@ end
 --- (e.g. SimpleUIPlugin:onSuspend() in main.lua already does this for all
 --- pending settings, including any written via this method).
 function SUISettings:setNoFlush(key, value)
-    if value == nil then
-        _getStore():delSetting(key)
-    else
-        _getStore():saveSetting(key, value)
-    end
-    -- Deliberately no :flush() call here — see docstring above.
+    _write(key, value)
 end
 
 --- Delete a value from the in-memory settings table WITHOUT flushing to disk.
 --- Companion to :setNoFlush() for the same latency-sensitive use case.
 function SUISettings:delNoFlush(key)
-    _getStore():delSetting(key)
+    _write(key, nil)
 end
 
 --- Delete a key and persist to disk immediately.
 function SUISettings:del(key)
-    _getStore():delSetting(key)
+    _write(key, nil)
     if _store then _store:flush() end
 end
 
@@ -164,23 +189,9 @@ end
 -- Compatibility aliases — G_reader_settings-style method names.
 -- ---------------------------------------------------------------------------
 
-function SUISettings:readSetting(key, default_value)
-    return _getStore():readSetting(key, default_value)
-end
-
-function SUISettings:saveSetting(key, value)
-    if value == nil then
-        _getStore():delSetting(key)
-    else
-        _getStore():saveSetting(key, value)
-    end
-    if _store then _store:flush() end
-end
-
-function SUISettings:delSetting(key)
-    _getStore():delSetting(key)
-    if _store then _store:flush() end
-end
+SUISettings.readSetting = SUISettings.get
+SUISettings.saveSetting = SUISettings.set
+SUISettings.delSetting  = SUISettings.del
 
 --- Iterate over all key/value pairs currently stored in SUISettings.
 --- Returns a stateless iterator compatible with generic for:

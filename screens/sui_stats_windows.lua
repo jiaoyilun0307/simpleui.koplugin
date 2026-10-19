@@ -1240,6 +1240,7 @@ function StatsWindows.showFinishedBooksDialog(opts)
 
     local win = SUIWindow:new{
         name           = "sui_win_reading_history",
+        icon           = "chart",
         on_back        = opts.on_back,
         title          = titleFn,
         screen_titles  = {
@@ -1262,8 +1263,7 @@ end
 -- showReadingInsightsWindow
 -- ===========================================================================
 -- A SUIWindow that surfaces historical reading insights drawn from the
--- statistics SQLite database (the same source used by the
--- "reading-insights-popup" userpatch by quanganhdo / modified version).
+-- statistics SQLite database.
 -- ===========================================================================
 
 
@@ -2590,6 +2590,7 @@ function StatsWindows.showReadingInsightsWindow(opts)
 
     local win = SUIWindow:new{
         name          = "sui_win_reading_insights",
+        icon          = "chart",
         on_back       = opts.on_back,
         title         = titleFn,
         -- Matches the Settings window's height (SUIWindow's own default,
@@ -3255,6 +3256,7 @@ function StatsWindows.showStreakManagerWindow(opts)
 
     local win = SUIWindow:new{
         name          = "sui_win_streak_manager",
+        icon          = "streak",
         on_back       = opts.on_back,
         title         = function() return _("Streak") end,
         -- height is now the max ceiling, not the fixed size: auto_height_per_page
@@ -3693,6 +3695,7 @@ function StatsWindows.showBookStatsFromFile(opts)
 
     local win = SUIWindow:new{
         name     = "sui_win_book_stats_standalone",
+        icon     = "chart",
         on_back  = opts.on_back,
         title    = _("Book Statistics"),
         -- Matches the Settings window's height (SUIWindow's own default,

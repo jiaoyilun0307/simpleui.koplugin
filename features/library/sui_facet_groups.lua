@@ -137,6 +137,7 @@ function FacetGroups.describe(group)
         extra_actions = function()
             return {{
                 text     = _("Create collection"),
+                sui_icon = "collections",
                 callback = function()
                     GroupActions.createCollection{
                         suggested_name = group.name,

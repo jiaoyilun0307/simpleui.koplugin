@@ -551,14 +551,18 @@ local function stepBar(channel, width, height, value, ctx)
     }
 end
 
--- Slider with a knob; it handles its own taps and drags.
+-- Slider with a knob that carries the value; it handles its own taps and
+-- drags.
 local function sliderBar(channel, width, height, value, ctx)
+    local face, bold = panelFace(sliderFontSize())
     local widget = _SUISlider():new{
         width      = width,
         height     = height,
         min        = channel.min,
         max        = channel.max,
         value      = value,
+        face       = face,
+        bold       = bold,
         on_change  = function(v, dragging) ctx.commit(v, true, dragging) end,
         on_release = ctx.release,
     }
@@ -599,7 +603,8 @@ local MINIMAL_SPACE_DP = 10  -- tap area a Minimal control adds beside its conte
 -- of the menu and the `actions` of the three controls (minus, plus, top) and
 -- returns them with the `gap` kept between the bar and its neighbours, the
 -- `top_gap` before the top control, the `height` of the row and, when the
--- style draws its own bar, the `bar` builder.
+-- style draws its own bar, the `bar` builder. A style without a top control
+-- leaves it out; one whose bar shows the value sets `value_on_bar`.
 local CONTROLS = {
     -- Framed buttons.
     [SLIDER_STYLE.CLASSIC] = function(show_parent, actions)
@@ -623,53 +628,39 @@ local CONTROLS = {
             height  = minus:getSize().h,
         }
     end,
-    -- Drawn symbols and bold text flush with the ends of the row. The tap areas
-    -- of the controls fill the spaces between the visible items, which are all
-    -- twice MINIMAL_SPACE_DP.
+    -- Drawn symbols flush with the ends of the row, around a bar whose knob
+    -- carries the value. The tap areas of the controls fill the spaces between
+    -- the visible items, which are all twice MINIMAL_SPACE_DP.
     [SLIDER_STYLE.MINIMAL] = function(_show_parent, actions)
-        local Control    = _SUISlider().Control
-        local face, bold = panelFace(sliderFontSize(), true)
-        local space      = Screen:scaleBySize(MINIMAL_SPACE_DP)
-        local height     = Screen:scaleBySize(MINIMAL_ROW_DP)
+        local Control = _SUISlider().Control
+        local space   = Screen:scaleBySize(MINIMAL_SPACE_DP)
+        local height  = Screen:scaleBySize(MINIMAL_ROW_DP)
         local function control(fields)
-            fields.face, fields.bold = face, bold
             fields.height, fields.inset = height, space
             return Control:new(fields)
         end
         return {
-            minus   = control{ symbol = "minus", edge = "left", callback = actions.minus },
-            plus    = control{ symbol = "plus", callback = actions.plus },
-            top     = control{ text = _("Max"), edge = "right", callback = actions.top },
-            gap     = space,
-            top_gap = 0,
-            height  = height,
-            bar     = sliderBar,
+            minus        = control{ symbol = "minus", edge = "left", callback = actions.minus },
+            plus         = control{ symbol = "plus", edge = "right", callback = actions.plus },
+            gap          = space,
+            top_gap      = 0,
+            height       = height,
+            value_on_bar = true,
+            bar          = sliderBar,
         }
     end,
 }
 
--- A left-aligned caption, a bold name followed by its value in regular weight,
--- above a row made of a "−" control, the bar, a "+" control and a "Max"
--- control, `width` wide.
+-- A left-aligned caption, a bold name followed by its value in regular weight
+-- (or the name alone when the bar shows the value), above a row made of a "−"
+-- control, the bar, a "+" control and, in most styles, a "Max" control, `width`
+-- wide.
 -- Registers the bar's own tap handler, if any, in `refs`.
 local function buildSlider(touch_menu, width, refs, channel)
     local show_parent = touch_menu.show_parent
     local current     = channel.read()
 
-    local font_size = sliderFontSize()
-    local name_face, name_bold   = panelFace(font_size, true)
-    local value_face, value_bold = panelFace(font_size)
-    local caption = _SUISlider().Caption:new{
-        name        = channel.label,
-        value       = tostring(current),
-        width       = width,
-        gap         = Screen:scaleBySize(6),
-        name_face   = name_face,
-        name_bold   = name_bold,
-        value_face  = value_face,
-        value_bold  = value_bold,
-    }
-    local bar -- assigned below, used by apply
+    local caption, bar -- assigned below, used by apply
 
     -- Applies `value` to the light and to the widgets. `shown`: the bar already
     -- displays the value. `dragging`: the value comes from a drag, so the
@@ -693,8 +684,24 @@ local function buildSlider(touch_menu, width, refs, channel)
         plus  = function() apply(current + 1) end,
         top   = function() apply(channel.max) end,
     })
-    local bar_w = width - 2 * controls.gap - controls.top_gap
-        - controls.minus:getSize().w - controls.plus:getSize().w - controls.top:getSize().w
+
+    local font_size = sliderFontSize()
+    local name_face, name_bold   = panelFace(font_size, true)
+    local value_face, value_bold = panelFace(font_size)
+    caption = _SUISlider().Caption:new{
+        name        = channel.label,
+        value       = tostring(current),
+        width       = width,
+        gap         = Screen:scaleBySize(6),
+        name_face   = name_face,
+        name_bold   = name_bold,
+        value_face  = not controls.value_on_bar and value_face or nil,
+        value_bold  = value_bold,
+    }
+
+    local top = controls.top
+    local bar_w = width - 2 * controls.gap - controls.minus:getSize().w - controls.plus:getSize().w
+    if top then bar_w = bar_w - controls.top_gap - top:getSize().w end
     bar = (controls.bar or channel.bar)(channel, bar_w, controls.height, current, {
         commit      = apply,
         release     = function() caption:refresh() end,
@@ -703,20 +710,25 @@ local function buildSlider(touch_menu, width, refs, channel)
     if bar.tap then table.insert(refs.taps, bar.tap) end
 
     local function span(w) return HorizontalSpan:new{ width = w } end
+    -- A bar that carries its value above it is taller than the controls: they
+    -- sit on the bar row at its bottom.
+    local row = HorizontalGroup:new{
+        align = controls.value_on_bar and "bottom" or "center",
+        controls.minus,
+        span(controls.gap),
+        bar.widget,
+        span(controls.gap),
+        controls.plus,
+    }
+    if top then
+        table.insert(row, span(controls.top_gap))
+        table.insert(row, top)
+    end
     return VerticalGroup:new{
         align = "left",
         caption,
         VerticalSpan:new{ width = Screen:scaleBySize(2) },
-        HorizontalGroup:new{
-            align = "center",
-            controls.minus,
-            span(controls.gap),
-            bar.widget,
-            span(controls.gap),
-            controls.plus,
-            span(controls.top_gap),
-            controls.top,
-        },
+        row,
     }
 end
 

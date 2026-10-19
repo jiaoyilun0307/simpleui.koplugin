@@ -59,6 +59,7 @@ local _               = require("infra/sui_i18n").translate
 local Blitbuffer      = require("ffi/blitbuffer")
 local Device          = require("device")
 local RenderText       = require("ui/rendertext")
+local ffiutil          = require("ffi/util")
 local Screen          = Device.screen
 
 -- ---------------------------------------------------------------------------
@@ -326,9 +327,9 @@ end
 
 local _ICON_NIGHT_COLORS_KEY = "simpleui_style_icons_night_colors"
 
-function M.keepIconColorsInNight()
+M.keepIconColorsInNight = SUISettings.memoize(function()
     return SUISettings:isTrue(_ICON_NIGHT_COLORS_KEY)
-end
+end)
 
 function M.setKeepIconColorsInNight(on)
     SUISettings:set(_ICON_NIGHT_COLORS_KEY, on and true or false)
@@ -1054,8 +1055,6 @@ function M.makeMenuItems(plugin)
                         end
                     end,
                     type(slot.label) == "function" and slot.label() or slot.label,
-                    plugin,
-                    "_sysicon_picker_" .. slot.id,
                     true
                 )
             end,
@@ -1204,7 +1203,7 @@ function M.sui_build_system_icons(plugin, ctx_menu, ctx)
                                     end
                                     ctx.repaint()
                                 end)
-                            end, label, plugin, "_sysicon_picker_" .. slot.id, slot.group ~= "sui_tabbar_icons")
+                            end, label, slot.group ~= "sui_tabbar_icons")
                         end
                     }
                 end
@@ -1403,16 +1402,67 @@ function M.glyphFace(box_px)
     return M.pxFace(M.FACE_ICONS, box_px * M.GLYPH_RATIO)
 end
 
+--- Horizontal extent of the ink of a single character, relative to the pen
+--- origin it is drawn from: `left` is the offset of its leftmost pixel and
+--- `width` the ink width. Glyphs sit inside side bearings, so aligning ink to
+--- an edge means shifting the glyph by these values rather than by its
+--- advance width. Returns nil when the font engine cannot render `char`.
+--- @param face table   font face
+--- @param char string  one UTF-8 encoded character
+--- @return table|nil   { left, width }
+function M.glyphInk(face, char)
+    local ok, ink = pcall(function()
+        local glyph = RenderText:getGlyph(face, ffiutil.utf8charcode(char))
+        return { left = glyph.l, width = glyph.bb:getWidth() }
+    end)
+    return ok and ink or nil
+end
+
 --- Face for an initial letter drawn inside a square box of `box_px` pixels.
 --- @param face string|nil  font alias, defaults to M.FACE_REGULAR
 function M.letterFace(box_px, face)
     return M.pxFace(face or M.FACE_REGULAR, box_px * M.LETTER_RATIO)
 end
 
--- Corner radius of an icon preview, relative to its side.
+-- Corner radius of an icon tile, relative to its side.
 local PREVIEW_RADIUS_RATIO = 0.22
--- Icon side inside the preview frame, relative to the frame side.
+-- Icon side inside the tile, relative to the tile side.
 local PREVIEW_ICON_RATIO   = 0.7
+
+-- Square tile of `size` pixels with a rounded gray border, `content` centred
+-- inside it.
+local function frameTile(size, content)
+    local FrameContainer  = require("ui/widget/container/framecontainer")
+    local CenterContainer = require("ui/widget/container/centercontainer")
+    local Geom            = require("ui/geometry")
+
+    local inner = size - M.BORDER_SZ * 2
+    return FrameContainer:new{
+        dimen      = Geom:new{ w = size, h = size },
+        radius     = math.floor(size * PREVIEW_RADIUS_RATIO + 0.5),
+        bordersize = M.BORDER_SZ,
+        background = M.COLOR.surface,
+        color      = M.COLOR.gray,
+        padding    = 0,
+        CenterContainer:new{
+            dimen = Geom:new{ w = inner, h = inner },
+            content,
+        },
+    }
+end
+
+--- Framed square tile around the symbol glyph `key` (an M.icon key).
+--- @param size number  tile side in pixels
+--- @param key string
+--- @return table       widget
+function M.buildGlyphTile(size, key)
+    return frameTile(size, require("ui/widget/textwidget"):new{
+        text    = M.icon(key),
+        face    = M.glyphFace(math.floor(size * PREVIEW_ICON_RATIO)),
+        fgcolor = M.COLOR.text_primary,
+        padding = 0,
+    })
+end
 
 --- Framed square preview of an icon. The content is, in order of preference:
 --- the image file or symbol glyph `opts.icon` refers to, the native icon named
@@ -1421,15 +1471,11 @@ local PREVIEW_ICON_RATIO   = 0.7
 --- @param opts table   { icon, ko_native, label }
 --- @return table       widget
 function M.buildIconPreview(size, opts)
-    local Config          = require("infra/sui_config")
-    local FrameContainer  = require("ui/widget/container/framecontainer")
-    local CenterContainer = require("ui/widget/container/centercontainer")
-    local TextWidget      = require("ui/widget/textwidget")
-    local Geom            = require("ui/geometry")
+    local Config     = require("infra/sui_config")
+    local TextWidget = require("ui/widget/textwidget")
 
     local icon      = opts.icon
     local icon_size = math.floor(size * PREVIEW_ICON_RATIO)
-    local inner     = size - M.BORDER_SZ * 2
     local content
 
     local glyph = Config.nerdIconChar(icon)
@@ -1470,18 +1516,7 @@ function M.buildIconPreview(size, opts)
         }
     end
 
-    return FrameContainer:new{
-        dimen      = Geom:new{ w = size, h = size },
-        radius     = math.floor(size * PREVIEW_RADIUS_RATIO + 0.5),
-        bordersize = M.BORDER_SZ,
-        background = M.COLOR.surface,
-        color      = M.COLOR.gray,
-        padding    = 0,
-        CenterContainer:new{
-            dimen = Geom:new{ w = inner, h = inner },
-            content,
-        },
-    }
+    return frameTile(size, content)
 end
 
 -- ---------------------------------------------------------------------------
@@ -1494,7 +1529,14 @@ end
 -- Categories:
 --   Navigation — chevron, back, more
 --   Actions    — check, uncheck, delete, edit, add, drag
---   State      — goal, stats
+--   State      — goal
+--   Book       — book_open, reset, collections, open_with, info, cover, ...
+--   File       — select, cut, copy, paste, convert, export, terminal
+--   Folder     — folder, home, shortcut, storage, import
+--   Browsing   — search, filter, sort, arrange, history, random
+--   Windows    — close, streak, bars, library, style, quick_actions
+--   Collection — collection_add, link, unlink, remove
+--   System     — power, restart, sleep, logout
 
 M.ICON = {
     -- Navigation
@@ -1522,7 +1564,6 @@ M.ICON = {
 
     -- State / Content
     goal     = "\u{E153}",   -- flag (reading goals)
-    stats    = "\u{E24B}",   -- bar_chart
     clock    = "\u{E385}",
     page     = "\u{F40E}",
     book     = "\u{F401}",
@@ -1532,6 +1573,74 @@ M.ICON = {
     highlights = "\u{EE6B}",
     notes    = "\u{EAEC}",
     arrow_right = "\u{F178}",
+
+    -- Book actions
+    book_open   = "\u{E28B}",  -- open book (outline)
+    reset       = "\u{EB52}",  -- circular arrow
+    collections = "\u{E257}",  -- stacked layers
+    open_with   = "\u{EACB}",  -- square with outgoing arrow
+    info        = "\u{F449}",  -- circled "i"
+    cover       = "\u{F03E}",  -- framed picture
+    description = "\u{F40E}",  -- text document
+    bookmark    = "\u{F097}",  -- bookmark (outline)
+    chart       = "\u{F080}",  -- bar chart with axes
+    settings    = "\u{F423}",  -- gear
+    author      = "\u{E712}",  -- person (outline)
+    series      = "\u{E7BA}",  -- stacked books
+    tags        = "\u{EBF8}",  -- tag
+    plugin      = "\u{EB30}",  -- puzzle piece
+    group       = "\u{E73A}",  -- 3x3 grid of squares
+
+    -- Folder actions
+    folder      = "\u{E955}",  -- folder (outline)
+    new_folder  = "\u{E956}",  -- folder with plus
+    home        = "\u{ED9F}",  -- house (outline)
+    home_set    = "\u{ECF7}",  -- house with map marker
+    shortcut    = "\u{EBD1}",  -- star (outline)
+    shortcut_off = "\u{EBD0}", -- crossed star
+    storage     = "\u{EB78}",  -- memory card
+    import      = "\u{E27D}",  -- document with incoming arrow
+
+    -- File actions
+    select      = "\u{EB84}",  -- dotted selection box
+    cut         = "\u{F0C4}",  -- scissors
+    copy        = "\u{F0C5}",  -- overlapping documents
+    paste       = "\u{E891}",  -- clipboard
+    convert     = "\u{EBE0}",  -- swap arrows
+    export      = "\u{E27C}",  -- document with outgoing arrow
+    terminal    = "\u{F120}",  -- prompt
+    select_all  = "\u{EB85}",  -- full selection box
+    deselect    = "\u{EB87}",  -- crossed selection box
+    exit        = "\u{E905}",  -- door with outgoing arrow
+    list        = "\u{E978}",  -- bulleted list
+
+    -- Browsing
+    search      = "\u{F002}",  -- magnifier
+    filter      = "\u{E932}",  -- funnel (outline)
+    sort        = "\u{EBB9}",  -- sorted lines
+    arrange     = "\u{E8DA}",  -- drag handle
+    history     = "\u{E9D9}",  -- clock with arrow
+    random      = "\u{E270}",  -- die
+
+    -- Windows
+    close       = "\u{E855}",  -- cross
+    streak      = "\u{E937}",  -- flame
+    bars        = "\u{EDF9}",  -- page layout with footer
+    library     = "\u{EA30}",  -- shelves
+    style       = "\u{EAD7}",  -- paint palette
+    quick_actions = "\u{EDD3}", -- lightning bolt (outline)
+
+    -- Collections
+    collection_add = "\u{EA33}", -- library with plus
+    link        = "\u{EA36}",  -- chain link
+    unlink      = "\u{F127}",  -- broken chain link
+    remove      = "\u{E859}",  -- crossed circle (outline)
+
+    -- System
+    power       = "\u{EB24}",  -- power symbol
+    restart     = "\u{EE07}",  -- circular arrow around a play mark
+    sleep       = "\u{EBB1}",  -- crescent with z
+    logout      = "\u{EA42}",  -- door with outgoing arrow
 }
 
 --- Returns the icon glyph named `name`, or "" if it doesn't exist.

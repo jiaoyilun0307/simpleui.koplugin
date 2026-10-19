@@ -6,7 +6,7 @@
 -- Each accessor caches its result in a module-local upvalue; subsequent calls
 -- are a single nil-check + table field read, with zero I/O.
 local _FrameContainer, _CenterContainer, _HorizontalGroup, _VerticalGroup
-local _VerticalSpan, _LineWidget, _OverlapGroup, _ImageWidget
+local _VerticalSpan, _LineWidget, _OverlapGroup, _ImageWidget, _HorizontalSpan
 local _Geom
 local function FrameContainer()  _FrameContainer  = _FrameContainer  or require("ui/widget/container/framecontainer");  return _FrameContainer  end
 local function CenterContainer() _CenterContainer = _CenterContainer or require("ui/widget/container/centercontainer"); return _CenterContainer end
@@ -16,6 +16,7 @@ local function VerticalSpan()    _VerticalSpan    = _VerticalSpan    or require(
 local function LineWidget()      _LineWidget      = _LineWidget      or require("ui/widget/linewidget");                return _LineWidget      end
 local function OverlapGroup()    _OverlapGroup    = _OverlapGroup    or require("ui/widget/overlapgroup");              return _OverlapGroup    end
 local function ImageWidget()     _ImageWidget     = _ImageWidget     or require("ui/widget/imagewidget");               return _ImageWidget     end
+local function HorizontalSpan() _HorizontalSpan  = _HorizontalSpan  or require("ui/widget/horizontalspan");            return _HorizontalSpan  end
 local function Geom()            _Geom            = _Geom            or require("ui/geometry");                         return _Geom            end
 local Blitbuffer      = require("ffi/blitbuffer")
 local UIManager       = require("ui/uimanager")
@@ -218,7 +219,13 @@ end
 -- buildTabCell so all references resolve correctly.
 local _vspan_icon_top = nil
 local _vspan_icon_txt = nil
+
+-- Bumped whenever the layout settings change. A bar built under an older
+-- generation is rebuilt whole instead of being updated in place.
+local _layout_gen = 0
+
 function M.invalidateDimCache()
+    _layout_gen      = _layout_gen + 1
     _dim             = {}
     _vspan_icon_top  = nil
     _vspan_icon_txt  = nil
@@ -581,8 +588,9 @@ end
 -- Updates the Prev/Next arrow cells of an existing navpager bar in-place.
 -- Mutates only ImageWidget().dim and TextWidget().fgcolor on the two arrow cells
 -- rather than rebuilding the entire bar (~37 widget allocations per rebuild).
--- Returns true when the update was applied, false when the bar structure is
--- missing or unrecognised (caller must fall back to a full replaceBar).
+-- Returns `applied` (false when the bar structure is missing or unrecognised,
+-- so the caller must fall back to a full replaceBar) and `changed` (whether
+-- the arrows differ from what is on screen).
 function M.updateNavpagerArrows(widget, has_prev, has_next)
     local bar = widget._navbar_bar
     if not bar then return false end
@@ -590,7 +598,7 @@ function M.updateNavpagerArrows(widget, has_prev, has_next)
     -- Arrows are always visible when navpager is enabled.
     if not bar._navpager_has_arrows then return false end
 
-    local hg = bar._navpager_hg or bar[1]
+    local hg = bar._tab_row
     if not hg then return false end
     local prev_cc = hg[1]     -- slot 1 = Prev arrow CenterContainer
     local next_cc = hg[#hg]   -- last slot = Next arrow CenterContainer
@@ -601,7 +609,7 @@ function M.updateNavpagerArrows(widget, has_prev, has_next)
     end
     -- Skip all work when the visible state has not changed.
     if prev_cc._arrow_enabled == has_prev and next_cc._arrow_enabled == has_next then
-        return true
+        return true, false
     end
     local dimmed = _navpagerColor()
     local function _apply(cc, enabled)
@@ -617,7 +625,7 @@ function M.updateNavpagerArrows(widget, has_prev, has_next)
     end
     _apply(prev_cc, has_prev)
     _apply(next_cc, has_next)
-    return true
+    return true, true
 end
 
 -- Floating layout: the tab row in a rounded box inset from the screen sides.
@@ -657,10 +665,8 @@ local function _buildFloatingBar(hg_args, is_navpager, surface)
             fc,
         },
     }
-    if is_navpager then
-        wrapper._navpager_has_arrows = true
-        wrapper._navpager_hg = hg
-    end
+    wrapper._tab_row = hg
+    wrapper._navpager_has_arrows = is_navpager or nil
     return wrapper
 end
 
@@ -706,20 +712,41 @@ local function _buildFullWidthBar(hg_args, is_navpager, surface)
         top_fc,
         fc,
     }
-    if is_navpager then
-        wrapper._navpager_has_arrows = true
-        wrapper._navpager_hg = hg
-    end
+    wrapper._tab_row = hg
+    wrapper._navpager_has_arrows = is_navpager or nil
     return _applyNavbarFill(wrapper, surface)
 end
 
--- Assembles the final bar container for the current layout and surface.
-local function _buildBarContainer(hg_args, is_navpager)
-    local surface = _navbarSurface()
-    if _isFullWidth() then
-        return _buildFullWidthBar(hg_args, is_navpager, surface)
+-- Appends the cells of `tab_config` to `hg_args`. Cell i takes width slot
+-- `first_slot + i - 1`; a gap in the config leaves an empty slot. Returns the
+-- cell records that setActiveTab uses to update the bar in place.
+local function _appendTabCells(hg_args, tab_config, count, active_action_id, widths, first_slot, mode)
+    local cells = {}
+    for pos = 1, count do
+        local action_id = tab_config[pos]
+        local width     = widths[first_slot + pos - 1]
+        if action_id then
+            hg_args[#hg_args + 1] = M.buildTabCell(action_id, action_id == active_action_id, width, mode)
+            cells[#cells + 1] = { id = action_id, pos = pos, width = width, index = #hg_args }
+        else
+            hg_args[#hg_args + 1] = HorizontalSpan():new{ width = width }
+        end
     end
-    return _buildFloatingBar(hg_args, is_navpager, surface)
+    return { cells = cells, active = active_action_id, mode = mode, gen = _layout_gen }
+end
+
+-- Assembles the final bar container for the current layout and surface.
+-- `tab_state` (from _appendTabCells) is kept on the bar for in-place updates.
+local function _buildBarContainer(hg_args, is_navpager, tab_state)
+    local surface = _navbarSurface()
+    local bar
+    if _isFullWidth() then
+        bar = _buildFullWidthBar(hg_args, is_navpager, surface)
+    else
+        bar = _buildFloatingBar(hg_args, is_navpager, surface)
+    end
+    bar._tab_state = tab_state
+    return bar
 end
 
 -- Assembles the full bottom bar FrameContainer from all tab cells.
@@ -739,20 +766,16 @@ function M.buildBarWidget(active_action_id, tab_config, num_tabs, mode)
             has_prev, has_next)
     end
 
-    local widths = M.getTabWidths(num_tabs, usable_w)
-    for i = 1, num_tabs do
-        local action_id = tab_config[i]
-        hg_args[#hg_args + 1] = M.buildTabCell(action_id, action_id == active_action_id, widths[i], mode)
-    end
+    local widths    = M.getTabWidths(num_tabs, usable_w)
+    local tab_state = _appendTabCells(hg_args, tab_config, num_tabs, active_action_id, widths, 1, mode)
 
-    return _buildBarContainer(hg_args, false)
+    return _buildBarContainer(hg_args, false, tab_state)
 end
 
 -- Navpager-mode bar with explicit has_prev / has_next flags.
 -- Called both from buildBarWidget (which resolves flags via getNavpagerState)
 -- and from the updatePageInfo hook (which passes pre-snapshotted values).
 function M.buildBarWidgetWithArrows(active_action_id, tab_config, mode, has_prev, has_next)
-    local HorizontalSpan = require("ui/widget/horizontalspan")
     mode = mode or Config.getNavbarMode()
     local screen_w  = Screen:getWidth()
     local side_m    = _UI().SIDE_M()
@@ -768,20 +791,12 @@ function M.buildBarWidgetWithArrows(active_action_id, tab_config, mode, has_prev
     hg_args[#hg_args + 1] = M.buildNavpagerArrowCell(true, has_prev, widths[1], mode)
 
     -- Centre tabs
-    for i = 1, center_n do
-        local action_id = tab_config[i]
-        local w = widths[i + 1]
-        if action_id then
-            hg_args[#hg_args + 1] = M.buildTabCell(action_id, action_id == active_action_id, w, mode)
-        else
-            hg_args[#hg_args + 1] = HorizontalSpan:new{ width = w }
-        end
-    end
+    local tab_state = _appendTabCells(hg_args, tab_config, center_n, active_action_id, widths, 2, mode)
 
     -- Next arrow
     hg_args[#hg_args + 1] = M.buildNavpagerArrowCell(false, has_next, widths[total_n], mode)
 
-    return _buildBarContainer(hg_args, true)
+    return _buildBarContainer(hg_args, true, tab_state)
 end
 
 -- Builds a bottom bar identical to buildBarWidget but with a keyboard-focus
@@ -887,6 +902,92 @@ function M.replaceBar(widget, new_bar, tabs)
     widget._navbar_bar = new_bar
 
     if tabs then widget._navbar_tabs = tabs end
+end
+
+-- Moves the active indicator of `bar` to `action_id` by rebuilding only the
+-- cell that loses it and the cell that gains it. Cells keep their size, so
+-- the row layout stays valid.
+-- Returns `applied` (false when the bar was built for another configuration
+-- and must be rebuilt whole) and `changed` (whether the indicator moved).
+local function _swapActiveCells(bar, action_id, tabs)
+    local state = bar._tab_state
+    if not (state and state.gen == _layout_gen and state.mode == Config.getNavbarMode()
+            and #state.cells == #tabs) then
+        return false
+    end
+    local prev_cell, next_cell
+    for _, cell in ipairs(state.cells) do
+        if tabs[cell.pos] ~= cell.id then return false end
+        if cell.id == state.active then prev_cell = cell end
+        if cell.id == action_id    then next_cell = cell end
+    end
+    if state.active == action_id then return true, false end
+
+    local row = bar._tab_row
+    if prev_cell then
+        row[prev_cell.index] = M.buildTabCell(prev_cell.id, false, prev_cell.width, state.mode)
+    end
+    if next_cell then
+        row[next_cell.index] = M.buildTabCell(next_cell.id, true, next_cell.width, state.mode)
+    end
+    state.active = action_id
+    return true, prev_cell ~= nil or next_cell ~= nil
+end
+
+-- Makes `action_id` the active tab of the bar on `widget`, without repainting.
+-- Returns true when the bar on screen changed.
+function M.setActiveTab(widget, action_id, tabs)
+    tabs = tabs or Config.loadTabConfig()
+    if not SUISettings:nilOrTrue("simpleui_bar_enabled") then
+        M.replaceBar(widget, nil, tabs)
+        return false
+    end
+    local bar = widget._navbar_bar
+    if bar and widget._navbar_container
+            and widget._navbar_container[widget._navbar_bar_idx] == bar then
+        local applied, changed = _swapActiveCells(bar, action_id, tabs)
+        if applied then
+            widget._navbar_tabs = tabs
+            if Config.isNavpagerEnabled() then
+                local _, arrows_changed = M.updateNavpagerArrows(widget, Config.getNavpagerState())
+                changed = changed or arrows_changed or false
+            end
+            return changed
+        end
+    end
+    M.replaceBar(widget, M.buildBarWidget(action_id, tabs), tabs)
+    return true
+end
+
+-- Repaints the strip of `widget` that holds the bar. The widget is repainted
+-- as a whole, but the screen refresh is limited to the strip.
+function M.repaintBar(widget)
+    local bar_h = M.TOTAL_H()
+    if bar_h == 0 then return end
+    UIManager:setDirty(widget, "ui", Geom():new{
+        x = 0, y = Screen:getHeight() - bar_h, w = Screen:getWidth(), h = bar_h,
+    })
+end
+
+-- setActiveTab, then repaints the bar when its indicator moved.
+function M.showActiveTab(widget, action_id, tabs)
+    if M.setActiveTab(widget, action_id, tabs) then M.repaintBar(widget) end
+end
+
+-- Syncs the Prev/Next arrows of the bar on `widget` with the page state,
+-- rebuilding the bar when its structure does not allow an in-place update.
+-- Repaints the bar only when something changed.
+function M.syncNavpagerArrows(widget, active_action_id, has_prev, has_next)
+    local applied, changed = M.updateNavpagerArrows(widget, has_prev, has_next)
+    if applied then
+        if changed then M.repaintBar(widget) end
+        return
+    end
+    local tabs = Config.loadTabConfig()
+    M.replaceBar(widget,
+        M.buildBarWidgetWithArrows(active_action_id, tabs, Config.getNavbarMode(), has_prev, has_next),
+        tabs)
+    M.repaintBar(widget)
 end
 
 -- ---------------------------------------------------------------------------
@@ -1236,16 +1337,14 @@ function M.onTabTap(plugin, action_id, fm_self)
     -- from the action_id itself (own tab if present, else Library).
     local indicator_tab = _resolveActiveTab(action_id, tabs)
     plugin.active_action = indicator_tab
-    -- Skip the eager replaceBar when the homescreen is open: navigate() will
-    -- close the HS and call replaceBar+setDirty itself, so doing it here too
-    -- produces a redundant buildBarWidget call and extra repaint flushes.
+    -- Skip the eager indicator update when the homescreen is open: navigate()
+    -- closes the HS and updates the FM bar itself.
     -- Also skip for "homescreen": UIManager.show calls setActiveAndRefreshFM
     -- when the HS widget is shown, covering the bar update at that point.
-    -- Also skip when already_active: the indicator is already correct and
-    -- rebuilding the bar would allocate all widgets for an identical result.
+    -- Also skip when already_active: the indicator is already correct.
     -- Also skip when fm_self is an injected widget (Collections, History, etc.):
-    -- navigate() will close it and then call replaceBar on the real FM, so
-    -- painting the bar on the about-to-close widget is wasted work.
+    -- navigate() closes it and then updates the real FM, so painting the bar
+    -- on the about-to-close widget is wasted work.
     local hs_open = (function()
         local HS = package.loaded["screens/sui_homescreen"]
         return HS and HS._instance ~= nil
@@ -1253,10 +1352,7 @@ function M.onTabTap(plugin, action_id, fm_self)
     local injected_open = fm_self ~= plugin.ui and fm_self._navbar_injected
     if fm_self._navbar_container and action_id ~= "homescreen" and not hs_open
             and not already_active and not injected_open then
-        M.replaceBar(fm_self, M.buildBarWidget(indicator_tab, tabs), tabs)
-        -- setDirty(fm_self) covers the full screen and recurses into navbar_container.
-        -- The previous double-dirty (navbar_container + fm_self) queued two e-ink cycles.
-        UIManager:setDirty(fm_self, "ui")
+        M.showActiveTab(fm_self, indicator_tab, tabs)
     end
     -- When the homescreen is open, update its bar immediately so the active
     -- indicator reflects the new tab before navigate() closes the HS.
@@ -1267,8 +1363,7 @@ function M.onTabTap(plugin, action_id, fm_self)
         local HS = package.loaded["screens/sui_homescreen"]
         local hs_inst = HS and HS._instance
         if hs_inst and hs_inst._navbar_container then
-            M.replaceBar(hs_inst, M.buildBarWidget(indicator_tab, tabs), tabs)
-            UIManager:setDirty(hs_inst, "ui")
+            M.showActiveTab(hs_inst, indicator_tab, tabs)
         end
     end
     pcall(function() plugin:_updateFMHomeIcon() end)
@@ -1292,8 +1387,7 @@ local function setActiveAndRefreshFM(plugin, action_id, tabs)
     end
     local fm = plugin.ui
     if fm and fm._navbar_container then
-        M.replaceBar(fm, M.buildBarWidget(action_id, fm._navbar_tabs or tabs), tabs)
-        UIManager:setDirty(fm, "ui")
+        M.showActiveTab(fm, action_id, fm._navbar_tabs or tabs)
     end
     return action_id
 end
@@ -1474,8 +1568,7 @@ function M.navigate(plugin, action_id, fm_self, tabs, force)
         -- Update the FM bar. indicator_tab was resolved at the top of navigate()
         -- and already stored in plugin.active_action.
         if fm._navbar_container then
-            M.replaceBar(fm, M.buildBarWidget(indicator_tab, tabs), tabs)
-            UIManager:setDirty(fm, "ui")
+            M.showActiveTab(fm, indicator_tab, tabs)
         end
         -- For other actions, fall through with fm_self = fm.
         fm_self = fm
@@ -1507,8 +1600,7 @@ function M.navigate(plugin, action_id, fm_self, tabs, force)
     end
 
     if fm_self ~= fm and fm._navbar_container then
-        M.replaceBar(fm, M.buildBarWidget(_resolveActiveTab(action_id, tabs), tabs), tabs)
-        UIManager:setDirty(fm, "ui")
+        M.showActiveTab(fm, _resolveActiveTab(action_id, tabs), tabs)
     end
 
     -- Fully delegated to QA.execute.
@@ -1565,7 +1657,6 @@ end
 
 function M.setTempTabActive(plugin, action_id, active, prev_action)
     local tabs    = Config.loadTabConfig()
-    local mode    = Config.getNavbarMode()
     local show_id = active and action_id or (prev_action or tabs[1] or "home")
     local seen    = {}
 
@@ -1574,13 +1665,9 @@ function M.setTempTabActive(plugin, action_id, active, prev_action)
     local function updateWidget(w)
         if not w or not w._navbar_container or seen[w] then return end
         seen[w] = true
-        M.replaceBar(w, M.buildBarWidget(show_id, tabs, nil, mode), tabs)
-        -- setDirty(w) covers the full screen and recurses into navbar_container
-        -- (see the identical note in onTabTap). Dirtying just the sub-container
-        -- was the previous approach here and is unreliable once a dialog is
-        -- about to be shown on top of w: the indicator update could silently
-        -- get dropped instead of repainting alongside the dialog.
-        UIManager:setDirty(w, "ui")
+        -- Dirtying the widget (not the bar container) keeps the update
+        -- reliable when a dialog is about to be shown on top of it.
+        M.showActiveTab(w, show_id, tabs)
     end
 
     local UI    = require("infra/sui_core")
@@ -1701,8 +1788,7 @@ function M.restoreTabInFM(plugin, tabs, prev_action)
     local restored = (fm.file_chooser and Patches._resolveTabForPath(fm.file_chooser.path, t))
                   or prev_action or (t[1])
     plugin.active_action = restored
-    M.replaceBar(fm, M.buildBarWidget(restored, t), t)
-    UIManager:setDirty(fm, "ui")
+    M.showActiveTab(fm, restored, t)
 end
 
 -- ---------------------------------------------------------------------------

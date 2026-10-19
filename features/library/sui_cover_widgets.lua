@@ -559,19 +559,24 @@ end
 -- and shadow tile the staircase without gaps. Body and outline fade with
 -- depth, so the pile recedes.
 
--- Fade factors by depth, where depth 1 is the layer touching the front cover.
--- A factor of 1 gives the full colour, 0 gives none. The outline table sets the
--- layer count.
-local _PILE_BODY_FADE   = { 1.0, 0.58 }
-local _PILE_BORDER_FADE = { 0.80, 0.44 }
+-- Body and outline share one fade ramp that drops by a fixed amount per layer,
+-- so every card is a constant step lighter than the one in front of it. Depth 1
+-- is the layer touching the front cover.
+local _PILE_LAYERS    = 2
+local _PILE_FADE_STEP = 0.45
+local _PILE_STEP      = Screen:scaleBySize(5)
 
-local _PILE_LAYERS = #_PILE_BORDER_FADE
-local _PILE_STEP   = Screen:scaleBySize(5)
-
--- Body blackness before fading. Night mode inverts the frame after painting,
--- so the night base is lower to keep the body dark on screen.
-local _PILE_BODY_BASE       = 0.5
+-- Blackness of the body and the outline at depth 1, before fading. Night mode
+-- inverts the frame after painting, so the night body base is lower to keep the
+-- body dark on screen.
+local _PILE_BODY_BASE       = 0.38
 local _PILE_BODY_BASE_NIGHT = 0.15
+local _PILE_BORDER_BASE     = 0.64
+
+-- Fade factor of a layer: 1 gives its full base colour, 0 gives none.
+local function pileFade(depth)
+    return 1 - (depth - 1) * _PILE_FADE_STEP
+end
 
 -- Interpolates two colours in painted space: t = 1 gives `a`, t = 0 gives `b`.
 local function blend8(a, b, t)
@@ -581,12 +586,13 @@ end
 
 local function pileBodyColor(depth)
     local base = Screen.night_mode and _PILE_BODY_BASE_NIGHT or _PILE_BODY_BASE
-    return Blitbuffer.gray(base * _PILE_BODY_FADE[depth])
+    return Blitbuffer.gray(base * pileFade(depth))
 end
 
 -- The cover's own outline colour, faded towards the page colour.
 local function pileBorderColor(depth)
-    return blend8(SUIStyle.COLOR.text_primary, SUIStyle.COLOR.surface, _PILE_BORDER_FADE[depth])
+    return blend8(SUIStyle.COLOR.text_primary, SUIStyle.COLOR.surface,
+        _PILE_BORDER_BASE * pileFade(depth))
 end
 
 -- Offset between consecutive cards. Always wider than the outline, so the

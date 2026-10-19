@@ -33,58 +33,47 @@ local CoverOverrides = require("features/library/sui_cover_overrides")
 local GroupActions = {}
 
 function GroupActions.openCoverPicker(args)
-    local UIManager    = require("ui/uimanager")
-    local ButtonDialog = require("ui/widget/buttondialog")
-    local items = args.items or {}
-    if #items == 0 then
+    local books = args.items or {}
+    if #books == 0 then
         UI.Notify.toast(args.empty_message or _("No books found."), 2)
         return
     end
 
     local override_key = args.override_key
-    local menu          = args.menu
-    local cur_override  = CoverOverrides.get(override_key)
-
-    local picker
-    local buttons = {}
+    local cur_override = CoverOverrides.get(override_key)
 
     local function applyOverride(book_path)
-        UIManager:close(picker)
         if book_path then
             CoverOverrides.set(override_key, book_path)
         else
             CoverOverrides.clear(override_key)
         end
-        CoverOverrides.invalidateGridItem(menu, override_key)
+        CoverOverrides.invalidateGridItem(args.menu, override_key)
         if args.on_change then args.on_change() end
     end
 
-    buttons[#buttons + 1] = {{
-        text = (not cur_override and "\u{2713} " or "  ") .. _("Auto (first book)"),
+    local items = {{
+        text     = _("Auto (first book)"),
+        checked  = not cur_override,
         callback = function() applyOverride(nil) end,
     }}
-
-    for _, item in ipairs(items) do
+    for _i, item in ipairs(books) do
         local fp    = item.path
         local title = (item.title and item.title ~= "") and item.title
             or (fp:match("([^/]+)%.[^%.]+$") or fp)
-        buttons[#buttons + 1] = {{
-            text = ((cur_override == fp) and "\u{2713} " or "  ") .. title,
+        items[#items + 1] = {
+            text     = title,
+            checked  = cur_override == fp,
             callback = function() applyOverride(fp) end,
-        }}
+        }
     end
 
-    buttons[#buttons + 1] = {{
-        text = _("Cancel"),
-        callback = function() UIManager:close(picker) end,
-    }}
-
-    picker = ButtonDialog:new{
+    require("engines/sui_action_sheet").pick{
+        name  = "sui_win_cover_picker",
         title = args.title or _("Folder cover"),
-        title_align = "center",
-        buttons = buttons,
+        icon  = "cover",
+        items = items,
     }
-    UIManager:show(picker)
 end
 
 function GroupActions.createCollection(args)

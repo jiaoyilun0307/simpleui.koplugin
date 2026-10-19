@@ -94,6 +94,16 @@ local M = {}
 local function _getFlag(key)    return SUISettings:readSetting(key) ~= false end
 local function _setFlag(key, v) SUISettings:saveSetting(key, v)              end
 
+-- Looks of the cover strip surface, with and without a wallpaper behind it.
+-- Opacity applies over a wallpaper only; tone and frame always apply. Rebuilt
+-- only when a setting changes, so they are shared and must not be modified.
+local _stripLookOverWallpaper = SUISettings.memoize(function()
+    return Backdrop.resolve(SUIWallpaper.COVER_STRIP, Backdrop.readStrength(SUIWallpaper.COVER_STRIP))
+end)
+local _stripLookSolid = SUISettings.memoize(function()
+    return Backdrop.resolve(SUIWallpaper.COVER_STRIP, Backdrop.STRENGTH_MAX)
+end)
+
 -- Filename "p(<n>)" token → page count fallback. Now lives in
 -- module_books_shared.lua (SH.pageCountFromFilename) so
 -- engines/sui_book_grid.lua's badges can share the exact same logic instead
@@ -1054,13 +1064,10 @@ local function _installStripPatch(MosaicMenuItem, BookInfoManager, _STRIP_H,
                 end
             end
 
-            -- Paint the strip directly below the cover. Opacity applies over
-            -- a wallpaper only; tone and frame always apply.
+            -- Paint the strip directly below the cover.
             if self._simpleui_strip_bb then
-                local wp_active = SUIWallpaper.styleGetWallpaperShowInFM()
-                    and SUIWallpaper.styleGetBgWidget() ~= nil
-                local look = Backdrop.resolve(SUIWallpaper.COVER_STRIP,
-                    wp_active and Backdrop.readStrength(SUIWallpaper.COVER_STRIP) or Backdrop.STRENGTH_MAX)
+                local wp_active = SUIWallpaper.isWallpaperPaintedInFM()
+                local look = wp_active and _stripLookOverWallpaper() or _stripLookSolid()
 
                 -- Plain white without a frame, over no wallpaper, is the
                 -- cached bitmap itself.
@@ -1494,10 +1501,8 @@ function M.install()
     -- Builds and installs a single-image cover widget.
     -- `img` = { file=path } or { data=blitbuffer, w=n, h=n }
     function MosaicMenuItem:_setFolderCover(img, display, complete)
-        -- `display` may be nil when called by third-party patches that pre-date
-        -- this parameter (e.g. patches/2-automatic-book-series.lua).  Fall back
-        -- to reading the settings directly so the rest of the pipeline never
-        -- receives a nil table.
+        -- `display` is optional; when omitted it is read from the settings so
+        -- the rest of the pipeline never receives a nil table.
         display = display or _readDisplay()
         local border, backing, max_img_w, max_img_h = CoverWidgets.computeCellGeometry(self, M.getHidePile())
 

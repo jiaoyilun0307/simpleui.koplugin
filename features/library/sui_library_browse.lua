@@ -851,9 +851,6 @@ local function _installPatches()
             -- folder items — CoverBrowser routes those through showFileDialog
             -- instead (handled above).
             if item and item.path and item.is_virtual_meta_leaf then
-                local UIManager    = require("ui/uimanager")
-                local ButtonDialog = require("ui/widget/buttondialog")
-                local dialog
                 local folder_name = (item.text or item.path:match("([^/]+)$") or ""):gsub("/$", "")
                 local _b, filter_state = VirtualPath.parse(item.path)
                 local trail = filter_state.trail
@@ -861,40 +858,32 @@ local function _installPatches()
                 -- "no value" leaf: long-press disabled (no meaningful name).
                 if not last or last.value == false then return true end
 
-                dialog = ButtonDialog:new{
-                    title       = folder_name,
-                    title_align = "center",
-                    buttons = (function()
-                        local btns = {}
-                        -- Hide the cover picker in quad mosaic mode (the quad
-                        -- grid always auto-selects covers; single-cover
-                        -- override is not applicable in that mode).
-                        local in_list_view = fc and fc.display_mode_type == "list"
-                        local effective_style = FolderCovers.resolveStyle(fc, item.path, item)
-                        if effective_style ~= "quad" or in_list_view then
-                            btns[#btns + 1] = {{
-                                text     = _("Set folder cover"),
-                                callback = function()
-                                    UIManager:close(dialog)
-                                    M.openVirtualCoverPicker(item.path, fc)
-                                end,
-                            }}
-                        end
-                        btns[#btns + 1] = {{
-                            text     = _("Create collection"),
-                            callback = function()
-                                UIManager:close(dialog)
-                                _createCollectionFromVirtualFolder(item.path, fc)
-                            end,
-                        }}
-                        btns[#btns + 1] = {{
-                            text     = _("Cancel"),
-                            callback = function() UIManager:close(dialog) end,
-                        }}
-                        return btns
-                    end)(),
+                local items = {}
+                -- The cover picker is hidden in quad mosaic mode, where the
+                -- grid always picks covers itself.
+                local in_list_view    = fc and fc.display_mode_type == "list"
+                local effective_style = FolderCovers.resolveStyle(fc, item.path, item)
+                if effective_style ~= "quad" or in_list_view then
+                    items[#items + 1] = {
+                        text     = _("Set folder cover"),
+                        sui_icon = "cover",
+                        callback = function() M.openVirtualCoverPicker(item.path, fc) end,
+                    }
+                end
+                items[#items + 1] = {
+                    text     = _("Create collection"),
+                    sui_icon = "collections",
+                    callback = function() _createCollectionFromVirtualFolder(item.path, fc) end,
                 }
-                UIManager:show(dialog)
+
+                local ActionSheet = require("engines/sui_action_sheet")
+                ActionSheet.show{
+                    name       = "sui_win_virtual_folder_actions",
+                    title      = folder_name,
+                    icon       = "folder",
+                    auto_close = true,
+                    sections   = { ActionSheet.list(items) },
+                }
                 return true
             end
             return orig(fc, item)
