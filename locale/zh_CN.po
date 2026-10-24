@@ -7396,3 +7396,1515 @@ msgstr "[待翻译] Gray"
 
 msgid "White"
 msgstr "[待翻译] White"
+
+msgid "%1 adjusted to %2"
+msgstr "%1 adjusted to %2"
+
+msgid "%1 column"
+msgstr "%1 column"
+
+msgid "%d book this year. The goal is watching."
+msgstr "%d book this year. The goal is watching."
+
+msgid "%d day away. I counted."
+msgstr "%d day away. I counted."
+
+msgid "%d day read"
+msgstr "%d day read"
+
+msgid "%d day! I thought you'd moved."
+msgstr "%d day! I thought you'd moved."
+
+msgid "%d day! Where were you?"
+msgstr "%d day! Where were you?"
+
+msgid "%d minute of reading."
+msgstr "%d minute of reading."
+
+msgid "%d minute without surfacing."
+msgstr "%d minute without surfacing."
+
+msgid "%d minute! Did you eat?"
+msgstr "%d minute! Did you eat?"
+
+msgid "%d minute. A sneaky one."
+msgstr "%d minute. A sneaky one."
+
+msgid "%d of %d minute so far."
+msgstr "%d of %d minute so far."
+
+msgid "%d of %d page so far."
+msgstr "%d of %d page so far."
+
+msgid "%d year of pages and snacks."
+msgstr "%d year of pages and snacks."
+
+msgid "%d year together!"
+msgstr "%d year together!"
+
+msgid "%d%% left. I'll be brave."
+msgstr "%d%% left. I'll be brave."
+
+msgid "%dh"
+msgstr "%dh"
+
+msgid "%dh %dm"
+msgstr "%dh %dm"
+
+msgid "%dm"
+msgstr "%dm"
+
+msgid "%s a day on average"
+msgstr "%s a day on average"
+
+msgid "%s against the same days last week"
+msgstr "%s against the same days last week"
+
+msgid "%s already?"
+msgstr "%s already?"
+
+msgid "%s arrives! A new act begins!"
+msgstr "%s arrives! A new act begins!"
+
+msgid "%s is over. Good for you."
+msgstr "%s is over. Good for you."
+
+msgid "%s was a good one."
+msgstr "%s was a good one."
+
+msgid "%s will be sung about."
+msgstr "%s will be sung about."
+
+msgid "%s! DONE! Incredible!"
+msgstr "%s! DONE! Incredible!"
+
+msgid "%s! New month, new adventures!"
+msgstr "%s! New month, new adventures!"
+
+msgid "%s, finished!"
+msgstr "%s, finished!"
+
+msgid "%s. Another month of the same pile."
+msgstr "%s. Another month of the same pile."
+
+msgid "1/2"
+msgstr "1/2"
+
+msgid "1/3"
+msgstr "1/3"
+
+msgid "2/3"
+msgstr "2/3"
+
+msgid "A MARATHON! You're unstoppable!"
+msgstr "A MARATHON! You're unstoppable!"
+
+msgid "A book finished. I need to lie down."
+msgstr "A book finished. I need to lie down."
+
+msgid "A book is over. Good for you."
+msgstr "A book is over. Good for you."
+
+msgid "A brief, brilliant visit to another world!"
+msgstr "A brief, brilliant visit to another world!"
+
+msgid "A charger would be lovely."
+msgstr "A charger would be lovely."
+
+msgid "A day for books, at last."
+msgstr "A day for books, at last."
+
+msgid "A decent session. I almost stayed awake."
+msgstr "A decent session. I almost stayed awake."
+
+msgid "A fresh month, a fresh stack."
+msgstr "A fresh month, a fresh stack."
+
+msgid "A marathon. I'm tired just watching."
+msgstr "A marathon. I'm tired just watching."
+
+msgid "A mind like an index. I'm honoured."
+msgstr "A mind like an index. I'm honoured."
+
+msgid "A month. I kept busy. Mostly sulking."
+msgstr "A month. I kept busy. Mostly sulking."
+
+msgid "A motion! Seconded by the entire shelf!"
+msgstr "A motion! Seconded by the entire shelf!"
+
+msgid "A new chapter of your legend is complete!"
+msgstr "A new chapter of your legend is complete!"
+
+msgid "A new year, a new saga! Onward!"
+msgstr "A new year, a new saga! Onward!"
+
+msgid "A new year. Wake me in January. Oh, wait."
+msgstr "A new year. Wake me in January. Oh, wait."
+
+msgid "A noble soul! Bards will sing of this."
+msgstr "A noble soul! Bards will sing of this."
+
+msgid "A page here, a page there."
+msgstr "A page here, a page there."
+
+msgid "A proper stretch."
+msgstr "A proper stretch."
+
+msgid "A purist. Boring. Respect."
+msgstr "A purist. Boring. Respect."
+
+msgid "A purist. I knew I liked you."
+msgstr "A purist. I knew I liked you."
+
+msgid "A quick peek?"
+msgstr "A quick peek?"
+
+msgid "A session worthy of the great libraries!"
+msgstr "A session worthy of the great libraries!"
+
+msgid "A short holiday?"
+msgstr "A short holiday?"
+
+msgid "A short one. My kind of effort."
+msgstr "A short one. My kind of effort."
+
+msgid "A small goal, a big grin."
+msgstr "A small goal, a big grin."
+
+msgid "A twist? In this economy?"
+msgstr "A twist? In this economy?"
+
+msgid "A whisper of a twist. Exquisite."
+msgstr "A whisper of a twist. Exquisite."
+
+msgid "A whole year of unread pages awaits."
+msgstr "A whole year of unread pages awaits."
+
+msgid "A word that earned its place on the shelf!"
+msgstr "A word that earned its place on the shelf!"
+
+msgid "A word that tastes like old paper. Divine."
+msgstr "A word that tastes like old paper. Divine."
+
+msgid "AM"
+msgstr "AM"
+
+msgid "About what?"
+msgstr "About what?"
+
+msgid "Activity"
+msgstr "[待翻译] Activity"
+
+msgid "Adjust row automatically"
+msgstr "[待翻译] Adjust row automatically"
+
+msgid "Afternoon"
+msgstr "[待翻译] Afternoon"
+
+msgid "All that reading. Wake me when it's over."
+msgstr "All that reading. Wake me when it's over."
+
+msgid "Always."
+msgstr "Always."
+
+msgid "An anniversary. Cake? No? Nap, then."
+msgstr "An anniversary. Cake? No? Nap, then."
+
+msgid "An anniversary. I suppose I'm fond of you."
+msgstr "An anniversary. I suppose I'm fond of you."
+
+msgid "An audience! I knew this day would come."
+msgstr "An audience! I knew this day would come."
+
+msgid "An epic voyage! The sagas will remember it!"
+msgstr "An epic voyage! The sagas will remember it!"
+
+msgid "Another book on the done pile."
+msgstr "Another book on the done pile."
+
+msgid "Another chapter of your legend is complete!"
+msgstr "Another chapter of your legend is complete!"
+
+msgid "Another lap around the sun."
+msgstr "Another lap around the sun."
+
+msgid "Another one"
+msgstr "[待翻译] Another one"
+
+msgid "Another one for the done pile."
+msgstr "Another one for the done pile."
+
+msgid "Another year. The pile is still there."
+msgstr "Another year. The pile is still there."
+
+msgid "Asking for a friend. The friend is me."
+msgstr "Asking for a friend. The friend is me."
+
+msgid "Average session, 90 days"
+msgstr "Average session, 90 days"
+
+msgid "Aww! We'll cheer them up with a visit!"
+msgstr "Aww! We'll cheer them up with a visit!"
+
+msgid "Battery low! Quick, adventure's calling!"
+msgstr "Battery low! Quick, adventure's calling!"
+
+msgid "Be careful what you wish for."
+msgstr "Be careful what you wish for."
+
+msgid "Be honest: do you read the last page first?"
+msgstr "Be honest: do you read the last page first?"
+
+msgid "Black"
+msgstr "[待翻译] Black"
+
+msgid "Bold words, with no book in hand."
+msgstr "Bold words, with no book in hand."
+
+msgid "Bold. We'll see how long that lasts."
+msgstr "Bold. We'll see how long that lasts."
+
+msgid "Book Day. A holiday for my favourite thing: sitting."
+msgstr "Book Day. A holiday for my favourite thing: sitting."
+
+msgid "Book finished!"
+msgstr "Book finished!"
+
+msgid "Books abandoned"
+msgstr "[待翻译] Books abandoned"
+
+msgid "Books don't have feelings."
+msgstr "Books don't have feelings."
+
+msgid "Books finished"
+msgstr "[待翻译] Books finished"
+
+msgid "Books in progress"
+msgstr "[待翻译] Books in progress"
+
+msgid "Books not started"
+msgstr "[待翻译] Books not started"
+
+msgid "Brave. I'd hide behind the sofa."
+msgstr "Brave. I'd hide behind the sofa."
+
+msgid "Brave. I'm already behind the sofa."
+msgstr "Brave. I'm already behind the sofa."
+
+msgid "Bubble style"
+msgstr "[待翻译] Bubble style"
+
+msgid "By day of the week"
+msgstr "[待翻译] By day of the week"
+
+msgid "By hour of the day"
+msgstr "[待翻译] By hour of the day"
+
+msgid "By month"
+msgstr "[待翻译] By month"
+
+msgid "By time of day"
+msgstr "[待翻译] By time of day"
+
+msgid "By year"
+msgstr "[待翻译] By year"
+
+msgid "Careful. They can hear you."
+msgstr "Careful. They can hear you."
+
+msgid "Challenge accepted"
+msgstr "[待翻译] Challenge accepted"
+
+msgid "Challenge crushed! Take a bow, champion!"
+msgstr "Challenge crushed! Take a bow, champion!"
+
+msgid "Challenge met!"
+msgstr "Challenge met!"
+
+msgid "Change against last week"
+msgstr "[待翻译] Change against last week"
+
+msgid "Chaos! I adore you."
+msgstr "Chaos! I adore you."
+
+msgid "Chapter one of a brand new saga!"
+msgstr "Chapter one of a brand new saga!"
+
+msgid "Chapter one. Again. Wonderful."
+msgstr "Chapter one. Again. Wonderful."
+
+msgid "Charging. About time."
+msgstr "Charging. About time."
+
+msgid "Charging. Bliss."
+msgstr "Charging. Bliss."
+
+msgid "Charging. Wake me at 100%."
+msgstr "Charging. Wake me at 100%."
+
+msgid "Confetti! Dragons! A talking bookcase!"
+msgstr "Confetti! Dragons! A talking bookcase!"
+
+msgid "Counting is my love language."
+msgstr "Counting is my love language."
+
+msgid "DONE! Incredible!"
+msgstr "DONE! Incredible!"
+
+msgid "Daily average, last 7 days"
+msgstr "Daily average, last 7 days"
+
+msgid "Dangerous AND brilliant. Naturally."
+msgstr "Dangerous AND brilliant. Naturally."
+
+msgid "Dangerous! Thrilling! Say it again!"
+msgstr "Dangerous! Thrilling! Say it again!"
+
+msgid "Dangerous."
+msgstr "Dangerous."
+
+msgid "Day read"
+msgstr "[待翻译] Day read"
+
+msgid "Day streak"
+msgstr "[待翻译] Day streak"
+
+msgid "Deal. A twist so quiet nobody notices."
+msgstr "Deal. A twist so quiet nobody notices."
+
+msgid "Decorations"
+msgstr "[待翻译] Decorations"
+
+msgid "Do the unread books judge us?"
+msgstr "Do the unread books judge us?"
+
+msgid "Do the unread books judge us? I think so."
+msgstr "Do the unread books judge us? I think so."
+
+msgid "Do you think books get lonely?"
+msgstr "Do you think books get lonely?"
+
+msgid "Dog-ears are better."
+msgstr "Dog-ears are better."
+
+msgid "Don't answer. It's a trap."
+msgstr "Don't answer. It's a trap."
+
+msgid "Don't remind me."
+msgstr "Don't remind me."
+
+msgid "Done and dusted! Look at you go!"
+msgstr "Done and dusted! Look at you go!"
+
+msgid "Done and dusted."
+msgstr "Done and dusted."
+
+msgid "Done. Now I need a nap."
+msgstr "Done. Now I need a nap."
+
+msgid "Drink some water, hero."
+msgstr "Drink some water, hero."
+
+msgid "Edit Home Screen page"
+msgstr "Edit Home Screen page"
+
+msgid "Edit card"
+msgstr "[待翻译] Edit card"
+
+msgid "Electrons, my favourite."
+msgstr "Electrons, my favourite."
+
+msgid "Energy flows! I am reborn!"
+msgstr "Energy flows! I am reborn!"
+
+msgid "Even a few pages count."
+msgstr "Even a few pages count."
+
+msgid "Evening"
+msgstr "[待翻译] Evening"
+
+msgid "Every day is a reading day."
+msgstr "Every day is a reading day."
+
+msgid "Every day! Hooray!"
+msgstr "Every day! Hooray!"
+
+msgid "Every page counts! Hooray for pages!"
+msgstr "Every page counts! Hooray for pages!"
+
+msgid "Every single book opened! Look at you!"
+msgstr "Every single book opened! Look at you!"
+
+msgid "Everyone's fine. The tea isn't."
+msgstr "Everyone's fine. The tea isn't."
+
+msgid "Exactly the energy I need."
+msgstr "Exactly the energy I need."
+
+msgid "Fancy. Very fancy."
+msgstr "Fancy. Very fancy."
+
+msgid "Feeling a bit faint."
+msgstr "Feeling a bit faint."
+
+msgid "Finally, an audience."
+msgstr "Finally, an audience."
+
+msgid "Finders keepers."
+msgstr "Finders keepers."
+
+msgid "Finders keepers. Kidding. Mostly."
+msgstr "Finders keepers. Kidding. Mostly."
+
+msgid "Fine. A decent session. Don't let it go to your head."
+msgstr "Fine. A decent session. Don't let it go to your head."
+
+msgid "Fine. But I'm not wearing a party hat."
+msgstr "Fine. But I'm not wearing a party hat."
+
+msgid "Fine. But it's looking at me."
+msgstr "Fine. But it's looking at me."
+
+msgid "Fine. I'll go be dramatic elsewhere."
+msgstr "Fine. I'll go be dramatic elsewhere."
+
+msgid "Fine. The books can wait. So can I."
+msgstr "Fine. The books can wait. So can I."
+
+msgid "Fine. They'll keep."
+msgstr "Fine. They'll keep."
+
+msgid "Fine. You did it. Don't expect a parade."
+msgstr "Fine. You did it. Don't expect a parade."
+
+msgid "Freeze available"
+msgstr "[待翻译] Freeze available"
+
+msgid "Full"
+msgstr "[待翻译] Full"
+
+msgid "Full row"
+msgstr "[待翻译] Full row"
+
+msgid "Gasp."
+msgstr "Gasp."
+
+msgid "Gasp. Your secret is safe with the shelves."
+msgstr "Gasp. Your secret is safe with the shelves."
+
+msgid "Go and visit one."
+msgstr "Go and visit one."
+
+msgid "Go on, I'm listening."
+msgstr "Go on, I'm listening."
+
+msgid "Go on, pick something shiny."
+msgstr "Go on, pick something shiny."
+
+msgid "Go, go, go! Pages await."
+msgstr "Go, go, go! Pages await."
+
+msgid "Goals are patient. Until they aren't."
+msgstr "Goals are patient. Until they aren't."
+
+msgid "Great. Now I'm thinking about it."
+msgstr "Great. Now I'm thinking about it."
+
+msgid "HAPPY ANNIVERSARY! I love us!"
+msgstr "HAPPY ANNIVERSARY! I love us!"
+
+msgid "HAPPY NEW YEAR! Let's read everything!"
+msgstr "HAPPY NEW YEAR! Let's read everything!"
+
+msgid "Habits"
+msgstr "[待翻译] Habits"
+
+msgid "Happy %s, I suppose?"
+msgstr "Happy %s, I suppose?"
+
+msgid "Happy Book Day!"
+msgstr "Happy Book Day!"
+
+msgid "Happy World Book Day!"
+msgstr "Happy World Book Day!"
+
+msgid "Happy anniversary!"
+msgstr "Happy anniversary!"
+
+msgid "Happy new year!"
+msgstr "Happy new year!"
+
+msgid "Hear, hear! Put it on a mug."
+msgstr "Hear, hear! Put it on a mug."
+
+msgid "Heresy! Call the librarian."
+msgstr "Heresy! Call the librarian."
+
+msgid "Highlight card"
+msgstr "[待翻译] Highlight card"
+
+msgid "Highlight color"
+msgstr "[待翻译] Highlight color"
+
+msgid "Home Screen row preview"
+msgstr "Home Screen row preview"
+
+msgid "Hope the books were jealous."
+msgstr "Hope the books were jealous."
+
+msgid "Hours read"
+msgstr "[待翻译] Hours read"
+
+msgid "I didn't want to say anything."
+msgstr "I didn't want to say anything."
+
+msgid "I don't have one."
+msgstr "I don't have one."
+
+msgid "I dusted the shelves twice."
+msgstr "I dusted the shelves twice."
+
+msgid "I found a bookmark in the sofa."
+msgstr "I found a bookmark in the sofa."
+
+msgid "I kept your place."
+msgstr "I kept your place."
+
+msgid "I knew you'd say yes. I love this for us."
+msgstr "I knew you'd say yes. I love this for us."
+
+msgid "I never doubted you. Much."
+msgstr "I never doubted you. Much."
+
+msgid "I never thought about it."
+msgstr "I never thought about it."
+
+msgid "I preside over a kingdom of paper."
+msgstr "I preside over a kingdom of paper."
+
+msgid "I remember the day we met."
+msgstr "I remember the day we met."
+
+msgid "I started talking to the bookcase."
+msgstr "I started talking to the bookcase."
+
+msgid "I supervise the shelves."
+msgstr "I supervise the shelves."
+
+msgid "I supervise the shelves. Sitting down."
+msgstr "I supervise the shelves. Sitting down."
+
+msgid "I'd like a plot twist today."
+msgstr "I'd like a plot twist today."
+
+msgid "I'd rather not discuss it."
+msgstr "I'd rather not discuss it."
+
+msgid "I'll be back, promise."
+msgstr "I'll be back, promise."
+
+msgid "I'll hold you to it. Gently. With snacks."
+msgstr "I'll hold you to it. Gently. With snacks."
+
+msgid "I'll just rest my eyes."
+msgstr "I'll just rest my eyes."
+
+msgid "I'm at %d%%."
+msgstr "I'm at %d%%."
+
+msgid "I'm keeping count, you know."
+msgstr "I'm keeping count, you know."
+
+msgid "I'm not crying. It's dust."
+msgstr "I'm not crying. It's dust."
+
+msgid "I'm on track."
+msgstr "I'm on track."
+
+msgid "I've been thinking."
+msgstr "I've been thinking."
+
+msgid "I've been waiting all year."
+msgstr "I've been waiting all year."
+
+msgid "Impressive. I'd clap, but effort."
+msgstr "Impressive. I'd clap, but effort."
+
+msgid "Impressive. Or suspicious."
+msgstr "Impressive. Or suspicious."
+
+msgid "Impressive. Terrifying, but impressive."
+msgstr "Impressive. Terrifying, but impressive."
+
+msgid "Incomplete row"
+msgstr "[待翻译] Incomplete row"
+
+msgid "Invalid arrangement."
+msgstr "Invalid arrangement."
+
+msgid "Invented by a publisher, loved by everyone."
+msgstr "Invented by a publisher, loved by everyone."
+
+msgid "Is it already nap o'clock?"
+msgstr "Is it already nap o'clock?"
+
+msgid "Is it already?"
+msgstr "Is it already?"
+
+msgid "Is it morning already?"
+msgstr "Is it morning already?"
+
+msgid "It will be sung about."
+msgstr "It will be sung about."
+
+msgid "It's %s. I barely noticed."
+msgstr "It's %s. I barely noticed."
+
+msgid "It's World Book Day!"
+msgstr "It's World Book Day!"
+
+msgid "It's a good listener."
+msgstr "It's a good listener."
+
+msgid "It's always about snacks, %s."
+msgstr "It's always about snacks, %s."
+
+msgid "It's always about snacks, %s. And naps."
+msgstr "It's always about snacks, %s. And naps."
+
+msgid "It's been a while."
+msgstr "It's been a while."
+
+msgid "It's been so long."
+msgstr "It's been so long."
+
+msgid "It's on holiday."
+msgstr "It's on holiday."
+
+msgid "Just a little one today."
+msgstr "Just a little one today."
+
+msgid "Kindly. Mostly kindly."
+msgstr "Kindly. Mostly kindly."
+
+msgid "Large"
+msgstr "[待翻译] Large"
+
+msgid "Last %d days"
+msgstr "Last %d days"
+
+msgid "Last %d weeks"
+msgstr "Last %d weeks"
+
+msgid "Last 7 days"
+msgstr "Last 7 days"
+
+msgid "Leave me be."
+msgstr "Leave me be."
+
+msgid "Less talking. More reading."
+msgstr "Less talking. More reading."
+
+msgid "Let it watch! We shall dazzle it!"
+msgstr "Let it watch! We shall dazzle it!"
+
+msgid "Let it watch."
+msgstr "Let it watch."
+
+msgid "Let's keep it going."
+msgstr "Let's keep it going."
+
+msgid "Let's make it a good chapter."
+msgstr "Let's make it a good chapter."
+
+msgid "Let's restart it today."
+msgstr "Let's restart it today."
+
+msgid "Let's see what %s brings."
+msgstr "Let's see what %s brings."
+
+msgid "Like what?"
+msgstr "Like what?"
+
+msgid "Little reads add up."
+msgstr "Little reads add up."
+
+msgid "Longest session, 90 days"
+msgstr "Longest session, 90 days"
+
+msgid "Look at us."
+msgstr "Look at us."
+
+msgid "Look who's back!"
+msgstr "Look who's back!"
+
+msgid "Look who's got staying power."
+msgstr "Look who's got staying power."
+
+msgid "Low battery. Finally, a reason to nap."
+msgstr "Low battery. Finally, a reason to nap."
+
+msgid "Low battery. Typical."
+msgstr "Low battery. Typical."
+
+msgid "Lucky streak. I could use a holiday."
+msgstr "Lucky streak. I could use a holiday."
+
+msgid "Make it a quiet one."
+msgstr "Make it a quiet one."
+
+msgid "Marathon reader!"
+msgstr "Marathon reader!"
+
+msgid "Maybe later"
+msgstr "[待翻译] Maybe later"
+
+msgid "Medium"
+msgstr "[待翻译] Medium"
+
+msgid "Mine are perfectly happy."
+msgstr "Mine are perfectly happy."
+
+msgid "Mine is to nap more. Yours?"
+msgstr "Mine is to nap more. Yours?"
+
+msgid "Module settings"
+msgstr "[待翻译] Module settings"
+
+msgid "Monstrous. And yet, efficient."
+msgstr "Monstrous. And yet, efficient."
+
+msgid "Monstrous. I'll allow it."
+msgstr "Monstrous. I'll allow it."
+
+msgid "Morning"
+msgstr "[待翻译] Morning"
+
+msgid "Most-read time of day"
+msgstr "Most-read time of day"
+
+msgid "Most-read weekday"
+msgstr "Most-read weekday"
+
+msgid "Move row"
+msgstr "[待翻译] Move row"
+
+msgid "Moved to row %1 to keep its width"
+msgstr "Moved to row %1 to keep its width"
+
+msgid "My light is fading! Fetch the charger, brave soul!"
+msgstr "My light is fading! Fetch the charger, brave soul!"
+
+msgid "Nap."
+msgstr "Nap."
+
+msgid "Neighbouring modules adjusted"
+msgstr "[待翻译] Neighbouring modules adjusted"
+
+msgid "Neighbouring stats adjusted"
+msgstr "[待翻译] Neighbouring stats adjusted"
+
+msgid "Never mentioned. Never existed."
+msgstr "Never mentioned. Never existed."
+
+msgid "Never!"
+msgstr "Never!"
+
+msgid "New month, new goals."
+msgstr "New month, new goals."
+
+msgid "New year, new shelf."
+msgstr "New year, new shelf."
+
+msgid "Nice little session!"
+msgstr "Nice little session!"
+
+msgid "Night"
+msgstr "[待翻译] Night"
+
+msgid "No pressure? Sure."
+msgstr "No pressure? Sure."
+
+msgid "No reading on the same days last week"
+msgstr "[待翻译] No reading on the same days last week"
+
+msgid "No rush! The shelf isn't going anywhere."
+msgstr "No rush! The shelf isn't going anywhere."
+
+msgid "No shame in snacks."
+msgstr "No shame in snacks."
+
+msgid "No spoilers. Okay, spoilers."
+msgstr "No spoilers. Okay, spoilers."
+
+msgid "Not now"
+msgstr "[待翻译] Not now"
+
+msgid "Not now."
+msgstr "Not now."
+
+msgid "Not one unopened book. Show-off."
+msgstr "Not one unopened book. Show-off."
+
+msgid "Not really."
+msgstr "Not really."
+
+msgid "Not to be dramatic, but find a charger."
+msgstr "Not to be dramatic, but find a charger."
+
+msgid "Noted. I'll sulk quietly. Loudly."
+msgstr "Noted. I'll sulk quietly. Loudly."
+
+msgid "Nothing unopened on your shelves."
+msgstr "Nothing unopened on your shelves."
+
+msgid "Nothing. Nothing happens. Perfect."
+msgstr "Nothing. Nothing happens. Perfect."
+
+msgid "Now you never will stop."
+msgstr "Now you never will stop."
+
+msgid "Obviously."
+msgstr "Obviously."
+
+msgid "Of course. No pressure at all."
+msgstr "Of course. No pressure at all."
+
+msgid "Oh, EVERYTHING! Where do I even start?"
+msgstr "Oh, EVERYTHING! Where do I even start?"
+
+msgid "Oh, you remember me."
+msgstr "Oh, you remember me."
+
+msgid "On it!"
+msgstr "On it!"
+
+msgid "On track and in legend. Metaphorically."
+msgstr "On track and in legend. Metaphorically."
+
+msgid "On track and on fire. Metaphorically."
+msgstr "On track and on fire. Metaphorically."
+
+msgid "On track. I'm proud, quietly."
+msgstr "On track. I'm proud, quietly."
+
+msgid "One more finished. I need to lie down."
+msgstr "One more finished. I need to lie down."
+
+msgid "Only if it's about snacks."
+msgstr "Only if it's about snacks."
+
+msgid "Only the unread ones."
+msgstr "Only the unread ones."
+
+msgid "Onward! Glory awaits in chapter nine!"
+msgstr "Onward! Glory awaits in chapter nine!"
+
+msgid "Ooh, so pretty! Say it again!"
+msgstr "Ooh, so pretty! Say it again!"
+
+msgid "Ooh, that's nice."
+msgstr "Ooh, that's nice."
+
+msgid "Ooh. A question for a committee of me."
+msgstr "Ooh. A question for a committee of me."
+
+msgid "Open it"
+msgstr "[待翻译] Open it"
+
+msgid "Or the same ones. I'm not picky."
+msgstr "Or the same ones. I'm not picky."
+
+msgid "Our story is the finest of all libraries!"
+msgstr "Our story is the finest of all libraries!"
+
+msgid "Our streak is at %d day. No pressure."
+msgstr "Our streak is at %d day. No pressure."
+
+msgid "PM"
+msgstr "PM"
+
+msgid "Page 212, probably."
+msgstr "Page 212, probably."
+
+msgid "Page read"
+msgstr "[待翻译] Page read"
+
+msgid "Pages per day, last 7 days"
+msgstr "Pages per day, last 7 days"
+
+msgid "Pages read this month"
+msgstr "[待翻译] Pages read this month"
+
+msgid "Pages read this week"
+msgstr "[待翻译] Pages read this week"
+
+msgid "Pages read today"
+msgstr "[待翻译] Pages read today"
+
+msgid "Peace at last."
+msgstr "Peace at last."
+
+msgid "Peak reading hour"
+msgstr "[待翻译] Peak reading hour"
+
+msgid "Pixel"
+msgstr "[待翻译] Pixel"
+
+msgid "Please don't."
+msgstr "Please don't."
+
+msgid "Postcards expected."
+msgstr "Postcards expected."
+
+msgid "Power! Glorious power!"
+msgstr "Power! Glorious power!"
+
+msgid "Psst, %s. Can I ask you something?"
+msgstr "Psst, %s. Can I ask you something?"
+
+msgid "Psst. The battery is low."
+msgstr "Psst. The battery is low."
+
+msgid "Put it back."
+msgstr "Put it back."
+
+msgid "Put it on a banner. On a flag!"
+msgstr "Put it on a banner. On a flag!"
+
+msgid "Put it on a mug. Then leave me alone."
+msgstr "Put it on a mug. Then leave me alone."
+
+msgid "Put it to a vote. I'm in favour."
+msgstr "Put it to a vote. I'm in favour."
+
+msgid "Put it to a vote. Tomorrow."
+msgstr "Put it to a vote. Tomorrow."
+
+msgid "Quick: favourite word?"
+msgstr "Quick: favourite word?"
+
+msgid "React to events"
+msgstr "[待翻译] React to events"
+
+msgid "Read %d minute today?"
+msgstr "Read %d minute today?"
+
+msgid "Read %d page today?"
+msgstr "Read %d page today?"
+
+msgid "Read a little today and your streak is safe."
+msgstr "Read a little today and your streak is safe."
+
+msgid "Read a little today to keep your streak?"
+msgstr "Read a little today to keep your streak?"
+
+msgid "Read before %d:00?"
+msgstr "Read before %d:00?"
+
+msgid "Reading days, 12 weeks"
+msgstr "Reading days, 12 weeks"
+
+msgid "Reading sessions, 90 days"
+msgstr "Reading sessions, 90 days"
+
+msgid "Reading speed, 90 days"
+msgstr "Reading speed, 90 days"
+
+msgid "Reading time"
+msgstr "[待翻译] Reading time"
+
+msgid "Reading time this month"
+msgstr "[待翻译] Reading time this month"
+
+msgid "Reading time this week"
+msgstr "[待翻译] Reading time this week"
+
+msgid "Reading time this year"
+msgstr "[待翻译] Reading time this year"
+
+msgid "Reading time today"
+msgstr "[待翻译] Reading time today"
+
+msgid "Reading today is practically mandatory."
+msgstr "Reading today is practically mandatory."
+
+msgid "Remove"
+msgstr "移除"
+
+msgid "Resolutions?"
+msgstr "Resolutions?"
+
+msgid "Returned with full honours!"
+msgstr "Returned with full honours!"
+
+msgid "Right where you left it."
+msgstr "Right where you left it."
+
+msgid "Row %1 of %2"
+msgstr "Row %1 of %2"
+
+msgid "Row alignment"
+msgstr "[待翻译] Row alignment"
+
+msgid "Row preview"
+msgstr "[待翻译] Row preview"
+
+msgid "Rude. Accurate, but rude."
+msgstr "Rude. Accurate, but rude."
+
+msgid "Rude. Also correct. I hate that."
+msgstr "Rude. Also correct. I hate that."
+
+msgid "Running on fumes."
+msgstr "Running on fumes."
+
+msgid "Same time tomorrow?"
+msgstr "Same time tomorrow?"
+
+msgid "Say something else…"
+msgstr "正在Say something else…"
+
+msgid "Says the one who needs a charger."
+msgstr "Says the one who needs a charger."
+
+msgid "Serendipity."
+msgstr "Serendipity."
+
+msgid "Shall I pick a harder one tomorrow?"
+msgstr "Shall I pick a harder one tomorrow?"
+
+msgid "Shall we pick up where we left off?"
+msgstr "Shall we pick up where we left off?"
+
+msgid "Shall we read them all and settle it?"
+msgstr "Shall we read them all and settle it?"
+
+msgid "Short and sweet."
+msgstr "Short and sweet."
+
+msgid "Shouldn't we both be asleep?"
+msgstr "Shouldn't we both be asleep?"
+
+msgid "Show-off."
+msgstr "Show-off."
+
+msgid "Slurp. Thank you."
+msgstr "Slurp. Thank you."
+
+msgid "Small steps. One page is still a page."
+msgstr "Small steps. One page is still a page."
+
+msgid "Smooth"
+msgstr "[待翻译] Smooth"
+
+msgid "Snack time!"
+msgstr "Snack time!"
+
+msgid "So you remember where I live."
+msgstr "So you remember where I live."
+
+msgid "So, how did it end?"
+msgstr "So, how did it end?"
+
+msgid "Sometimes."
+msgstr "Sometimes."
+
+msgid "Sound advice. I'll ignore it."
+msgstr "Sound advice. I'll ignore it."
+
+msgid "Spoiled books. I approve."
+msgstr "Spoiled books. I approve."
+
+msgid "Spoilers, please."
+msgstr "Spoilers, please."
+
+msgid "Spoken like a true diplomat, %s."
+msgstr "Spoken like a true diplomat, %s."
+
+msgid "Start reading before %d:00 and it's yours."
+msgstr "Start reading before %d:00 and it's yours."
+
+msgid "Stop counting."
+msgstr "Stop counting."
+
+msgid "Sunburnt and ready to return, I hope!"
+msgstr "Sunburnt and ready to return, I hope!"
+
+msgid "Sure."
+msgstr "Sure."
+
+msgid "Take a bow. I'll hold the applause."
+msgstr "Take a bow. I'll hold the applause."
+
+msgid "Taxes are low."
+msgstr "Taxes are low."
+
+msgid "Tell me about %s. No spoilers. Okay, spoilers."
+msgstr "Tell me about %s. No spoilers. Okay, spoilers."
+
+msgid "Tell me everything. Slowly."
+msgstr "Tell me everything. Slowly."
+
+msgid "Tell that to the ending of that one book."
+msgstr "Tell that to the ending of that one book."
+
+msgid "That depends."
+msgstr "That depends."
+
+msgid "That was a good one."
+msgstr "That was a good one."
+
+msgid "That was cosy."
+msgstr "That was cosy."
+
+msgid "That was short. I blinked and missed it."
+msgstr "That was short. I blinked and missed it."
+
+msgid "That's how libraries get built."
+msgstr "That's how libraries get built."
+
+msgid "That's mine!"
+msgstr "That's mine!"
+
+msgid "That's the best kind of promise."
+msgstr "That's the best kind of promise."
+
+msgid "That's the saddest true thing I've heard."
+msgstr "That's the saddest true thing I've heard."
+
+msgid "That's the spirit! I'll sharpen the bookmarks."
+msgstr "That's the spirit! I'll sharpen the bookmarks."
+
+msgid "That's the spirit. I'll be watching."
+msgstr "That's the spirit. I'll be watching."
+
+msgid "The book and you make a good team."
+msgstr "The book and you make a good team."
+
+msgid "The book clearly deserved it."
+msgstr "The book clearly deserved it."
+
+msgid "The book is warm now."
+msgstr "The book is warm now."
+
+msgid "The books were worried."
+msgstr "The books were worried."
+
+msgid "The butler did it. In a library. With a bookmark."
+msgstr "The butler did it. In a library. With a bookmark."
+
+msgid "The calendar flipped a page."
+msgstr "The calendar flipped a page."
+
+msgid "The critter was the author all along!"
+msgstr "The critter was the author all along!"
+
+msgid "The dust and I have become friends."
+msgstr "The dust and I have become friends."
+
+msgid "The goal can wait."
+msgstr "The goal can wait."
+
+msgid "The hero returns after a long quest!"
+msgstr "The hero returns after a long quest!"
+
+msgid "The light is nice this time of day."
+msgstr "The light is nice this time of day."
+
+msgid "The offer stands. Dramatically."
+msgstr "The offer stands. Dramatically."
+
+msgid "The reader returns! Let the feast begin!"
+msgstr "The reader returns! Let the feast begin!"
+
+msgid "The sequel will be better. I can feel it!"
+msgstr "The sequel will be better. I can feel it!"
+
+msgid "The shelves missed you."
+msgstr "The shelves missed you."
+
+msgid "The streak took a little break."
+msgstr "The streak took a little break."
+
+msgid "The wanderer returns to the library!"
+msgstr "The wanderer returns to the library!"
+
+msgid "The world can wait."
+msgstr "The world can wait."
+
+msgid "The year turns like a page."
+msgstr "The year turns like a page."
+
+msgid "Then borrow mine: snack."
+msgstr "Then borrow mine: snack."
+
+msgid "Then let's take it slowly. Very slowly."
+msgstr "Then let's take it slowly. Very slowly."
+
+msgid "Then we agree. A rare event."
+msgstr "Then we agree. A rare event."
+
+msgid "Then we rescue them, one chapter at a time!"
+msgstr "Then we rescue them, one chapter at a time!"
+
+msgid "Then we start again, with snacks."
+msgstr "Then we start again, with snacks."
+
+msgid "This month by day"
+msgstr "[待翻译] This month by day"
+
+msgid "This week vs last week"
+msgstr "[待翻译] This week vs last week"
+
+msgid "This year"
+msgstr "[待翻译] This year"
+
+msgid "Time flies when you're reading."
+msgstr "Time flies when you're reading."
+
+msgid "Time is an illusion. So are weekends."
+msgstr "Time is an illusion. So are weekends."
+
+msgid "Today the whole world kneels to the book!"
+msgstr "Today the whole world kneels to the book!"
+
+msgid "Today we celebrate you and your shelves."
+msgstr "Today we celebrate you and your shelves."
+
+msgid "Together, with books."
+msgstr "Together, with books."
+
+msgid "Too late. It's already in the air."
+msgstr "Too late. It's already in the air."
+
+msgid "Total reading time"
+msgstr "[待翻译] Total reading time"
+
+msgid "Tough one…"
+msgstr "正在Tough one…"
+
+msgid "Try “%s”, by %s."
+msgstr "Try “%s”, by %s."
+
+msgid "Try “%s”."
+msgstr "Try “%s”."
+
+msgid "Typical."
+msgstr "Typical."
+
+msgid "Understood. Let us speak of the weather. Damp."
+msgstr "Understood. Let us speak of the weather. Damp."
+
+msgid "Unputdownable."
+msgstr "Unputdownable."
+
+msgid "Unputdownable. Unlike my energy levels."
+msgstr "Unputdownable. Unlike my energy levels."
+
+msgid "Unstoppable! I can feel it!"
+msgstr "Unstoppable! I can feel it!"
+
+msgid "Very demanding work."
+msgstr "Very demanding work."
+
+msgid "Very much."
+msgstr "Very much."
+
+msgid "WORLD BOOK DAY! The best day of the year!"
+msgstr "WORLD BOOK DAY! The best day of the year!"
+
+msgid "Want something new to read?"
+msgstr "Want something new to read?"
+
+msgid "Was it that good?"
+msgstr "Was it that good?"
+
+msgid "We agree! Fetch the confetti!"
+msgstr "We agree! Fetch the confetti!"
+
+msgid "We agree. Mark the calendar."
+msgstr "We agree. Mark the calendar."
+
+msgid "Week streak"
+msgstr "[待翻译] Week streak"
+
+msgid "Weekdays should be optional."
+msgstr "Weekdays should be optional."
+
+msgid "Weekly change"
+msgstr "[待翻译] Weekly change"
+
+msgid "Welcome back!"
+msgstr "Welcome back!"
+
+msgid "Welcome back, stranger!"
+msgstr "Welcome back, stranger!"
+
+msgid "Welcome home."
+msgstr "Welcome home."
+
+msgid "Welcome to %s!"
+msgstr "Welcome to %s!"
+
+msgid "What a lovely session! Bravo!"
+msgstr "What a lovely session! Bravo!"
+
+msgid "What did I miss?"
+msgstr "What did I miss?"
+
+msgid "What do you do all day?"
+msgstr "What do you do all day?"
+
+msgid "What if I miss a day?"
+msgstr "What if I miss a day?"
+
+msgid "What shall we read first?"
+msgstr "What shall we read first?"
+
+msgid "What's a last page?"
+msgstr "What's a last page?"
+
+msgid "When you read"
+msgstr "[待翻译] When you read"
+
+msgid "Whenever you're ready. I'll be right here."
+msgstr "Whenever you're ready. I'll be right here."
+
+msgid "Where was I? Ah, yes: snacks."
+msgstr "Where was I? Ah, yes: snacks."
+
+msgid "Whether I am a footnote or a whole chapter."
+msgstr "Whether I am a footnote or a whole chapter."
+
+msgid "Whether anyone reads me. Never mind."
+msgstr "Whether anyone reads me. Never mind."
+
+msgid "Whether books read us back."
+msgstr "Whether books read us back."
+
+msgid "Which book next?"
+msgstr "Which book next?"
+
+msgid "Width"
+msgstr "宽度"
+
+msgid "Width and Position"
+msgstr "Width and Position"
+
+msgid "Wise. Spoken like a scholar."
+msgstr "Wise. Spoken like a scholar."
+
+msgid "Wonderful! Suspense is the best part!"
+msgstr "Wonderful! Suspense is the best part!"
+
+msgid "World Book Day. Fine. Read something."
+msgstr "World Book Day. Fine. Read something."
+
+msgid "Wow! Page 212! You're amazing!"
+msgstr "Wow! Page 212! You're amazing!"
+
+msgid "YES! The best kind of book!"
+msgstr "YES! The best kind of book!"
+
+msgid "YOU'RE BACK! Confetti, everyone!"
+msgstr "YOU'RE BACK! Confetti, everyone!"
+
+msgid "Yes yes yes! Let's gooo!"
+msgstr "Yes yes yes! Let's gooo!"
+
+msgid "Yes! We agree! What a lovely day!"
+msgstr "Yes! We agree! What a lovely day!"
+
+msgid "Yes! You've got this!"
+msgstr "Yes! You've got this!"
+
+msgid "Yes, pick one"
+msgstr "Yes, pick one"
+
+msgid "You came back."
+msgstr "You came back."
+
+msgid "You can do it! One page at a time!"
+msgstr "You can do it! One page at a time!"
+
+msgid "You finished %s."
+msgstr "You finished %s."
+
+msgid "You finished a book."
+msgstr "You finished a book."
+
+msgid "You had a book in your hand."
+msgstr "You had a book in your hand."
+
+msgid "You know the one."
+msgstr "You know the one."
+
+msgid "You must tell me everything."
+msgstr "You must tell me everything."
+
+msgid "You plugged me in."
+msgstr "You plugged me in."
+
+msgid "You said you would, and you did."
+msgstr "You said you would, and you did."
+
+msgid "You understand me, %s. Truly."
+msgstr "You understand me, %s. Truly."
+
+msgid "You're back! Best day ever!"
+msgstr "You're back! Best day ever!"
+
+msgid "You're back! I missed you!"
+msgstr "You're back! I missed you!"
+
+msgid "You're back. Finally. I got so bored I napped."
+msgstr "You're back. Finally. I got so bored I napped."
+
+msgid "You're back. I slept through half of it."
+msgstr "You're back. I slept through half of it."
+
+msgid "You're back. I was napping, honest."
+msgstr "You're back. I was napping, honest."
+
+msgid "You're my favourite human."
+msgstr "You're my favourite human."
+
+msgid "You've opened them all. I'm so proud."
+msgstr "You've opened them all. I'm so proud."
+
+msgid "Yours! Take it! Take two!"
+msgstr "Yours! Take it! Take two!"
+
+msgid "Zero pressure, infinite splendour."
+msgstr "Zero pressure, infinite splendour."
+
+msgid "Zero pressure. Pure vibes."
+msgstr "Zero pressure. Pure vibes."
+
+msgid "Zero. None. Breathe."
+msgstr "Zero. None. Breathe."
+
+msgid "days read (12 weeks)"
+msgstr "days read (12 weeks)"
+
+msgid "last 12 weeks"
+msgstr "last 12 weeks"
+
+msgid "most-read time of day"
+msgstr "most-read time of day"
+
+msgid "most-read weekday"
+msgstr "most-read weekday"
+
+msgid "of reading this year"
+msgstr "of reading this year"
+
+msgid "peak reading hour"
+msgstr "peak reading hour"
+
+msgid "vs last week"
+msgstr "vs last week"
+
+msgid "vs the same days last week"
+msgstr "vs the same days last week"
