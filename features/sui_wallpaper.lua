@@ -55,7 +55,6 @@ local SUISettings  = require("infra/sui_store")
 local Backdrop     = require("infra/sui_backdrop")
 local Memory       = require("infra/sui_memory")
 local ImageWidget  = require("ui/widget/imagewidget")
-local UIManager    = require("ui/uimanager")
 local lfs          = require("libs/libkoreader-lfs")
 local Screen       = Device.screen
 
@@ -74,8 +73,9 @@ local _style_bg_cache_nm  = nil   -- Screen.night_mode value at cache-creation t
 -- scale_factor=nil and scale_factor=0 both produce a proportional fit.
 -- True stretch is achieved by decoding the source image into a Blitbuffer and
 -- calling bb:scale(sw, sh), which scales X and Y independently.  The scaled
--- bitmap is kept in _style_bg_cache_bb and freed together with the widget.
-local _style_bg_cache_bb = nil   -- pre-scaled Blitbuffer for stretch mode (or nil)
+-- bitmap is held in _style_bg_cache_bb only until the widget takes ownership.
+local _style_bg_cache_bb = nil   -- pre-scaled Blitbuffer for stretch mode, until the widget owns it (or nil)
+local _style_eraser_bb   = nil   -- screen-sized raster of the wallpaper for paintEraser, built on first use
 
 -- Lazy reference to ffi/pic (used only for auto-rotate dimension probe).
 local _pic = nil
@@ -142,8 +142,10 @@ local function _styleGetBgWidget()
     -- Dimensions or night-mode state changed — rebuild.
     if _style_bg_cache    then _style_bg_cache:free()    end
     if _style_bg_cache_bb then _style_bg_cache_bb:free() end
+    if _style_eraser_bb   then _style_eraser_bb:free()   end
     _style_bg_cache    = nil
     _style_bg_cache_bb = nil
+    _style_eraser_bb   = nil
 
     -- original_in_nightmode: true  = image is never inverted by KOReader.
     --                         false = KOReader inverts the image in night mode.
@@ -252,23 +254,8 @@ local function _styleGetBgWidget()
         _style_bg_cache_w  = sw
         _style_bg_cache_h  = sh
         _style_bg_cache_nm = nm
-        -- Eraser cache: always rasterize through ImageWidget:paintTo so the
-        -- pixels match a full-frame wallpaper paint (night mode, letterbox,
-        -- rotation). Stretch mode may already hold the scaled source bitmap
-        -- shared with the widget — that source is not freed here.
-        local source_bb = _style_bg_cache_bb
-        local ok_bb, canvas = pcall(function()
-            local Blitbuffer = require("ffi/blitbuffer")
-            local c = Blitbuffer.new(sw, sh)
-            c:fill(Blitbuffer.COLOR_WHITE)
-            w:paintTo(c, 0, 0)
-            return c
-        end)
-        if ok_bb and canvas then
-            _style_bg_cache_bb = canvas
-        elseif not source_bb then
-            _style_bg_cache_bb = nil
-        end
+        -- The widget owns the pre-scaled bitmap from here on.
+        _style_bg_cache_bb = nil
         return w
     end
     -- Build failed — clean up any decoded bitmap.
@@ -284,11 +271,32 @@ end
 local function _styleFreeBgCache()
     if _style_bg_cache    then _style_bg_cache:free()    end
     if _style_bg_cache_bb then _style_bg_cache_bb:free() end
+    if _style_eraser_bb   then _style_eraser_bb:free()   end
     _style_bg_cache    = nil
     _style_bg_cache_bb = nil
+    _style_eraser_bb   = nil
     _style_bg_cache_w  = 0
     _style_bg_cache_h  = 0
     _style_bg_cache_nm = nil
+end
+
+-- Screen-sized raster of the wallpaper, built on first use. It is produced by
+-- ImageWidget:paintTo so its pixels match a full-frame wallpaper paint (night
+-- mode, letterbox, rotation). Rebuilt with the widget when the screen changes.
+local function _eraserSource()
+    local w = _styleGetBgWidget()
+    if not w then return nil end
+    if not _style_eraser_bb then
+        local ok, canvas = pcall(function()
+            local Blitbuffer = require("ffi/blitbuffer")
+            local c = Blitbuffer.new(Screen:getWidth(), Screen:getHeight(), Screen.bb:getType())
+            c:fill(Blitbuffer.COLOR_WHITE)
+            w:paintTo(c, 0, 0)
+            return c
+        end)
+        if ok then _style_eraser_bb = canvas end
+    end
+    return _style_eraser_bb
 end
 
 -- Lazily asks the homescreen engine to free the cache (redundant but
@@ -556,6 +564,15 @@ function M.resolveBar(kind)
     return resolved()
 end
 
+-- True while a bar is fully transparent and the wallpaper image is loaded, so
+-- the bars show the wallpaper instead of a plain surface.
+function M.barsRevealWallpaper()
+    if M.resolveBar("navbar").strength > 0 and M.resolveBar("statusbar").strength > 0 then
+        return false
+    end
+    return _styleGetBgWidget() ~= nil
+end
+
 -- Look of a card or button surface as painted. Opacity applies only over a
 -- wallpaper; without one the surface is solid.
 function M.resolveSurface(surface)
@@ -675,10 +692,7 @@ function M.paintEraser(bb, x, y, w, h, strength, radius, color)
     end
 
     -- Base layer: wallpaper sub-rect, or solid surface when none is set.
-    if not _style_bg_cache_bb then
-        _styleGetBgWidget()
-    end
-    local src = _style_bg_cache_bb
+    local src = _eraserSource()
     local restored = false
     if src then
         local sw = src:getWidth()
@@ -708,24 +722,14 @@ function M.paintEraser(bb, x, y, w, h, strength, radius, color)
 end
 
 -- ---------------------------------------------------------------------------
--- Night-mode hook — free the wallpaper cache whenever night mode is toggled
--- so the next _styleGetBgWidget() call rebuilds with the correct inversion
--- state (original_in_nightmode reflects the new setting).
+-- Night-mode change — free the wallpaper cache and rebuild the layout so the
+-- next _styleGetBgWidget() call rebuilds with the correct inversion state
+-- (original_in_nightmode reflects the new setting). Called by the night-mode
+-- hook in infra/sui_patches.lua.
 -- ---------------------------------------------------------------------------
-local _orig_UIManager_ToggleNightMode = UIManager.ToggleNightMode
-function UIManager:ToggleNightMode()
-    _orig_UIManager_ToggleNightMode(self)
+function M.onNightModeChanged()
     _styleFreeBgCache()
     _notifyLayoutChanged()
-end
-
-local _orig_UIManager_SetNightMode = UIManager.SetNightMode
-if _orig_UIManager_SetNightMode then
-    function UIManager:SetNightMode(nightmode)
-        _orig_UIManager_SetNightMode(self, nightmode)
-        _styleFreeBgCache()
-        _notifyLayoutChanged()
-    end
 end
 
 Memory.onReset(M.freeCache)

@@ -170,12 +170,12 @@ local function _applyNavbarFill(widget, surface)
 end
 
 local function _getBarFg()
-    return _SUIStyle().COLOR.text_primary
+    return (Backdrop.contentColors(_navbarSurface()))
 end
 
 -- Returns the color for inactive/dim nav items.
 local function _getInactiveColor()
-    return _barColorInactiveText()
+    return select(2, Backdrop.contentColors(_navbarSurface(), _barColorInactiveText()))
 end
 
 -- ---------------------------------------------------------------------------
@@ -231,8 +231,13 @@ function M.invalidateDimCache()
     _vspan_icon_txt  = nil
 end
 
-function M.BAR_H()       return _cached("bar_h",   function() return math.floor(Screen:scaleBySize(96) * _getNavbarScale()) end) end
-function M.ICON_SZ()     return _cached("icon_sz", function() return math.floor(Screen:scaleBySize(44) * _getNavbarScale() * (_getIconScalePct()  / 100)) end) end
+-- Base sizes at 100%, in dp. The label font keeps its own base (see LABEL_FS),
+-- so the bar and the icons can shrink without shrinking the label.
+local BAR_H_DP = 77
+local ICON_DP  = 35
+
+function M.BAR_H()       return _cached("bar_h",   function() return math.floor(Screen:scaleBySize(BAR_H_DP) * _getNavbarScale()) end) end
+function M.ICON_SZ()     return _cached("icon_sz", function() return math.floor(Screen:scaleBySize(ICON_DP) * _getNavbarScale() * (_getIconScalePct()  / 100)) end) end
 function M.ICON_TOP_SP() return _cached("it_sp",   function() return math.floor(Screen:scaleBySize(10) * _getNavbarScale()) end) end
 function M.ICON_TXT_SP() return _cached("itxt_sp", function() return math.floor(Screen:scaleBySize(4)  * _getNavbarScale()) end) end
 function M.LABEL_FS()    return _cached("lbl_fs",  function()
@@ -326,9 +331,9 @@ function M.patchDimmedIcon(btn)
                 -- already pre-filled with an opaque backdrop colour: forcing
                 -- alpha = true here makes KOReader's own paintTo blend the
                 -- icon onto that backdrop through its real alpha channel
-                -- when it has one (e.g. an icon built by
-                -- Bottombar.withWallpaperAlphaIcons for a wallpaper), which
-                -- is what produces a correct opaque render for the mask.
+                -- when it has one (e.g. an icon built with alpha blending
+                -- for a wallpaper), which is what produces a correct opaque
+                -- render for the mask.
                 -- A plain icon with no alpha channel is unaffected either
                 -- way, since KOReader only takes the alpha-blend path when
                 -- the underlying bitmap actually carries one.
@@ -344,75 +349,6 @@ function M.patchDimmedIcon(btn)
             end
         end
         orig_lw_pt(self_lw, bb, x, y)
-    end
-end
-
--- ---------------------------------------------------------------------------
--- withWallpaperAlphaIcons(fn) — runs fn() with every IconWidget built during
--- its execution alpha-blended by default, then restores the original
--- constructor.
---
--- IconWidget's render is lazy but caches on its first getSize()/paintTo()
--- call, baking in whichever alpha value was set at that point — and a
--- Button measures its own icon (triggering that first render) while
--- sizing itself in init(), before the caller ever gets a handle back to
--- patch anything. By the time Button:new() returns, an icon meant to sit
--- transparently over a wallpaper has already been rendered flat and
--- cached that way; flipping .alpha afterwards has no effect. The icon has
--- to be born with alpha = true, which means patching IconWidget.init for
--- the duration of construction.
---
--- Same technique infra/sui_patches.lua applies globally, for the whole
--- lifetime of the FileManager wallpaper; this scoped variant gives any
--- other caller (e.g. the section label in engines/sui_section_label.lua) the same guarantee
--- for a handful of buttons without a global patch.
--- ---------------------------------------------------------------------------
-function M.withWallpaperAlphaIcons(fn)
-    local IconWidget = require("ui/widget/iconwidget")
-    local orig_init = IconWidget.init
-    IconWidget.init = function(self, ...)
-        orig_init(self, ...)
-        self.alpha = true
-        self.original_in_nightmode = false
-    end
-    local ok, err = pcall(fn)
-    IconWidget.init = orig_init
-    if not ok then error(err) end
-end
-
--- ---------------------------------------------------------------------------
--- patchWallpaperIcon(btn) — makes an icon Button's frame paint transparently
--- over a wallpaper.
---
--- Button always gives its inner FrameContainer an opaque background
--- (COLOR_WHITE) unless the Button itself was created with an explicit
--- `background`, painting straight over whatever sits behind the button and
--- hiding the wallpaper underneath it. Only handles the frame — the icon
--- itself must already have been built with alpha blending on, via
--- withWallpaperAlphaIcons above.
---
--- Same technique infra/sui_patches.lua uses to make FileManager's own icon
--- Buttons transparent over its wallpaper (nil the frame background while
--- painting), applied here per-instance for callers that only need it on a
--- specific button rather than every Button in the app — e.g.
--- the section label (engines/sui_section_label.lua) for the book-grid header's
--- pagination chevrons.
--- ---------------------------------------------------------------------------
-function M.patchWallpaperIcon(btn)
-    if not btn or btn._sui_wallpaper_patched then return end
-    btn._sui_wallpaper_patched = true
-
-    local orig_pt = btn.paintTo
-    btn.paintTo = function(self_btn, bb, x, y)
-        local frame = self_btn[1]
-        if frame and frame.background then
-            local saved_bg = frame.background
-            frame.background = nil
-            orig_pt(self_btn, bb, x, y)
-            frame.background = saved_bg
-        else
-            orig_pt(self_btn, bb, x, y)
-        end
     end
 end
 
@@ -496,6 +432,7 @@ function M.buildTabCell(action_id, active, tab_w, mode)
         mode                     = mode,
         full_width               = full_width,
         fgcolor                  = _getBarFg(),
+        surface_color            = surface.color,
         inactive_indicator_color = inactive_indicator_color,
     })
 
@@ -814,23 +751,11 @@ function M.buildBarWidgetWithKeyFocus(active_action_id, tab_config, kbfocus_idx,
     local usable_w = _UI().getUsableW(screen_w)
     local widths   = M.getTabWidths(num_tabs, usable_w)
     local hg_args  = { align = "top" }
-    local bw       = Screen:scaleBySize(3)
-    
     for i = 1, num_tabs do
         local action_id = tab_config[i]
         local cell = M.buildTabCell(action_id, action_id == active_action_id, widths[i], mode)
         if i == kbfocus_idx then
-            local tw    = widths[i]
-            local tab_h = M.BAR_H()
-            local kbfg  = _getBarFg()
-            cell = OverlapGroup():new{
-                dimen = Geom():new{ w = tw, h = tab_h },
-                cell,
-                LineWidget():new{ dimen = Geom():new{ w = tw, h = bw },    background = kbfg },
-                LineWidget():new{ dimen = Geom():new{ w = tw, h = bw },    background = kbfg, overlap_offset = {0, tab_h - bw} },
-                LineWidget():new{ dimen = Geom():new{ w = bw, h = tab_h }, background = kbfg },
-                LineWidget():new{ dimen = Geom():new{ w = bw, h = tab_h }, background = kbfg, overlap_offset = {tw - bw, 0} },
-            }
+            cell = _UI().wrapFocusRing(cell, widths[i], M.BAR_H(), _getBarFg())
         end
         hg_args[#hg_args + 1] = cell
     end
@@ -848,8 +773,6 @@ local function _showNavbarSettingsWindow(plugin)
             items          = plugin._makeNavbarMenu(ctx_menu),
             inner_w        = ctx.inner_w,
             repaint        = function() ctx.repaint() end,
-            lock_overlay   = ctx.lockOverlay,
-            unlock_overlay = ctx.unlockOverlay,
             push_stack     = function(id, params)
                 if type(id) == "string" then ctx.push(id, params) else ctx.push("nested_menu", params) end
             end,

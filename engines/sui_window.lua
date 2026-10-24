@@ -9,7 +9,7 @@
 --   SUIWindow.*      — UI components (flat namespace, no C. sub-table):
 --                        TitleRow, ListRow, Button, Section, MenuTable, ActionMenu
 --                        Card (base), PageCard, ModuleCard, ArrangeCard
---                        ArrangeList, TwoButtonFooter, CenteredButtonFooter
+--                        ArrangeList, BentoRow, BentoMap, TwoButtonFooter, CenteredButtonFooter
 --
 -- Minimal usage:
 --
@@ -31,7 +31,6 @@
 --   ctx.pop()            — go back to the previous screen
 --   ctx.repaint()        — rebuild the current screen
 --   ctx.close()          — close the window
---   ctx.withOverlay(fn)  — run fn() while blocking onTapOutside; safe even if fn throws
 --
 -- screens map:
 --   The __root__ key is the entry screen.  All other keys are sub-screens
@@ -55,6 +54,7 @@
 --   PageCard  — top-level entity with identity (e.g. a page); tap navigates, delete optional
 --   ModuleCard— editable entity with action menu (move, edit); delete optional
 --   ArrangeCard / ArrangeList — reorder-only mode, move up/down arrows
+--   BentoMap  — rows of a bento page as blocks proportional to the module widths
 --
 -- ── Reproducing a KOReader menu inside a SUIWindow ───────────────────────────
 --
@@ -95,6 +95,11 @@
 --      end
 --
 -- Icon reference: SUIStyle.icon("name") — never raw codepoints.
+--
+-- Accent colour: with one set, bare glyphs (except the one in a window's title),
+-- a row's right-hand value and the rules between rows are drawn in it; frames
+-- take the accent too, and a glyph inside one is drawn in it as well. Use UI.makeAccentText for text and
+-- glyphs, and _clrFrame / _clrSeparator for frames and rules.
 
 local Blitbuffer      = require("ffi/blitbuffer")
 local BottomContainer = require("ui/widget/container/bottomcontainer")
@@ -103,6 +108,7 @@ local CenterContainer = require("ui/widget/container/centercontainer")
 local Device          = require("device")
 local Font            = require("ui/font")
 local FrameContainer  = require("ui/widget/container/framecontainer")
+local RoundedFrame    = require("infra/sui_backdrop").RoundedFrame
 local Geom            = require("ui/geometry")
 local GestureRange    = require("ui/gesturerange")
 local HorizontalGroup = require("ui/widget/horizontalgroup")
@@ -116,8 +122,10 @@ local Size            = require("ui/size")
 local T               = require("ffi/util").template
 local _               = require("infra/sui_i18n").translate
 local BD              = require("ui/bidi")
+local TextBoxWidget   = require("ui/widget/textboxwidget")
 local TextWidget      = require("ui/widget/textwidget")
 local UIManager       = require("ui/uimanager")
+local EventListener   = require("ui/widget/eventlistener")
 local VerticalGroup   = require("ui/widget/verticalgroup")
 local VerticalSpan    = require("ui/widget/verticalspan")
 local Screen          = Device.screen
@@ -142,6 +150,12 @@ local DateNames = require("infra/sui_datenames")
 -- build can begin.
 local _sui_scale = 1
 local function SZ(n) return math.floor(n * _sui_scale) end
+
+-- Accent colour of a window's chrome, each falling back to its neutral gray:
+-- inner frames, the rules between rows, and the rule under the title bar.
+local function _clrFrame()     return SUIStyle.accent(SUIStyle.COLOR.gray) end
+local function _clrSeparator() return SUIStyle.accent(SUIStyle.COLOR.gray_strong) end
+local function _clrTitleRule() return SUIStyle.accent(SUIStyle.COLOR.text_primary) end
 
 -- Face of the symbol-font glyphs drawn by icon buttons.
 local function _iconFace(size)
@@ -171,28 +185,6 @@ local function _hitRange(widget, hit, bounds)
     end
 end
 
--- Runs `fn` after acknowledging a tap the way KOReader's own buttons do: the
--- `target` frame is shown inverted for one e-ink refresh, then restored before
--- `fn` runs, so `fn` is free to close or repaint the window. `target` is
--- optional; the flash_ui setting turns the acknowledgement off.
-local function _runWithTapFeedback(target, fn)
-    if not target or G_reader_settings:isFalse("flash_ui") then return fn() end
-
-    local region = target.dimen:copy()
-    target.invert = true
-    UIManager:widgetInvert(target, region.x, region.y)
-    UIManager:setDirty(nil, "fast", region)
-    UIManager:forceRePaint()
-    UIManager:yieldToEPDC()
-
-    target.invert = false
-    UIManager:widgetInvert(target, region.x, region.y)
-    UIManager:setDirty(nil, "fast", region)
-
-    fn()
-    UIManager:forceRePaint()
-end
-
 -- ---------------------------------------------------------------------------
 -- Physical-key (D-pad) focus navigation — build-time registration
 -- ---------------------------------------------------------------------------
@@ -216,6 +208,23 @@ local function _kbPush(win) _kb_build_stack[#_kb_build_stack + 1] = win end
 local function _kbPop() _kb_build_stack[#_kb_build_stack] = nil end
 local function _kbCurrent() return _kb_build_stack[#_kb_build_stack] end
 
+-- True when the focus stop `idx` of `win` holds the visible D-pad focus. The
+-- highlight only shows once the D-pad has been used (see _kb_focus_active).
+local function _kbHasFocus(win, idx)
+    return win._kb_focus_idx == idx and win._kb_focus_active
+end
+
+-- Reserves the next focus stop of the window being built and returns its
+-- index, for a container whose own tap must be reached before the controls
+-- built inside it; pass it to Input.tapable as `focus_slot`. nil without a
+-- D-pad. Only reserve for a container that will be a tappable with `on_tap`.
+local function _kbReserve()
+    local win = Device:hasDPad() and _kbCurrent()
+    if not win then return nil end
+    win._kb_focus_count = (win._kb_focus_count or 0) + 1
+    return win._kb_focus_count
+end
+
 -- ===========================================================================
 -- SUIWindow — public API
 -- ===========================================================================
@@ -227,6 +236,22 @@ SUIWindow.__index = SUIWindow
 -- in sui_config can resolve a wrapper back to its owning object and read the
 -- precise _current_page / _total_pages without walking into the widget tree.
 SUIWindow._open_instances = {}
+
+-- A window opened over another one is narrower than it, so the two frames do
+-- not share their side edges; never narrower than this share of the screen.
+local STACK_WIDTH_RATIO = 0.88
+local STACK_MIN_RATIO   = 0.6
+
+--- Width, in portrait pixels, for a window about to open over the topmost open
+--- window: a share of that window's width, at least a share of the screen.
+--- Nil when no window is open, so the window takes the default width.
+function SUIWindow.stackedWidth()
+    local top = SUIWindow._open_instances[#SUIWindow._open_instances]
+    if not top then return nil end
+    local portrait_w = UI.getPortraitDims()
+    return math.max(math.floor(top._base_w * STACK_WIDTH_RATIO),
+                    math.floor(portrait_w * STACK_MIN_RATIO))
+end
 
 --- Creates a new modal window.
 ---
@@ -253,6 +278,8 @@ SUIWindow._open_instances = {}
 ---   on_dismiss     function() | nil — only when the user dismisses it (tap
 ---                                  outside, Back key, close button), before it
 ---                                  closes; not when code calls close()
+---   dismissable    boolean | nil — false makes tap outside and the Back key
+---                                  do nothing; only close() closes it
 ---   on_back        function() | nil — when set, the title bar shows a back
 ---                                  chevron at the root screen (and the
 ---                                  physical Back key follows it). Using it
@@ -263,6 +290,12 @@ SUIWindow._open_instances = {}
 ---                  — bottom-right button running a screen-specific action,
 ---                    drawn on the root screen only. `glyph` comes from
 ---                    SUIStyle.icon(). Ignored when has_settings_btn is set.
+---   left_btn       { glyph = string, label = function()→string | nil,
+---                    on_tap = function(ctx) } | nil
+---                  — bottom-left button, drawn on the root screen only, the
+---                    mirror of the bottom-right one. `glyph` comes from
+---                    SUIStyle.icon(). `label`, read on every repaint, turns
+---                    the square into a pill with the text beside the glyph.
 ---   nav_path       { {id, params}, ... } | nil — screens pushed on top of the
 ---                                  root before the first paint
 ---   width          number | nil  — px (default: 5/6 of screen)
@@ -285,6 +318,16 @@ SUIWindow._open_instances = {}
 ---                                  screen still keeps whatever height was
 ---                                  last set, same as plain auto_height.
 ---                                  Implies auto_height; no need to pass both.
+---   auto_height_per_screen
+---                  bool | nil    — when true, extends auto_height_per_page
+---                                  to screen changes too: every _navPush /
+---                                  _navPop fits the window to the height the
+---                                  new screen needs. Implies
+---                                  auto_height_per_page.
+---   bottom_inset   number | nil  — px at the bottom of the screen the modal must
+---                                  stay clear of (e.g. an on-screen keyboard);
+---                                  the modal is placed in the area above it.
+---                                  setBottomInset() changes it before show().
 ---   navpager_mode  bool | nil    — when true, the window registers onPrevPage /
 ---                                  onNextPage / onGotoPage / page_num on its wrapper
 ---                                  so the bottom-bar navpager can drive pagination,
@@ -293,6 +336,12 @@ SUIWindow._open_instances = {}
 ---                                  the navbar region).
 ---
 --- @return SUIWindow
+-- Height of a window that passes no `height`: 23/30 of the portrait height, before
+-- the landscape factor. Callers that size content to the window use it too.
+function SUIWindow.defaultHeight()
+    return math.floor((select(2, UI.getPortraitDims())) * 23 / 30)
+end
+
 function SUIWindow:new(opts)
     assert(type(opts.screens) == "table" and type(opts.screens.__root__) == "function",
         "SUIWindow:new — opts.screens.__root__ (function) is required")
@@ -313,17 +362,19 @@ function SUIWindow:new(opts)
     -- shrink on top of an already-swapped axis, squashing height instead of
     -- scaling both axes down uniformly. opts.width/opts.height, when passed
     -- explicitly by callers, are likewise expected to be portrait-based.
-    local portrait_w, portrait_h = UI.getPortraitDims()
+    local portrait_w = UI.getPortraitDims()
     local landscape_factor = UI.getLandscapeFactor()
     o._scale         = landscape_factor
-    o._modal_w       = math.floor((opts.width  or math.floor(portrait_w * 5 / 6))  * landscape_factor)
-    o._modal_h       = math.floor((opts.height or math.floor(portrait_h * 23 / 30)) * landscape_factor)
+    o._base_w        = opts.width or math.floor(portrait_w * 5 / 6)
+    o._modal_w       = math.floor(o._base_w * landscape_factor)
+    o._modal_h       = math.floor((opts.height or SUIWindow.defaultHeight()) * landscape_factor)
     o._screen_w      = sw
     o._screen_h      = sh
     o._pad_v         = math.floor(Size.padding.large   * landscape_factor)
     o._pad_h         = math.floor(Screen:scaleBySize(20) * landscape_factor)
     o._inner_w       = o._modal_w - 2 * o._pad_h
     o._navpager_mode = opts.navpager_mode == true
+    o._bottom_inset  = opts.bottom_inset or 0
     -- When true, the window shrinks to fit page 1's content instead of
     -- always occupying the full opts.height/default height. Only applied on
     -- the window's first paint. When content fits on one page, that's the
@@ -341,7 +392,8 @@ function SUIWindow:new(opts)
     -- actually needs — see _last_fit_screen_id / same_screen_as_last_fit in
     -- _rebuildFrame. Screen changes are deliberately excluded from this and
     -- keep the plain auto_height behaviour (frozen after first paint).
-    o._auto_height_per_page = opts.auto_height_per_page == true
+    o._auto_height_per_screen = opts.auto_height_per_screen == true
+    o._auto_height_per_page = opts.auto_height_per_page == true or o._auto_height_per_screen
     if o._auto_height_per_page then o._auto_height = true end
     o._last_fit_screen_id = nil
     o._first_paint_done = false
@@ -353,7 +405,8 @@ function SUIWindow:new(opts)
     o._has_settings_btn = opts.has_settings_btn == true
     o._icon          = opts.icon or (o._has_settings_btn and "settings" or nil)
     o._action_btn    = opts.action_btn
-    o._corner_btn_rect = nil
+    o._left_btn      = opts.left_btn
+    o._corner_btn_rects = nil
     o._name          = opts.name or "sui_win_unnamed"
     -- When true, _buildTitleBar/_rebuildFrame skip the TitleBar entirely (no
     -- title text, no bottom line, no close-X) and the modal's full height is
@@ -367,6 +420,7 @@ function SUIWindow:new(opts)
     o._screens        = opts.screens
     o._on_close       = opts.on_close
     o._on_dismiss     = opts.on_dismiss
+    o._dismissable    = opts.dismissable ~= false
     o._on_back        = opts.on_back
     o._screen_headers = opts.screen_headers or {}
     o._screen_footers = opts.screen_footers or {}
@@ -380,9 +434,6 @@ function SUIWindow:new(opts)
 
     o._wrapper      = nil
     o._modal_frame  = nil
-
-    -- Overlay counter: > 0 means a dialog sits on top; onTapOutside is suppressed.
-    o._overlay_count = 0
 
     o._title_bar_h  = nil
 
@@ -420,7 +471,9 @@ function SUIWindow:show()
         bot_h = Bottombar_early.AREA_H()
     end
 
-    -- Usable region: from top_h to (screen_h - bot_h).
+    -- Usable region: from top_h to (screen_h - bot_h), where the bottom
+    -- reserved by the caller covers the navbar when it is the taller of the two.
+    bot_h = math.max(bot_h, self._bottom_inset)
     local usable_h = self._screen_h - top_h - bot_h
     -- Clamp modal height so it always fits within the usable area.
     if self._modal_h > usable_h then
@@ -471,9 +524,6 @@ function SUIWindow:show()
             local stack = UIManager._window_stack
             if stack and #stack > 0 and stack[#stack].widget ~= self then
                 return false
-            end
-            if (win._overlay_count or 0) > 0 then
-                return true
             end
             if mf.dimen and not ges.pos:intersectWith(mf.dimen) then
                 win:dismiss()
@@ -544,21 +594,11 @@ function SUIWindow:show()
         self._wrapper.key_events.KbFocusDown   = { { "Down" } }
         self._wrapper.key_events.KbFocusSelect = { { "Press" } }
         function self._wrapper:onKbFocusUp()
-            local n = #win._kb_focusables
-            if n > 0 then
-                win._kb_focus_idx = ((win._kb_focus_idx or 1) - 2) % n + 1
-                win._kb_focus_active = true
-                win:_repaint()
-            end
+            win:_kbMoveFocus(-1)
             return true
         end
         function self._wrapper:onKbFocusDown()
-            local n = #win._kb_focusables
-            if n > 0 then
-                win._kb_focus_idx = (win._kb_focus_idx or 0) % n + 1
-                win._kb_focus_active = true
-                win:_repaint()
-            end
+            win:_kbMoveFocus(1)
             return true
         end
         function self._wrapper:onKbFocusSelect()
@@ -708,6 +748,25 @@ function SUIWindow:show()
     UIManager:nextTick(function() self:_updateNavbarArrows() end)
 end
 
+--- Width in px available to the content of a screen.
+--- @return number
+function SUIWindow:getInnerWidth()
+    return self._inner_w
+end
+
+--- Landscape-aware size multiplier of the window, the one ctx.SZ applies.
+--- @return number
+function SUIWindow:getScale()
+    return self._scale
+end
+
+--- Reserves `height` px at the bottom of the screen; the modal is then placed
+--- in the area above it. Takes effect when set before show().
+--- @param height number
+function SUIWindow:setBottomInset(height)
+    self._bottom_inset = height or 0
+end
+
 --- Returns the widget shown by UIManager while the window is open, so code
 --- that only knows UIManager:close() can dismiss it.
 --- @return table|nil
@@ -732,6 +791,24 @@ function SUIWindow:_modalRegion()
     }
 end
 
+--- Moves the D-pad focus `step` stops along the ring, wrapping around, and
+--- repaints once. The stops it leaves and reaches run their `on_blur` (given
+--- the stop reached) and `on_focus`.
+function SUIWindow:_kbMoveFocus(step)
+    local n = #self._kb_focusables
+    if n == 0 then return end
+    local old = self._kb_focus_idx or 1
+    local new = (old - 1 + step) % n + 1
+    local from, to = self._kb_focus_hooks[old], self._kb_focus_hooks[new]
+    if old ~= new then
+        if from and from.on_blur then from.on_blur(to) end
+        self._kb_focus_idx = new
+        if to and to.on_focus then to.on_focus() end
+    end
+    self._kb_focus_active = true
+    self:_repaint()
+end
+
 --- Closes the window and returns to whatever opened it (see opts.on_back).
 function SUIWindow:_goBack()
     self:close()
@@ -740,9 +817,18 @@ end
 
 --- Closes the window as the user dismissing it: runs `on_dismiss`, then closes.
 function SUIWindow:dismiss()
-    if self._closed then return end
+    if self._closed or not self._dismissable then return end
     if self._on_dismiss then pcall(self._on_dismiss) end
     self:close()
+end
+
+--- Closes every open window that can be dismissed, topmost first.
+function SUIWindow.closeAll()
+    local instances = SUIWindow._open_instances
+    for i = #instances, 1, -1 do
+        local window = instances[i]
+        if window and window._dismissable then window:close() end
+    end
 end
 
 --- Closes the window.
@@ -831,18 +917,6 @@ function SUIWindow:close()
     end
 end
 
---- Runs fn() while holding an overlay lock so that onTapOutside cannot close
---- the window during a dialog.  Safe even if fn() throws.
---- @param fn function
-function SUIWindow:withOverlay(fn)
-    self._overlay_count = (self._overlay_count or 0) + 1
-    local ok, err = pcall(fn)
-    self._overlay_count = math.max(0, (self._overlay_count or 0) - 1)
-    if not ok then
-        logger.warn("SUIWindow:withOverlay — fn error: " .. tostring(err))
-    end
-end
-
 
 
 -- ===========================================================================
@@ -862,8 +936,25 @@ function SUIWindow:_navPush(screen_id, params)
     self:_repaint()
 end
 
+--- Shows `screen_id` (a key of the window's `screens`) on top of the current
+--- screen. `params.on_close` runs when the screen is left.
+function SUIWindow:push(screen_id, params)
+    self:_navPush(screen_id, params)
+end
+
+--- Leaves the current screen for the one below it, or `opts.levels` screens
+--- at once, with a single repaint. A no-op at the root.
+function SUIWindow:pop(opts)
+    self:_navPop(opts)
+end
+
+--- True from show() until the window closes.
+function SUIWindow:isOpen()
+    return not self._closed
+end
+
 function SUIWindow:_navPop(opts)
-    if #self._nav_stack > 1 then
+    for _i = 1, math.min(opts and opts.levels or 1, #self._nav_stack - 1) do
         local popped = table.remove(self._nav_stack)
         if popped.params and type(popped.params.on_close) == "function" then
             pcall(popped.params.on_close)
@@ -885,6 +976,30 @@ end
 -- Height reserved at the bottom of a paginated screen for the dot bar.
 local function _dotBarH()
     return SZ(Screen:scaleBySize(28)) + SZ(Screen:scaleBySize(18))
+end
+
+--- Icon button flush with an end of a title row. Its tap area reaches out to
+--- the window frame, one glyph width towards the heading, and `pad_top` /
+--- `pad_bottom` px past the row; it never extends beyond the modal frame.
+--- A button whose tap closes the window passes `closes` so the close paints
+--- cleanly. The glyph keeps the primary text colour, never the accent.
+--- @return InputContainer
+function SUIWindow:titleButton(icon, edge, on_tap, closes, pad_top, pad_bottom)
+    local win = self
+    return SUIWindow.Input.iconButton{
+        icon   = icon,
+        color  = SUIStyle.COLOR.text_primary,
+        edge   = edge,
+        on_tap = on_tap,
+        flash  = not closes,
+        hit    = {
+            outer  = self._pad_h,
+            inner  = _iconFace().size,
+            top    = pad_top,
+            bottom = pad_bottom,
+        },
+        bounds = function() return win:_modalRegion() end,
+    }
 end
 
 --- Builds the title bar for the current ctx: back button on the left, close
@@ -933,24 +1048,10 @@ function SUIWindow:_buildTitleBar(ctx)
     end
 
     local pad_top, pad_bottom = SZ(Screen:scaleBySize(14)), SZ(Screen:scaleBySize(12))
-    local function titleButton(icon, edge, on_tap, closes)
-        return SUIWindow.Input.iconButton{
-            icon   = icon,
-            edge   = edge,
-            on_tap = on_tap,
-            flash  = not closes,
-            hit    = {
-                outer  = win._pad_h,
-                inner  = _iconFace().size,
-                top    = pad_top,
-                bottom = pad_bottom,
-            },
-            bounds = function() return win:_modalRegion() end,
-        }
-    end
-
-    local back  = left_cb and titleButton("chevron_left", "left", left_cb, left_closes)
-    local close = titleButton("close", "right", function() win:dismiss() end, true)
+    local back  = left_cb and self:titleButton("chevron_left", "left", left_cb, left_closes,
+        pad_top, pad_bottom)
+    local close = self:titleButton("close", "right", function() win:dismiss() end, true,
+        pad_top, pad_bottom)
     -- The same width is reserved on both sides, so the heading stays centred
     -- whether or not the back button is shown.
     local side_w = math.max(back and back:getSize().w or 0, close:getSize().w)
@@ -977,7 +1078,7 @@ function SUIWindow:_buildTitleBar(ctx)
         VerticalSpan:new{ width = pad_bottom },
         LineWidget:new{
             dimen      = Geom:new{ w = self._inner_w, h = Size.line.medium },
-            background = SUIStyle.COLOR.text_primary,
+            background = _clrTitleRule(),
         },
     }
     return bar, bar:getSize().h
@@ -1015,7 +1116,7 @@ function SUIWindow:_rebuildFrame(ctx, items)
     -- auto_height_per_page needs to keep re-fitting live, instead of only
     -- on the very first paint.
     local same_screen_as_last_fit = self._auto_height_per_page
-        and self._last_fit_screen_id == frame_id
+        and (self._auto_height_per_screen or self._last_fit_screen_id == frame_id)
     self._last_fit_screen_id = frame_id
 
     local shrink_to_fit = self._auto_height and not self:_hasCornerBtn()
@@ -1141,10 +1242,10 @@ function SUIWindow:_rebuildFrame(ctx, items)
         end
     end
 
-    local corner_btn
+    local corner_btn, left_btn
     if self._has_settings_btn then
         corner_btn = {
-            icon   = "appbar.settings",
+            glyph  = SUIStyle.icon("settings"),
             on_tap = function()
                 self:close()
                 require("screens/sui_settings_window"):show()
@@ -1157,13 +1258,27 @@ function SUIWindow:_rebuildFrame(ctx, items)
             on_tap = function() action.on_tap(ctx) end,
         }
     end
-    self._corner_btn_rect = nil
-    if corner_btn then
+    if self:_hasLeftBtn() then
+        local left = self._left_btn
+        left_btn = {
+            glyph  = left.glyph,
+            label  = left.label and left.label(),
+            on_tap = function() left.on_tap(ctx) end,
+        }
+    end
+    self._corner_btn_rects = {}
+    if corner_btn or left_btn then
         final_widget = OverlapGroup:new{
             dimen = Geom:new{ w = self._inner_w, h = inner_h },
             final_widget,
-            self:_buildCornerButton(corner_btn, inner_h, dot_h),
         }
+        -- Left first, so the focus ring follows the visual order.
+        if left_btn then
+            final_widget[#final_widget + 1] = self:_buildCornerButton(left_btn, inner_h, dot_h, "left")
+        end
+        if corner_btn then
+            final_widget[#final_widget + 1] = self:_buildCornerButton(corner_btn, inner_h, dot_h, "right")
+        end
     end
 
     if shrink_to_fit then
@@ -1241,6 +1356,7 @@ function SUIWindow:_repaint()
     end
     self._kb_focus_count = 0
     self._kb_focusables   = {}
+    self._kb_focus_hooks  = {}
 
     local ctx = {
         inner_w       = self._inner_w,
@@ -1267,9 +1383,6 @@ function SUIWindow:_repaint()
         repaint       = function() win:_repaint() end,
         close         = function() win:close() end,
         jump_to_last_page = function() win._force_last_page = true end,
-        withOverlay   = function(fn) win:withOverlay(fn) end,
-        lockOverlay   = function() win._overlay_count = (win._overlay_count or 0) + 1 end,
-        unlockOverlay = function() win._overlay_count = math.max(0, (win._overlay_count or 0) - 1) end,
         addSwipe      = function(ic)
             if not Device:isTouchDevice() then return end
             ic.ges_events = ic.ges_events or {}
@@ -1433,8 +1546,26 @@ function SUIWindow:_buildPages(widgets, avail_h, shrink_to_fit, fit_page_idx)
     local cur_h  = 0
     table.insert(pages, cur_vg)
 
-    for _, w in ipairs(widgets) do
+    local queue = { unpack(widgets) }
+    local qi = 0
+    while qi < #queue do
+        qi = qi + 1
+        local w = queue[qi]
         local wh = w:getSize().h
+        if w.fill_group and not w.force_new_page and cur_h > 0 and cur_h + wh > avail_h then
+            -- Gap filling: while w does not fit, take the next widget of the
+            -- same fill_group that does, so a page is not left half empty.
+            local j = qi + 1
+            while queue[j] and queue[j].fill_group == w.fill_group and not queue[j].force_new_page do
+                local jh = queue[j]:getSize().h
+                if cur_h + jh <= avail_h then
+                    table.insert(cur_vg, table.remove(queue, j))
+                    cur_h = cur_h + jh
+                else
+                    j = j + 1
+                end
+            end
+        end
         if w.force_new_page and cur_h > 0 then
             -- Explicit page break: this widget must always start
             -- a new page, regardless of whether it fits in the remaining
@@ -1578,85 +1709,102 @@ function SUIWindow:_hasActionBtn()
     return self._action_btn ~= nil and #self._nav_stack == 1
 end
 
+-- True when the bottom-left button is shown (root screen only).
+function SUIWindow:_hasLeftBtn()
+    return self._left_btn ~= nil and #self._nav_stack == 1
+end
+
 -- True when a corner button occupies the page-dot row on the current screen.
 function SUIWindow:_hasCornerBtn()
-    return self._has_settings_btn or self:_hasActionBtn()
+    return self._has_settings_btn or self:_hasActionBtn() or self:_hasLeftBtn()
 end
 
 -- Corner controls and toolbar buttons share one size and corner radius.
 local function _cornerSize()   return SZ(Screen:scaleBySize(40)) end
 local function _cornerRadius() return SZ(Screen:scaleBySize(8)) end
 
---- Bordered square button with an icon-font glyph or an SVG icon. Its tap
---- target extends slightly past the border.
+--- Bordered square button with an icon-font glyph. Its tap target extends
+--- slightly past the border.
 ---
 --- @param opts table
 ---   on_tap  function  — required
----   glyph   string    — icon-font text, from SUIStyle.icon()
----   icon    string    — SVG icon name, used when no glyph is given
+---   glyph   string    — required; icon-font text, from SUIStyle.icon()
+---   label   string    — optional; widens the button into a pill with the
+---                       text beside the glyph
 ---
---- @return InputContainer
+--- @return InputContainer  tappable, and a D-pad focus stop
 function SUIWindow.SquareButton(opts)
     local btn_size  = _cornerSize()
     local border_sz = SUIStyle.BORDER_SZ
     local content_w = btn_size - border_sz * 2
+    local color     = SUIStyle.COLOR.text_primary
 
-    local content
-    if opts.glyph then
-        content = TextWidget:new{
-            text    = opts.glyph,
-            face    = Font:getFace(SUIStyle.FACE_ICONS, SZ(SUIStyle.FS_TITLE)),
-            fgcolor = SUIStyle.COLOR.text_primary,
+    local glyph = UI.makeAccentText({
+        text = opts.glyph,
+        face = Font:getFace(SUIStyle.FACE_ICONS, SZ(SUIStyle.FS_TITLE)),
+    }, color)
+
+    local frame
+    if opts.label then
+        local content = HorizontalGroup:new{ align = "center",
+            glyph,
+            HorizontalSpan:new{ width = SZ(Screen:scaleBySize(8)) },
+            UI.makeAccentText({
+                text    = opts.label,
+                face    = Font:getFace(SUIStyle.FACE_REGULAR, SZ(SUIStyle.FS_CAPTION)),
+                padding = 0,
+            }, color),
+        }
+        local spare = math.max(0, content_w - content:getSize().h)
+        local pad_v = math.floor(spare / 2)
+        frame = RoundedFrame:new{
+            radius         = _cornerRadius(),
+            bordersize     = border_sz,
+            background     = SUIStyle.COLOR.surface,
+            color          = _clrFrame(),
+            padding        = 0,
+            padding_top    = pad_v,
+            padding_bottom = spare - pad_v,
+            padding_left   = SZ(Screen:scaleBySize(16)),
+            padding_right  = SZ(Screen:scaleBySize(16)),
+            content,
         }
     else
-        local icon_size = math.floor(btn_size * 0.70)
-        content = require("ui/widget/iconwidget"):new{
-            icon   = opts.icon,
-            width  = icon_size,
-            height = icon_size,
-        }
-    end
-
-    local btn = InputContainer:new{
-        dimen = Geom:new{ w = btn_size, h = btn_size },
-        [1]   = FrameContainer:new{
+        frame = RoundedFrame:new{
             dimen      = Geom:new{ w = btn_size, h = btn_size },
             radius     = _cornerRadius(),
             bordersize = border_sz,
             background = SUIStyle.COLOR.surface,
-            color      = SUIStyle.COLOR.gray,
+            color      = _clrFrame(),
             padding    = 0,
             [1]        = CenterContainer:new{
                 dimen = Geom:new{ w = content_w, h = content_w },
-                [1]   = content,
+                [1]   = glyph,
             },
-        },
-    }
-    local reach = SZ(Screen:scaleBySize(20))
-    btn.ges_events = {
-        TapCorner = {
-            GestureRange:new{ ges = "tap", range = _hitRange(btn, {
-                left = reach, right = reach, top = reach, bottom = reach,
-            }) },
-        },
-    }
-    function btn:onTapCorner()
-        opts.on_tap()
-        return true
+        }
     end
-    return btn
+    local size  = frame:getSize()
+    local reach = SZ(Screen:scaleBySize(20))
+    return SUIWindow.Input.tapable(
+        frame,
+        { on_tap = opts.on_tap },
+        Geom:new{ w = size.w, h = size.h },
+        { hit = { left = reach, right = reach, top = reach, bottom = reach } }
+    )
 end
 
--- Anchors a square button to the bottom-right corner of the inner area,
--- vertically centred in the page-dot row. `spec` is a SquareButton spec. The
--- button's horizontal span is recorded so the dot bar lets taps on it through.
-function SUIWindow:_buildCornerButton(spec, inner_h, dot_h)
+-- Anchors a square button to the bottom-right ("right") or bottom-left
+-- ("left") corner of the inner area, vertically centred in the page-dot row.
+-- `spec` is a SquareButton spec. The button's horizontal span is recorded so
+-- the dot bar lets taps on it through.
+function SUIWindow:_buildCornerButton(spec, inner_h, dot_h, side)
     local btn      = SUIWindow.SquareButton(spec)
-    local btn_size = btn.dimen.w
-    local offset_x = self._inner_w - btn_size
-    local offset_y = inner_h - dot_h + math.floor((dot_h - btn_size) / 2)
+    local btn_w    = btn.dimen.w
+    local offset_x = (side == "left") and 0 or (self._inner_w - btn_w)
+    local offset_y = inner_h - dot_h + math.floor((dot_h - btn.dimen.h) / 2)
     btn.overlap_offset = { offset_x, offset_y }
-    self._corner_btn_rect = { x = offset_x, w = btn_size }
+    local rects = self._corner_btn_rects
+    rects[#rects + 1] = { x = offset_x, w = btn_w }
     return btn
 end
 
@@ -1734,9 +1882,8 @@ function SUIWindow:_buildDotBar(total_pages)
         if not self.dimen then return false end
         if ges.pos.y >= self.dimen.y + DOT_H then return false end
         -- Taps on a corner button belong to the button, not to the dots.
-        local rect = win._corner_btn_rect
-        if rect then
-            local pad   = SZ(Screen:scaleBySize(20))
+        local pad = SZ(Screen:scaleBySize(20))
+        for _i, rect in ipairs(win._corner_btn_rects or {}) do
             local abs_x = self.dimen.x + rect.x
             if ges.pos.x >= abs_x - pad and ges.pos.x <= abs_x + rect.w + pad then
                 return false
@@ -1789,7 +1936,9 @@ SUIWindow.Input = {}
 --- @param opts     table|nil  — tap-area and feedback options:
 ---   hit     { left, right, top, bottom }  px the tap range reaches past `dimen`
 ---   bounds  function() → Geom|nil         rect the tap range is clipped to
----   flash   FrameContainer                inverted for one refresh on tap
+---   flash   FrameContainer                inverted for one refresh on tap or Press
+---   focus_slot number                     focus stop reserved earlier for this
+---                                         tappable (see _kbReserve)
 --- @return InputContainer
 function SUIWindow.Input.tapable(widget, handlers, dimen, opts)
     dimen = dimen or Geom:new{ w = widget:getSize().w, h = widget:getSize().h }
@@ -1807,11 +1956,16 @@ function SUIWindow.Input.tapable(widget, handlers, dimen, opts)
     if handlers.on_tap and Device:hasDPad() then
         local win = _kbCurrent()
         if win then
-            win._kb_focus_count = (win._kb_focus_count or 0) + 1
-            local my_idx = win._kb_focus_count
-            win._kb_focusables[my_idx] = handlers.on_tap
-            if win._kb_focus_idx == my_idx and win._kb_focus_active then
-                widget = FrameContainer:new{
+            local my_idx = opts.focus_slot
+            if not my_idx then
+                win._kb_focus_count = (win._kb_focus_count or 0) + 1
+                my_idx = win._kb_focus_count
+            end
+            win._kb_focusables[my_idx] = function()
+                UI.runWithTapFeedback(opts.flash, handlers.on_tap)
+            end
+            if _kbHasFocus(win, my_idx) then
+                widget = RoundedFrame:new{
                     dimen      = Geom:new{ w = dimen.w, h = dimen.h },
                     bordersize = SUIStyle.BORDER_SZ * 2,
                     radius     = SZ(Screen:scaleBySize(6)),
@@ -1826,12 +1980,23 @@ function SUIWindow.Input.tapable(widget, handlers, dimen, opts)
     local ic = InputContainer:new{ dimen = dimen, [1] = widget }
     ic.ges_events = {}
 
+    -- Tap and Hold are delivered to the tappable whose range matched the
+    -- gesture only. Propagating them would also run the handlers of the
+    -- tappables nested inside it (the buttons of a row), wherever they sit.
+    function ic:handleEvent(event)
+        local handler = event.handler
+        if handler == "onTap" or handler == "onHold" then
+            return EventListener.handleEvent(self, event)
+        end
+        return InputContainer.handleEvent(self, event)
+    end
+
     if handlers.on_tap then
         ic.ges_events.Tap = {
             GestureRange:new{ ges = "tap", range = _hitRange(ic, opts.hit, opts.bounds) }
         }
         function ic:onTap()
-            _runWithTapFeedback(opts.flash, handlers.on_tap)
+            UI.runWithTapFeedback(opts.flash, handlers.on_tap)
             return true
         end
     end
@@ -1849,13 +2014,35 @@ function SUIWindow.Input.tapable(widget, handlers, dimen, opts)
     return ic
 end
 
+--- Registers `widget` as a D-pad focus stop that is not a tap target, such as
+--- a text input: it takes its turn in the focus ring without a highlight of
+--- its own, since the widget shows its focus itself.
+--- @param opts table  on_select function() — Press while the stop is focused
+---                    and the widget does not take the key itself,
+---                    on_focus  function() — the stop is reached by Up/Down,
+---                    on_blur   function(next_stop) — Up/Down leaves the stop;
+---                      `next_stop` is the `opts` of the stop reached, or nil
+---                      for a tap target
+--- @return table, boolean  `widget`, and whether the stop holds the visible
+---                         focus, for a widget that draws it itself
+function SUIWindow.Input.focusStop(widget, opts)
+    local win = Device:hasDPad() and _kbCurrent()
+    if not win then return widget, false end
+    local idx = (win._kb_focus_count or 0) + 1
+    win._kb_focus_count      = idx
+    win._kb_focusables[idx]  = opts.on_select
+    win._kb_focus_hooks[idx] = opts
+    return widget, _kbHasFocus(win, idx)
+end
+
 --- Creates a tappable icon button. The glyph is centred in the button box, or
 --- with `edge` set, drawn with its ink flush against that side of the box.
 --- `edge` follows the layout direction, like LeftContainer/RightContainer.
 --- The box alone sizes the button in a layout; `hit` only widens its tap area.
 --- A tap shows the glyph inverted for one refresh before `on_tap` runs,
 --- unless `flash` is false.
---- @param opts table  icon, size (font size, unscaled), color, on_tap, w, h,
+--- @param opts table  icon, size (font size, unscaled), color (default: the
+---                    accent colour, else black), on_tap, w, h,
 ---                    edge ("left" | "right" | nil),
 ---                    hit { outer, inner, top, bottom } — px the tap area
 ---                      reaches past the box; outer/inner are relative to `edge`,
@@ -1868,18 +2055,21 @@ function SUIWindow.Input.iconButton(opts)
     local face = _iconFace(opts.size)
     local w    = opts.w     or face.size * 2
     local h    = opts.h     or face.size
-    local clr  = opts.color or SUIStyle.COLOR.text_primary
+    local text = SUIStyle.icon(opts.icon)
 
-    local glyph = TextWidget:new{
-        text    = SUIStyle.icon(opts.icon),
-        face    = face,
-        fgcolor = clr,
-    }
+    local glyph_fields = { text = text, face = face }
+    local glyph
+    if opts.color then
+        glyph_fields.fgcolor = opts.color
+        glyph = TextWidget:new(glyph_fields)
+    else
+        glyph = UI.makeAccentText(glyph_fields, SUIStyle.COLOR.text_primary)
+    end
     -- The frame is what a tap inverts: it hugs the glyph, not the whole box.
     local mark = FrameContainer:new{ bordersize = 0, padding = 0, glyph }
 
     local to_left = (opts.edge == "left") ~= (BD.mirroredUILayout() == true)
-    local ink = opts.edge and SUIStyle.glyphInk(face, glyph.text)
+    local ink = opts.edge and SUIStyle.glyphInk(face, text)
     local content
     if ink then
         mark.overlap_offset = {
@@ -1915,8 +2105,7 @@ end
 -- ===========================================================================
 
 local function _clrPrimary()   return SUIStyle.COLOR.text_primary end
-local function _clrSecondary() return SUIStyle.COLOR.text_dim end
-local function _clrSeparator() return SUIStyle.COLOR.gray_strong end
+local function _clrInactive()  return SUIStyle.COLOR.text_dim end
 
 local function _facePrimary()
     return Font:getFace(SUIStyle.FACE_REGULAR, SZ(SUIStyle.FS_BODY))
@@ -1933,6 +2122,34 @@ end
 
 local function _CHEVRON_W() return SZ(Screen:scaleBySize(20)) end
 local function _ITEM_VPAD() return SZ(Screen:scaleBySize(16)) end
+
+-- Trailing chevron of a row: in the accent colour, or in `dim_color` when given.
+local function _chevronGlyph(dim_color)
+    local fields = { text = SUIStyle.icon("chevron"), face = _faceChevron(), alignment = "right" }
+    if dim_color then
+        fields.fgcolor = dim_color
+        return TextWidget:new(fields)
+    end
+    return UI.makeAccentText(fields, _clrPrimary())
+end
+
+-- "…" icon button of a row, `h` px tall, in `color` (default: the accent
+-- colour). A tap calls `opts.on_more(anchor)`, or opens an ActionMenu of
+-- `opts.more_items`, anchored to the button.
+local function _moreButton(opts, h, color)
+    local on_more = opts.on_more or function(anchor)
+        SUIWindow.ActionMenu{ anchor = anchor, items = opts.more_items }
+    end
+    local button
+    button = SUIWindow.Input.iconButton{
+        icon   = "more",
+        w      = _CHEVRON_W() * 2,
+        h      = h,
+        color  = color,
+        on_tap = function() on_more(button.dimen) end,
+    }
+    return button
+end
 
 -- ===========================================================================
 -- SUIWindow.TitleRow
@@ -1994,7 +2211,9 @@ end
 ---   right_icon   string|nil
 ---   right_value  string|nil    — current value label before the chevron
 ---   right_widget widget|nil    — custom widget before the chevron
----   checked      bool|nil      — nil=no checkbox; true/false=check/uncheck
+---   checked      bool|nil      — nil=no mark; true/false=selected/unselected
+---   radio        bool          — draw the mark as a radio (single choice)
+---                                instead of a checkbox; default false
 ---   show_chevron bool          — default false
 ---   title_face   Face|nil      — override font face for the title text
 ---   on_delete    function|nil
@@ -2043,6 +2262,8 @@ function SUIWindow.ListRow(opts)
 
     local left_vg = VerticalGroup:new{ align = "left" }
     local is_disabled = (opts.enabled == false) or (opts.dim == true)
+    -- The row is the first focus stop, ahead of the buttons inside it.
+    local focus_slot = not is_disabled and opts.on_tap and _kbReserve() or nil
     -- dim_only: purely visual muting (e.g. "excluded from goals" rows in
     -- Year in Review) — unlike dim/enabled=false, it must NOT strip on_tap,
     -- since the row still needs to be tappable (e.g. to reach the toggle
@@ -2051,7 +2272,7 @@ function SUIWindow.ListRow(opts)
     -- (e.g. MenuTable's grayed-out/unavailable items) keep their current,
     -- correct behaviour untouched.
     local is_dim_visual = is_disabled or (opts.dim_only == true)
-    local fg_color = is_dim_visual and _clrSecondary() or _clrPrimary()
+    local fg_color = is_dim_visual and _clrInactive() or _clrPrimary()
 
     -- opts.title_face overrides the default UI font (used e.g. by font-picker
     -- entries to render each row in the font it represents).
@@ -2139,50 +2360,19 @@ function SUIWindow.ListRow(opts)
         end
 
         if has_more then
-            local more_ic
-            more_ic = InputContainer:new{
-                dimen = Geom:new{ w = _CHEVRON_W() * 2, h = left_h },
-                [1]   = CenterContainer:new{
-                    dimen = Geom:new{ w = _CHEVRON_W() * 2, h = left_h },
-                    TextWidget:new{
-                        text    = SUIStyle.icon("more"),
-                        face    = Font:getFace(SUIStyle.FACE_ICONS, SZ(SUIStyle.FS_ICON)),
-                        fgcolor = _clrPrimary(),
-                    },
-                },
-            }
-            more_ic.ges_events = {
-                TapMore = {
-                    GestureRange:new{ ges = "tap", range = function() return more_ic.dimen end }
-                },
-            }
-            local _on_more = opts.on_more
-            if not _on_more and type(opts.more_items) == "table" then
-                _on_more = function(anchor_dimen)
-                    SUIWindow.ActionMenu{
-                        anchor = anchor_dimen,
-                        items  = opts.more_items,
-                    }
-                end
-            end
-            function more_ic:onTapMore()
-                _on_more(self.dimen)
-                return true
-            end
-            table.insert(right_hg, more_ic)
+            table.insert(right_hg, _moreButton(opts, left_h))
         end
 
         if has_value then
             table.insert(right_hg, RightContainer:new{
                 dimen = Geom:new{ w = val_w, h = left_h },
-                TextWidget:new{
+                UI.makeAccentText({
                     text                   = opts.right_value,
                     face                   = Font:getFace(SUIStyle.FACE_REGULAR, SZ(SUIStyle.FS_DETAIL)),
-                    fgcolor                = _clrPrimary(),
                     max_width              = val_w,
                     alignment              = "right",
                     truncate_with_ellipsis = true,
-                },
+                }, _clrPrimary()),
             })
         end
 
@@ -2194,36 +2384,30 @@ function SUIWindow.ListRow(opts)
         end
 
         if opts.checked ~= nil then
+            -- Both states take the accent colour.
             table.insert(right_hg, RightContainer:new{
                 dimen = Geom:new{ w = _CHEVRON_W(), h = left_h },
-                TextWidget:new{
-                    text      = SUIStyle.icon(opts.checked and "check" or "uncheck"),
+                UI.makeAccentText({
+                    text      = SUIStyle.selectionIcon(opts.radio == true, opts.checked),
                     face      = _faceIcon(),
-                    fgcolor   = _clrPrimary(),
                     alignment = "right",
-                },
+                }, _clrPrimary()),
             })
         elseif opts.right_icon and opts.right_icon ~= "" then
             table.insert(right_hg, RightContainer:new{
                 dimen = Geom:new{ w = _CHEVRON_W(), h = left_h },
-                TextWidget:new{
+                UI.makeAccentText({
                     text      = SUIStyle.icon(opts.right_icon),
                     face      = _faceIcon(),
-                    fgcolor   = _clrSecondary(),
                     alignment = "right",
-                },
+                }, fg_color),
             })
         elseif opts.show_chevron then
             table.insert(right_hg, RightContainer:new{
                 dimen = Geom:new{ w = _CHEVRON_W(), h = left_h },
                 HorizontalGroup:new{ align = "center",
                     HorizontalSpan:new{ width = SZ(Screen:scaleBySize(6)) },
-                    TextWidget:new{
-                        text      = SUIStyle.icon("chevron"),
-                        face      = _faceChevron(),
-                        fgcolor   = _clrPrimary(),
-                        alignment = "right",
-                    },
+                    _chevronGlyph(),
                 },
             })
         end
@@ -2303,7 +2487,8 @@ function SUIWindow.ListRow(opts)
         item_widget = SUIWindow.Input.tapable(
             row_padded,
             { on_tap = tap_fn, on_hold = hold_fn },
-            Geom:new{ w = inner_w, h = row_padded:getSize().h }
+            Geom:new{ w = inner_w, h = row_padded:getSize().h },
+            { focus_slot = focus_slot }
         )
     else
         item_widget = row_padded
@@ -2355,7 +2540,7 @@ function SUIWindow.Button(opts)
     local text_w = TextWidget:new{
         text                   = prefix .. (opts.text or ""),
         face                   = face,
-        fgcolor                = is_disabled and _clrSecondary() or _clrPrimary(),
+        fgcolor                = is_disabled and _clrInactive() or _clrPrimary(),
         bold                   = true,
         max_width              = text_max_w,
         alignment              = align,
@@ -2409,13 +2594,15 @@ end
 -- SUIWindow.Section
 -- ===========================================================================
 
---- Section header widget.  Children are optional — Section can be used as a
---- standalone label or as a grouping container.
+--- Section header widget: always the bold all-caps label (LabelStyle.BASE_CAPS,
+--- 10% letter spacing), independent of Style ▸ Module Labels.
+--- Children are optional — Section can be used as a standalone label or as a
+--- grouping container.
 ---
 --- @param opts table
----   inner_w   number    — required
----   title     string
----   children  widget[]  — optional
+---   inner_w     number    — required
+---   title       string
+---   children    widget[]  — optional
 ---
 --- @return VerticalGroup
 function SUIWindow.Section(opts)
@@ -2425,15 +2612,16 @@ function SUIWindow.Section(opts)
     vg.is_section = true
 
     if opts.title and opts.title ~= "" then
+        local LabelStyle = require("features/sui_label_style")
         table.insert(vg, VerticalSpan:new{ width = SZ(Screen:scaleBySize(16)) })
-        table.insert(vg, TextWidget:new{
-            text      = opts.title:upper(),
-            face      = Font:getFace(SUIStyle.FACE_REGULAR, SZ(SUIStyle.FS_DETAIL)),
-            fgcolor   = _clrSecondary(),
-            bold      = true,
-            max_width = opts.inner_w,
+        table.insert(vg, LabelStyle.makeFixedCapsText{
+            text         = opts.title,
+            base         = SZ(LabelStyle.BASE_CAPS),
+            fgcolor      = _clrPrimary(),
+            native_color = true,
+            max_width    = opts.inner_w,
         })
-        table.insert(vg, VerticalSpan:new{ width = SZ(Screen:scaleBySize(8)) })
+        table.insert(vg, VerticalSpan:new{ width = SZ(Screen:scaleBySize(8)) + LabelStyle.extraGap(1, LabelStyle.STYLE_CAPS) })
     end
 
     for _, child in ipairs(opts.children or {}) do
@@ -2574,12 +2762,11 @@ function SUIWindow.PeriodDropdown(opts)
     end
 
     local function iconWidget(name)
-        return TextWidget:new{
+        return UI.makeAccentText({
             text    = SUIStyle.icon(name),
             face    = face_icon,
-            fgcolor = color,
             padding = 0,
-        }
+        }, color)
     end
 
     local content = HorizontalGroup:new{ align = "center",
@@ -2600,9 +2787,9 @@ function SUIWindow.PeriodDropdown(opts)
         pad_bottom = spare - pad_top
     end
 
-    local pill = FrameContainer:new{
+    local pill = RoundedFrame:new{
         bordersize     = SUIStyle.BORDER_SZ,
-        color          = SUIStyle.COLOR.gray,
+        color          = _clrFrame(),
         background     = SUIStyle.COLOR.surface,
         radius         = opts.compact and _cornerRadius() or SZ(Screen:scaleBySize(12)),
         padding        = 0,
@@ -2700,14 +2887,17 @@ function SUIWindow.MonthPicker(opts)
     end
 
     local function navButton(glyph, on_tap)
+        local fields = { text = SUIStyle.icon(glyph), face = face_nav, padding = 0 }
+        local arrow
+        if on_tap then
+            arrow = UI.makeAccentText(fields, SUIStyle.COLOR.text_primary)
+        else
+            fields.fgcolor = SUIStyle.COLOR.disabled
+            arrow = TextWidget:new(fields)
+        end
         return target(CenterContainer:new{
             dimen = Geom:new{ w = cell_w, h = cell_h },
-            TextWidget:new{
-                text    = SUIStyle.icon(glyph),
-                face    = face_nav,
-                fgcolor = on_tap and SUIStyle.COLOR.text_primary or SUIStyle.COLOR.disabled,
-                padding = 0,
-            },
+            arrow,
         }, on_tap)
     end
 
@@ -2720,7 +2910,7 @@ function SUIWindow.MonthPicker(opts)
         if is_current then fgcolor = SUIStyle.COLOR.surface
         elseif not enabled then fgcolor = SUIStyle.COLOR.disabled end
 
-        local pill = FrameContainer:new{
+        local pill = RoundedFrame:new{
             bordersize = 0,
             background = is_current and SUIStyle.COLOR.text_primary or nil,
             radius     = SZ(Screen:scaleBySize(8)),
@@ -2776,9 +2966,9 @@ function SUIWindow.MonthPicker(opts)
             table.insert(grid, row)
         end
 
-        return FrameContainer:new{
+        return RoundedFrame:new{
             bordersize = border,
-            color      = SUIStyle.COLOR.gray,
+            color      = _clrFrame(),
             background = SUIStyle.COLOR.surface,
             radius     = SZ(Screen:scaleBySize(12)),
             padding    = pad,
@@ -3023,8 +3213,6 @@ end
 ---           ctx.inner_w        number   — available width in px
 ---           ctx.push(id,params)         — navigate to a named screen
 ---           ctx.repaint()               — redraw the window
----           ctx.lockOverlay()           — suppress onTapOutside (use before
----           ctx.unlockOverlay()           showing a dialog over the window)
 ---
 ---       Example — replace a boring sub-menu of radio items with an inline
 ---       toggle row, without touching the native menu:
@@ -3086,14 +3274,14 @@ end
 ---           {
 ---               text     = _("Size"),
 ---               value_func = function() return Config.getBarSizePct().."%"  end,
----               callback = function() showSpinWidget() end,   -- native spinner
+---               callback = function() showSpinDialog() end,
 ---               -- in SUIWindow, show an inline slider row instead:
 ---               sui_build = ctx_menu.is_sui and function(ctx, item)
 ---                   return SUIWindow.ListRow{
 ---                       inner_w     = ctx.inner_w,
 ---                       title       = _("Size"),
 ---                       right_value = Config.getBarSizePct().."%",
----                       on_tap      = function() showSpinWidget(); ctx.repaint() end,
+---                       on_tap      = function() showSpinDialog(); ctx.repaint() end,
 ---                   }
 ---               end or nil,
 ---           },
@@ -3112,8 +3300,6 @@ end
 ---   on_close       function|nil
 ---   push_stack     function|nil   — (_, {title, items, items_func}) for sub-menu nav
 ---   repaint        function|nil
----   lock_overlay   function|nil
----   unlock_overlay function|nil
 ---
 --- @return widget[]
 function SUIWindow.MenuTable(opts)
@@ -3133,8 +3319,6 @@ function SUIWindow.MenuTable(opts)
         push           = push        or function() end,
         push_stack     = push        or function() end,   -- alias
         repaint        = repaint,
-        lockOverlay    = opts.lock_overlay   or function() end,
-        unlockOverlay  = opts.unlock_overlay or function() end,
     }
 
     for _, item in ipairs(opts.items or {}) do
@@ -3292,6 +3476,7 @@ function SUIWindow.MenuTable(opts)
             on_tap       = tap_fn,
             show_chevron = show_chevron,
             checked      = checked,
+            radio        = item.radio == true,
             right_value  = right_value,
             dim          = item.dim,
             title_face   = title_face,
@@ -3408,6 +3593,8 @@ end
 local function _CardBase(opts)
     assert(opts.inner_w, "SUIWindow card: inner_w is required")
 
+    -- The card is the first focus stop, ahead of the buttons inside it.
+    local focus_slot = opts.on_tap and _kbReserve() or nil
     local inner_w    = opts.inner_w
     local show_chev  = opts.show_chevron == true
     local has_delete = opts.on_delete ~= nil
@@ -3421,6 +3608,8 @@ local function _CardBase(opts)
     local h_pad      = SZ(Size.padding.large)
     local v_pad      = SZ(Screen:scaleBySize(12))
     local fg_color   = (opts.dim == true) and SUIStyle.COLOR.text_dim or _clrPrimary()
+    -- Row icons take the accent colour unless the card is dimmed.
+    local icon_color = (opts.dim == true) and SUIStyle.COLOR.text_dim or nil
 
     local del_w    = has_delete and (_CHEVRON_W() * 2) or 0
     local edit_w   = has_edit and (_CHEVRON_W() * 2) or 0
@@ -3470,7 +3659,7 @@ local function _CardBase(opts)
                 icon   = "move_page",
                 w      = _CHEVRON_W() * 2,
                 h      = left_h,
-                color  = fg_color,
+                color  = icon_color,
                 on_tap = opts.on_move_page,
             })
         end
@@ -3496,7 +3685,7 @@ local function _CardBase(opts)
                     icon   = "arrow_up",
                     w      = _CHEVRON_W() * 2,
                     h      = left_h,
-                    color  = fg_color,
+                    color  = icon_color,
                     on_tap = opts.on_move_up,
                 })
             end
@@ -3505,7 +3694,7 @@ local function _CardBase(opts)
                     icon   = "arrow_down",
                     w      = _CHEVRON_W() * 2,
                     h      = left_h,
-                    color  = fg_color,
+                    color  = icon_color,
                     on_tap = opts.on_move_down,
                 })
             end
@@ -3516,7 +3705,7 @@ local function _CardBase(opts)
                 icon   = "update",
                 w      = _CHEVRON_W() * 2,
                 h      = left_h,
-                color  = fg_color,
+                color  = icon_color,
                 on_tap = opts.on_update,
             })
         end
@@ -3526,7 +3715,7 @@ local function _CardBase(opts)
                 icon   = "edit",
                 w      = _CHEVRON_W() * 2,
                 h      = left_h,
-                color  = fg_color,
+                color  = icon_color,
                 on_tap = opts.on_edit,
             })
         end
@@ -3536,7 +3725,7 @@ local function _CardBase(opts)
                 icon   = opts.toggle_icon or "hide",
                 w      = _CHEVRON_W() * 2,
                 h      = left_h,
-                color  = fg_color,
+                color  = icon_color,
                 on_tap = opts.on_toggle,
             })
         end
@@ -3546,43 +3735,13 @@ local function _CardBase(opts)
                 icon   = opts.delete_icon or "delete",
                 w      = _CHEVRON_W() * 2,
                 h      = left_h,
-                color  = fg_color,
+                color  = icon_color,
                 on_tap = opts.on_delete,
             })
         end
 
         if has_more then
-            local more_ic
-            more_ic = InputContainer:new{
-                dimen = Geom:new{ w = _CHEVRON_W() * 2, h = left_h },
-                [1]   = CenterContainer:new{
-                    dimen = Geom:new{ w = _CHEVRON_W() * 2, h = left_h },
-                    TextWidget:new{
-                        text    = SUIStyle.icon("more"),
-                        face    = Font:getFace(SUIStyle.FACE_ICONS, SZ(SUIStyle.FS_ICON)),
-                        fgcolor = fg_color,
-                    },
-                },
-            }
-            more_ic.ges_events = {
-                TapMore = {
-                    GestureRange:new{ ges = "tap", range = function() return more_ic.dimen end }
-                },
-            }
-            local _on_more = opts.on_more
-            if not _on_more and type(opts.more_items) == "table" then
-                _on_more = function(anchor_dimen)
-                    SUIWindow.ActionMenu{
-                        anchor = anchor_dimen,
-                        items  = opts.more_items,
-                    }
-                end
-            end
-            function more_ic:onTapMore()
-                _on_more(self.dimen)
-                return true
-            end
-            table.insert(right_hg, more_ic)
+            table.insert(right_hg, _moreButton(opts, left_h, icon_color))
         end
 
         if show_chev then
@@ -3590,12 +3749,7 @@ local function _CardBase(opts)
                 dimen = Geom:new{ w = _CHEVRON_W(), h = left_h },
                 HorizontalGroup:new{ align = "center",
                     HorizontalSpan:new{ width = SZ(Screen:scaleBySize(6)) },
-                    TextWidget:new{
-                        text      = SUIStyle.icon("chevron"),
-                        face      = _faceChevron(),
-                        fgcolor   = fg_color,
-                        alignment = "right",
-                    },
+                    _chevronGlyph(icon_color),
                 },
             })
         end
@@ -3611,10 +3765,10 @@ local function _CardBase(opts)
         row_hg,
     }
 
-    local card_frame = FrameContainer:new{
+    local card_frame = RoundedFrame:new{
         radius     = SZ(Screen:scaleBySize(12)),
         bordersize = SUIStyle.BORDER_SZ,
-        color      = (opts.dim == true) and SUIStyle.COLOR.text_dim or SUIStyle.COLOR.gray,
+        color      = (opts.dim == true) and SUIStyle.COLOR.text_dim or _clrFrame(),
         padding    = 0,
         dimen      = Geom:new{ w = inner_w, h = content:getSize().h },
         content,
@@ -3693,7 +3847,8 @@ local function _CardBase(opts)
         tappable = SUIWindow.Input.tapable(
             card_frame,
             { on_tap = opts.on_tap, on_hold = on_hold },
-            Geom:new{ w = inner_w, h = card_frame.dimen.h }
+            Geom:new{ w = inner_w, h = card_frame.dimen.h },
+            { focus_slot = focus_slot }
         )
     else
         tappable = card_frame
@@ -3869,13 +4024,172 @@ function SUIWindow.ArrangeList(opts)
 end
 
 -- ===========================================================================
+-- SUIWindow.BentoRow / SUIWindow.BentoMap
+-- ===========================================================================
+
+--- One bento row as a group of cards whose widths follow the module spans:
+--- title, span label, and, when interactive, a delete button and a chevron.
+--- Without `on_tap` the cards are plain, as in a preview; with `highlight`,
+--- every other card is dimmed and only those can be tapped.
+---
+--- @param opts table
+---   inner_w    number    — required; width the row is laid out in
+---   ids        string[]  — required; modules of the row, in order
+---   spans      table     — required; id -> span, in sixths of a row
+---   row_total  number    — sum of a full row (default 6)
+---   label_for  function  — (id) -> card title
+---   span_label function  — (span) -> card subtitle, e.g. "1/3"
+---   summary_for function|nil — (id) -> text appended to the subtitle of a full-width card
+---   highlight  string|nil — id of the card kept at full strength
+---   on_tap     function|nil — (id) when a card is tapped or activated
+---   on_delete  function|nil — (id); every card gets the delete button
+---   on_move    function|nil — (id, "up"|"down"); full-width cards get arrows
+---   can_move   function|nil — (id) -> { up = bool, down = bool }; absent = both
+---
+--- @return HorizontalGroup, number, number  the row, its height and its width
+function SUIWindow.BentoRow(opts)
+    assert(opts.inner_w and opts.ids and opts.spans, "SUIWindow.BentoRow: inner_w, ids and spans are required")
+    local row_total = opts.row_total or 6
+    local ids       = opts.ids
+    local n         = #ids
+    local gap       = SZ(Screen:scaleBySize(6))
+
+    local sum = 0
+    for _i, id in ipairs(ids) do sum = sum + opts.spans[id] end
+    local avail  = math.max(1, opts.inner_w - (n - 1) * gap)
+    local widths = {}
+    local used   = 0
+    for i, id in ipairs(ids) do
+        if i == n then
+            widths[i] = math.max(1, math.floor(avail * sum / row_total) - used)
+        else
+            widths[i] = math.max(1, math.floor(avail * opts.spans[id] / row_total))
+            used = used + widths[i]
+        end
+    end
+
+    local cards, row_h = {}, 0
+    for i, id in ipairs(ids) do
+        local _id = id
+        local tappable = opts.on_tap ~= nil and id ~= opts.highlight
+        local arrows = opts.on_move ~= nil and opts.spans[id] == row_total
+        local can    = arrows and opts.can_move and opts.can_move(id) or {}
+        local sub    = opts.span_label(opts.spans[id])
+        local summary = opts.summary_for and opts.spans[id] == row_total and opts.summary_for(id)
+        if summary and summary ~= "" then sub = sub .. "  ·  " .. summary end
+        cards[i] = _CardBase{
+            inner_w      = widths[i],
+            title        = opts.label_for(id),
+            subtitle     = sub,
+            show_chevron = tappable,
+            dim          = opts.highlight ~= nil and id ~= opts.highlight or nil,
+            on_tap       = tappable and function() opts.on_tap(_id) end or nil,
+            on_delete    = opts.on_delete and function() opts.on_delete(_id) end,
+            arrange_mode = arrows or nil,
+            on_move_up   = arrows and can.up ~= false and function() opts.on_move(_id, "up") end or nil,
+            on_move_down = arrows and can.down ~= false and function() opts.on_move(_id, "down") end or nil,
+            margin_v     = 0,
+        }
+        row_h = math.max(row_h, cards[i]:getSize().h)
+    end
+
+    local hg = HorizontalGroup:new{ align = "top" }
+    for i = 1, n do
+        hg[#hg + 1] = cards[i]
+        if i < n then hg[#hg + 1] = HorizontalSpan:new{ width = gap } end
+    end
+
+    return hg, row_h, used + widths[n] + (n - 1) * gap
+end
+
+--- Renders the rows of a bento page: one widget per row, so a long page can
+--- still be split between rows. A row that does not fill the width is centred
+--- and gets a caption.
+---
+--- @param opts table
+---   inner_w    number    — required
+---   rows       table[]   — { { ids = {...}, sum = n }, ... } in sixths of a row
+---   spans      table     — id -> span, in sixths of a row
+---   row_total  number    — sum of a full row (default 6)
+---   label_for, span_label, summary_for, on_tap, on_delete, on_move, can_move — as in BentoRow
+---   hint       string|nil — dim line above the first row
+---   open_text  string|nil — caption of a row that does not fill the width
+---   empty_text string|nil
+---
+--- @return widget[]
+function SUIWindow.BentoMap(opts)
+    assert(opts.inner_w, "SUIWindow.BentoMap: inner_w is required")
+    local row_total = opts.row_total or 6
+    local margin_v  = SZ(Screen:scaleBySize(6))
+    local result    = {}
+
+    if opts.hint and #(opts.rows or {}) > 0 then
+        result[#result + 1] = VerticalGroup:new{
+            align = "left",
+            VerticalSpan:new{ width = margin_v },
+            TextBoxWidget:new{
+                text    = opts.hint,
+                face    = _faceSecondary(),
+                fgcolor = SUIStyle.COLOR.text_dim,
+                width   = opts.inner_w,
+            },
+        }
+    end
+
+    for _i, row in ipairs(opts.rows or {}) do
+        local hg, row_h = SUIWindow.BentoRow{
+            inner_w     = opts.inner_w,
+            ids         = row.ids,
+            spans       = opts.spans,
+            row_total   = row_total,
+            label_for   = opts.label_for,
+            span_label  = opts.span_label,
+            summary_for = opts.summary_for,
+            on_tap      = opts.on_tap,
+            on_delete   = opts.on_delete,
+            on_move     = opts.on_move,
+            can_move    = opts.can_move,
+        }
+        local entry = VerticalGroup:new{
+            align = "left",
+            VerticalSpan:new{ width = margin_v },
+            CenterContainer:new{
+                dimen = Geom:new{ w = opts.inner_w, h = row_h },
+                hg,
+            },
+        }
+        if row.sum < row_total and opts.open_text then
+            entry[#entry + 1] = CenterContainer:new{
+                dimen = Geom:new{ w = opts.inner_w, h = SZ(Screen:scaleBySize(20)) },
+                TextWidget:new{
+                    text      = opts.open_text,
+                    face      = _faceSecondary(),
+                    fgcolor   = SUIStyle.COLOR.text_dim,
+                    max_width = opts.inner_w,
+                },
+            }
+        end
+        result[#result + 1] = entry
+    end
+
+    if #result == 0 then
+        result[1] = SUIWindow.ListRow{
+            title   = opts.empty_text or _("No modules"),
+            inner_w = opts.inner_w,
+        }
+    end
+
+    return result
+end
+
+-- ===========================================================================
 -- SUIWindow.RowPage
 -- ===========================================================================
 
 --- Renders a list of items as standard ListRows.
 --- Section breaks (items with dim=true or _is_break=true) render as Section headers.
 ---
---- Items format: { text = string, subtitle = string?, right_value = string?, right_icon = string?, show_chevron = bool?, on_tap = func?, on_delete = func?, on_more = func?, ... }
+--- Items format: { text = string, subtitle = string?, right_value = string?, right_icon = string?, checked = bool?, radio = bool?, show_chevron = bool?, on_tap = func?, on_delete = func?, on_more = func?, ... }
 ---
 --- @param opts table
 ---   inner_w    number    — required
@@ -3934,6 +4248,7 @@ function SUIWindow.RowPage(opts)
                 right_value  = item.right_value,
                 right_widget = item.right_widget,
                 checked      = item.checked,
+                radio        = item.radio,
                 show_chevron = item.show_chevron,
                 on_tap       = item.on_tap,
                 on_hold      = item.on_hold,
@@ -4033,12 +4348,12 @@ function SUIWindow.CenteredButtonFooter(ctx, opts)
     local text_px_w = text_w:getSize().w
     local btn_w     = text_px_w + h_pad * 2
 
-    local btn_frame = FrameContainer:new{
+    local btn_frame = RoundedFrame:new{
         width          = btn_w,
         height         = btn_h,
         radius         = btn_radius,
         bordersize     = border_sz,
-        color          = is_disabled and SUIStyle.COLOR.text_dim or SUIStyle.COLOR.gray,
+        color          = is_disabled and SUIStyle.COLOR.text_dim or _clrFrame(),
         background     = nil,
         padding        = 0,
         dimen          = Geom:new{ w = btn_w, h = btn_h },
@@ -4157,8 +4472,6 @@ function SUIWindow.makeSettingsScreens(buildRoot)
             items          = items,
             inner_w        = ctx.inner_w,
             repaint        = function() ctx.repaint() end,
-            lock_overlay   = ctx.lockOverlay,
-            unlock_overlay = ctx.unlockOverlay,
             push_stack = function(id, params)
                 if type(id) == "string" then ctx.push(id, params) else ctx.push("nested_menu", params) end
             end,
@@ -4251,9 +4564,8 @@ end
 --- afterwards, in addition to whatever fn already does (invalidating a
 --- cache, saving a layout, etc.).
 ---
---- A ctx_menu.refresh handed to a menu-item factory (makeGapItem,
---- makeBentoWidthItem, ...) is what runs after a SpinWidget/ConfirmBox
---- callback applies a new value. Inside a SUIWindow, the item's displayed
+--- A ctx_menu.refresh handed to a menu-item factory (makeGapItem, ...) is
+--- what runs after a spin or confirm dialog callback applies a new value. Inside a SUIWindow, the item's displayed
 --- value_func/text_func is only re-evaluated on repaint — refresh alone
 --- (e.g. one that just clears a homescreen cache) updates what's behind
 --- the window, not the window itself, so the change appears to "not
@@ -4300,15 +4612,11 @@ function SUIWindow.makeCtxMenu(ctx)
         _                = require("infra/sui_i18n").translate,
         N_               = require("infra/sui_i18n").ngettext,
         SortWidget       = require("ui/widget/sortwidget"),
-        ConfirmBox       = require("ui/widget/confirmbox"),
-        MAX_LABEL_LEN    = require("infra/sui_config").MAX_LABEL_LEN,
-        lock_overlay     = ctx.lockOverlay,
-        unlock_overlay   = ctx.unlockOverlay,
     }
 end
 
 --- Builds the full settings screen for one module: its own items
---- (mod.getMenuItems) followed by the shared Top Margin / Column Width
+--- (mod.getMenuItems) followed by the shared Top Margin / Width and Position
 --- chrome (see Config.appendModuleChromeItems), wrapped as a MenuTable
 --- ready to return from a screens[] builder.
 ---
@@ -4327,9 +4635,11 @@ end
 ---   extra_refresh — optional extra work to run on refresh, besides
 ---                   repainting this window (e.g. saving a Custom Screen's
 ---                   layout, or invalidating a live homescreen's caches)
----   on_change     — optional extra work to run specifically when Top
----                   Margin/Column Width change (e.g. invalidating a
----                   different screen instance's module-list cache)
+---   on_change     — optional extra work to run specifically when the Top
+---                   Margin changes (e.g. invalidating a different screen
+---                   instance's module-list cache)
+---   layout_sheet  — optional function opening the module's layout sheet;
+---                   adds a "Width and Position" row to the screen
 --- }
 --- @return table — SUIWindow.MenuTable widget
 function SUIWindow.buildModuleSettingsScreen(ctx, mod, opts)
@@ -4346,14 +4656,13 @@ function SUIWindow.buildModuleSettingsScreen(ctx, mod, opts)
         pfx       = ctx_menu.pfx,
         refresh   = ctx_menu.refresh,
         on_change = opts.on_change,
+        layout_sheet = opts.layout_sheet,
     })
 
     return SUIWindow.MenuTable{
         items          = items,
         inner_w        = ctx.inner_w,
         repaint        = function() ctx.repaint() end,
-        lock_overlay   = ctx.lockOverlay   or function() end,
-        unlock_overlay = ctx.unlockOverlay or function() end,
         push_stack     = function(id, params)
             if type(id) == "string" then ctx.push(id, params) else ctx.push("nested_menu", params) end
         end,

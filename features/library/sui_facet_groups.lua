@@ -138,8 +138,9 @@ function FacetGroups.describe(group)
             return {{
                 text     = _("Create collection"),
                 sui_icon = "collections",
-                callback = function()
+                callback = function(sheet)
                     GroupActions.createCollection{
+                        parent         = sheet,
                         suggested_name = group.name,
                         paths          = bookPaths(group),
                         empty_message  = _("No books found."),

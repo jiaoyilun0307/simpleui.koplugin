@@ -29,6 +29,7 @@ local GroupActions   = require("features/library/sui_group_actions")
 local ScreenNav      = require("infra/sui_screen_nav")
 local SUISettings    = require("infra/sui_store")
 local SUIStyle       = require("features/sui_style")
+local Chrome       = require("features/sui_module_chrome")
 local UI             = require("infra/sui_core")
 
 local PAD = UI.PAD
@@ -520,8 +521,9 @@ function mod.build(w, ctx)
         UI.makeColoredText{
             text  = hold_on and _("No collections selected  —  long press to configure")
                              or _("No collections selected"),
-            face  = Font:getFace(SUIStyle.FACE_REGULAR, SUIStyle.FS_BODY),
-            width = w - PAD * 2,
+            face    = Font:getFace(SUIStyle.FACE_REGULAR, SUIStyle.FS_BODY),
+            fgcolor = (ctx.ink or Chrome.PLAIN_INK).sub,
+            width   = w - PAD * 2,
         },
     }
 end

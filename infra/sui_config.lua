@@ -13,6 +13,7 @@ local SUICoverCache     = require("infra/sui_cover_cache")
 local LRU               = require("infra/sui_lru")
 local Memory            = require("infra/sui_memory")
 local Backdrop          = require("infra/sui_backdrop")
+local SUIFonts          = require("infra/sui_fonts")
 local logger            = require("logger")
 local _ = require("infra/sui_i18n").translate
 local Text = require("infra/sui_text")
@@ -63,36 +64,37 @@ if _ko_root == "" then
 end
 local _KO = _ko_root .. "resources/icons/mdlight/"
 
--- Icon path registry.
+-- Icon registry (Nerd Font glyphs via "nerd:XXXX"; custom_dir remains a path).
+-- Codepoints match SUIStyle.ICON (outline set used in SUI windows) so QA
+-- icons share the same weight and shape as the rest of the UI.
 M.ICON = {
-    library        = _P .. "library.svg",
-    collections    = _P .. "collections.svg",
-    history        = _P .. "history.svg",
-    recent         = _P .. "recent.svg",
-    random         = _P .. "random.svg",
-    continue_      = _P .. "continue.svg",       -- trailing _ avoids clash with Lua keyword
-    frontlight     = _P .. "frontlight.svg",
-    night          = _P .. "night.svg",
-    stats          = _P .. "stats.svg",
-    power          = _P .. "power.svg",
-    plus_alt       = _P .. "plus_alt.svg",
-    custom         = _P .. "custom.svg",
+    library        = "nerd:F405",  -- book
+    collections    = "nerd:E257",  -- stacked layers   (SUIStyle.collections)
+    history        = "nerd:E9D9",  -- clock with arrow (SUIStyle.history)
+    recent         = "nerd:E385",  -- clock outline    (SUIStyle.clock)
+    random         = "nerd:EB30",  -- random
+    continue_      = "nerd:E28B",  -- open book        (SUIStyle.book_open)
+    frontlight     = "nerd:ECA7",  -- sun              (SUIStyle.brightness)
+    night          = "nerd:23FE",  -- power sleep symbol
+    stats          = "nerd:E829",  -- chart-line
+    power          = "nerd:EB24",  -- power symbol     (SUIStyle.power)
+    plus_alt       = "nerd:E145",  -- add / plus       (SUIStyle.add)
+    custom         = "nerd:E955",  -- folder outline (default for path/collection QAs)
     custom_dir     = _P .. "custom",
-    group          = _P .. "group.svg",
-    plugin         = _P .. "plugin.svg",
-    author         = _P .. "author.svg",
-    series         = _P .. "series.svg",
-    tags           = _P .. "tags.svg",
-    back           = _P .. "back.svg",
-    menu           = _P .. "more-options.svg",
-    nav_prev       = _KO .. "chevron.left.svg",
-    nav_next       = _KO .. "chevron.right.svg",
-    ko_home        = _KO .. "home.svg",
-    ko_star        = _KO .. "star.empty.svg",
-    ko_wifi        = _KO .. "wifi.open.100.svg",
-    ko_settings    = _KO .. "appbar.settings.svg",
-    ko_search      = _KO .. "appbar.search.svg",
-    ko_bookmark    = _KO .. "bookmark.svg",
+    group          = "nerd:E73A",  -- 3x3 grid         (SUIStyle.group)
+    plugin         = "nerd:EB30",  -- puzzle piece     (SUIStyle.plugin)
+    author         = "nerd:E712",  -- person           (SUIStyle.author)
+    series         = "nerd:E7BA",  -- stacked books    (SUIStyle.series)
+    tags           = "nerd:EBF8",  -- tag              (SUIStyle.tags)
+    nav_prev       = "nerd:E840",  -- chevron left
+    nav_next       = "nerd:E841",  -- chevron right
+    ko_home        = "nerd:ED9F",  -- house outline
+    ko_star        = "nerd:E838",  -- star outline
+    ko_wifi        = "nerd:ECA8",  -- wifi             (SUIStyle.wifi)
+    ko_settings    = "nerd:F462",  -- settings
+    ko_search      = "nerd:F422",  -- magnifier        (SUIStyle.search)
+    ko_bookmark    = "nerd:F097",  -- bookmark outline (SUIStyle.bookmark)
+    backup         = "nerd:F0C7",  -- save / floppy
 }
 
 M.CUSTOM_ICON            = M.ICON.custom
@@ -514,7 +516,7 @@ function M.getActionById(id)
     if entry and not entry.id then
         -- entry.dim carries the resolved on/off state for actions with an
         -- is_active hook (e.g. wifi_toggle, night_mode) — keep it so callers
-        -- can dim the icon via UI.wrapDimmable, same as every other QA
+        -- can dim the icon, same as every other QA
         -- consumer (see features/sui_quickactions.lua header comment).
         return { id = id, label = entry.label, icon = entry.icon, dim = entry.dim }
     end
@@ -836,9 +838,16 @@ function M.getScaledLabelH(landscape_factor)
         local base_fs = (ok and SUIStyle and SUIStyle.FS_BODY) or 18  -- FS_BODY (18)
         _BASE_LABEL_TEXT_H = require("device").screen:scaleBySize(base_fs)
     end
-    local PAD2  = require("infra/sui_core").PAD2
+    local UI    = require("infra/sui_core")
     local scale = M.getLabelScale() * (landscape_factor or 1)
-    return PAD2 + math_max(8, math_floor(_BASE_LABEL_TEXT_H * scale))
+
+    -- A label reserves what it draws: its line height (font, variant and
+    -- size are the user's) plus the gap below it.
+    local ok_ls, LabelStyle = pcall(require, "features/sui_label_style")
+    if ok_ls and LabelStyle then
+        return LabelStyle.textHeight(scale) + UI.LABEL_PAD_BOT + LabelStyle.extraGap(scale)
+    end
+    return UI.PAD2 + math_max(8, math_floor(_BASE_LABEL_TEXT_H * scale))
 end
 
 -- Item Label Scale
@@ -854,15 +863,18 @@ function M.setItemLabelScale(pct, mod_id, pfx)
     _writePct(pct, _itemLabelKey(mod_id, pfx))
 end
 
--- Per-element text style: a font family, a size scale and a variant (regular,
--- bold, italic, bold italic) for one text element (title, author, ...) of a
--- module. An unset family means the default UI font; an unset scale means
--- 100%; an unset variant means the element's default variant, "regular"
--- unless the module declares otherwise (M.declareTextVariants).
+-- Per-element text style: a font family, a size scale, a variant (regular,
+-- bold, italic, bold italic) and a colour for one text element (title, author,
+-- ...) of a module. An unset family means the default UI font; an unset scale
+-- means 100%; an unset variant means the element's default variant, "regular"
+-- unless the module declares otherwise (M.declareTextVariants); an unset colour
+-- means the plain text colour, a palette choice ("accent", "secondary") only
+-- for the elements a module declares (M.declareTextColors).
 local TEXT_FONT_INFIX    = "_text_font_"
 local TEXT_SCALE_INFIX   = "_text_scale_"
 local TEXT_VARIANT_INFIX = "_text_variant_"
-local TEXT_INFIXES       = { TEXT_FONT_INFIX, TEXT_SCALE_INFIX, TEXT_VARIANT_INFIX }
+local TEXT_COLOR_INFIX   = "_text_color_"
+local TEXT_INFIXES       = { TEXT_FONT_INFIX, TEXT_SCALE_INFIX, TEXT_VARIANT_INFIX, TEXT_COLOR_INFIX }
 
 local function _textKey(infix, mod_id, elem, pfx)
     return (pfx or "simpleui_hs_") .. mod_id .. infix .. elem
@@ -876,22 +888,65 @@ function M.declareTextVariants(mod_id, defaults)
     _variant_defaults[mod_id] = defaults
 end
 
+local _family_defaults = {}   -- module id → { element id → family, or function(pfx) → family? }
+
+-- Declares the font family the elements of `mod_id` take until the user picks
+-- one. A default may be a function of the screen prefix that returns the family
+-- name, or nil for the UI font.
+function M.declareTextFamilies(mod_id, defaults)
+    _family_defaults[mod_id] = defaults
+end
+
+local function _defaultFamily(mod_id, elem, pfx)
+    local default = _family_defaults[mod_id] and _family_defaults[mod_id][elem]
+    if type(default) == "function" then default = default(pfx or "simpleui_hs_") end
+    return type(default) == "string" and default or nil
+end
+
+local _color_elems    = {}   -- module id → { element id → true }
+local _color_defaults = {}   -- module id → { element id → palette choice }
+
+-- Declares the elements of `mod_id` that can take a palette colour, e.g.
+-- { "author" }. `defaults` maps an element to the palette choice it takes until
+-- the user picks another (or "None"), e.g. { author = "accent" }.
+function M.declareTextColors(mod_id, elems, defaults)
+    local set = {}
+    for _i, elem in ipairs(elems) do set[elem] = true end
+    _color_elems[mod_id]    = set
+    _color_defaults[mod_id] = defaults
+end
+
+local function _defaultColor(mod_id, elem)
+    local defaults = _color_defaults[mod_id]
+    return defaults and defaults[elem]
+end
+
 local function _defaultVariant(mod_id, elem)
     local defaults = _variant_defaults[mod_id]
     return defaults and defaults[elem] or "regular"
 end
 
+-- Font family the user picked for the element, nil for the default.
+local function _storedFamily(mod_id, elem, pfx)
+    local family = SUISettings:get(_textKey(TEXT_FONT_INFIX, mod_id, elem, pfx))
+    return type(family) == "string" and family ~= "" and family or nil
+end
+
 function M.getTextStyle(mod_id, elem, pfx)
-    local family  = SUISettings:get(_textKey(TEXT_FONT_INFIX, mod_id, elem, pfx))
+    local family  = _storedFamily(mod_id, elem, pfx) or _defaultFamily(mod_id, elem, pfx)
     local n       = tonumber(SUISettings:get(_textKey(TEXT_SCALE_INFIX, mod_id, elem, pfx)))
     local variant = SUISettings:get(_textKey(TEXT_VARIANT_INFIX, mod_id, elem, pfx))
-    if not require("features/sui_style").isVariant(variant) then
+    local SUIStyle = require("features/sui_style")
+    if not SUIStyle.isVariant(variant) then
         variant = _defaultVariant(mod_id, elem)
     end
+    local color = SUISettings:get(_textKey(TEXT_COLOR_INFIX, mod_id, elem, pfx))
+    if color == nil then color = _defaultColor(mod_id, elem) end
     return {
-        family  = (type(family) == "string" and family ~= "") and family or nil,
+        family  = family,
         scale   = n and _clamp(n) / 100 or 1.0,
         variant = variant,
+        color   = SUIStyle.isPaletteChoice(color) and color or nil,
     }
 end
 
@@ -932,6 +987,13 @@ function M.setTextStyleVariant(variant, mod_id, elem, pfx)
     if variant then SUISettings:set(key, variant) else SUISettings:del(key) end
 end
 
+-- color == nil clears the choice (back to the element's default colour); "none"
+-- keeps the element plain even where a default colour is declared.
+function M.setTextStyleColor(color, mod_id, elem, pfx)
+    local key = _textKey(TEXT_COLOR_INFIX, mod_id, elem, pfx)
+    if color then SUISettings:set(key, color) else SUISettings:del(key) end
+end
+
 -- Drops every stored text choice of the listed elements, returning them to
 -- their defaults.
 function M.resetTextStyles(mod_id, elems, pfx)
@@ -944,7 +1006,8 @@ end
 
 -- Menu entry for one text element: "Font" and "Style" pickers (regular, bold,
 -- italic, bold italic), plus a "Size" spinner unless the size is controlled
--- elsewhere.
+-- elsewhere, and a "Color" picker for an element declared with
+-- M.declareTextColors while a palette colour is on screen.
 -- opts: { title, info, mod_id, elem, pfx, refresh, _lc, family_only }
 function M.makeTextStyleItem(opts)
     local mod_id, elem, pfx, refresh = opts.mod_id, opts.elem, opts.pfx, opts.refresh
@@ -952,10 +1015,11 @@ function M.makeTextStyleItem(opts)
     local SUIStyle = require("features/sui_style")
 
     local function family() return M.getTextStyle(mod_id, elem, pfx).family end
-    local function familyLabel() return family() or _lc("Default") end
+    local function chosenFamily() return _storedFamily(mod_id, elem, pfx) end
+    local function familyLabel() return chosenFamily() or _lc("Default") end
     local function familyMenuItems()
         return SUIStyle.makeFamilyMenuItems(
-            family,
+            chosenFamily,
             function(name) M.setTextStyleFont(name, mod_id, elem, pfx) end,
             refresh)
     end
@@ -975,28 +1039,70 @@ function M.makeTextStyleItem(opts)
         })
     end
 
-    local entries = {
-        { text = _lc("Font"), value_func = familyLabel, sub_item_table_func = familyMenuItems },
-        {
-            text                = _lc("Style"),
-            value_func          = function() return SUIStyle.variantLabel(variant()) end,
-            sub_item_table_func = variantMenuItems,
-        },
-    }
-    if not opts.family_only then
-        table.insert(entries, 2, M.makeScaleItem({
-            text_func = function() return _lc("Size") end,
-            title     = opts.title,
-            info      = opts.info,
-            get       = function() return M.getTextStyleScalePct(mod_id, elem, pfx) end,
-            set       = function(v) M.setTextStyleScale(v, mod_id, elem, pfx) end,
-            refresh    = refresh,
-            value_step = 5,
-        }))
+    -- `family_only` may be a function, evaluated each time the submenu opens.
+    local function buildEntries()
+        local entries = {
+            { text = _lc("Font"), value_func = familyLabel, sub_item_table_func = familyMenuItems },
+            {
+                text                = _lc("Style"),
+                value_func          = function() return SUIStyle.variantLabel(variant()) end,
+                sub_item_table_func = variantMenuItems,
+            },
+        }
+        local family_only = opts.family_only
+        if type(family_only) == "function" then family_only = family_only() end
+        if not family_only then
+            table.insert(entries, 2, M.makeScaleItem({
+                text_func = function() return _lc("Size") end,
+                title     = opts.title,
+                info      = opts.info,
+                get       = function() return M.getTextStyleScalePct(mod_id, elem, pfx) end,
+                set       = function(v) M.setTextStyleScale(v, mod_id, elem, pfx) end,
+                refresh    = refresh,
+                value_step = 5,
+            }))
+        end
+        return entries
     end
-    -- The controls are independent: no value on the parent row (chevron
-    -- only), so the user is not shown a single ambiguous summary.
-    return { text = opts.title, sub_item_table = entries }
+    local color_declared = _color_elems[mod_id] and _color_elems[mod_id][elem]
+    if not color_declared then
+        -- The controls are independent: no value on the parent row (chevron
+        -- only), so the user is not shown a single ambiguous summary.
+        if type(opts.family_only) == "function" then
+            return { text = opts.title, sub_item_table_func = buildEntries }
+        end
+        return { text = opts.title, sub_item_table = buildEntries() }
+    end
+
+    -- The colour picker exists only while a palette colour is on screen, so
+    -- the rows are listed when the submenu opens.
+    return {
+        text = opts.title,
+        sub_item_table_func = function()
+            local entries = buildEntries()
+            local palette = SUIStyle.paletteOptions(_lc)
+            if #palette == 0 then return entries end
+            local default_color = _defaultColor(mod_id, elem)
+            local options = { { value = "none", label = default_color and _lc("None") or _lc("Default") } }
+            for _i, option in ipairs(palette) do options[#options + 1] = option end
+            local rows = {}
+            for _i, entry in ipairs(entries) do rows[#rows + 1] = entry end
+            rows[#rows + 1] = M.makeRadioSubmenuItem{
+                text    = _lc("Color"),
+                options = options,
+                get     = function()
+                    local color = M.getTextStyle(mod_id, elem, pfx).color
+                    return color and SUIStyle.paletteChoiceAvailable(color) and color or "none"
+                end,
+                set     = function(v)
+                    if v == "none" and not default_color then v = nil end
+                    M.setTextStyleColor(v, mod_id, elem, pfx)
+                end,
+                refresh = refresh,
+            }
+            return rows
+        end,
+    }
 end
 
 -- Item of one element of a text section; `opts` are the section's options.
@@ -1222,39 +1328,102 @@ M.LABEL_SCALE_MAX   = SCALE_MAX
 M.LABEL_SCALE_STEP  = SCALE_STEP
 M.LABEL_SCALE_DEF   = SCALE_DEF
 
--- SpinWidget Menu-Item Factory
-function M.makeScaleItem(opts)
-    local enabled_func = opts.enabled_func
+-- Spin Menu-Item Factories
+-- One menu entry whose tap opens the spin dialog (features/dialogs/sui_dialogs),
+-- and presets of it for the common ranges.
+
+-- `fn` called without arguments, or nil when there is none.
+local function withoutArgs(fn)
+    return fn and function() fn() end or nil
+end
+
+-- A value row that opens the spin dialog on tap.
+-- opts: {
+--   text / text_func — entry text
+--   separator, enabled_func — as in any menu item
+--   guard         — optional; called first, the dialog opens only when it
+--                   returns true
+--   title, info   — dialog title and description (`info` may be a function
+--                   returning it when the dialog opens)
+--   get / set     — value accessors
+--   refresh       — optional; called with the touch menu after `set`
+--   value_min, value_max, value_step, value_hold_step, default_value
+--   unit          — suffix of the value, "" by default
+--   value_func    — optional override of the value label
+--   live          — optional; each value that settles in the dialog is applied
+--                   (`set` + `refresh`) at once to show the result behind it,
+--                   and Cancel restores the value the dialog opened with
+-- }
+function M.makeSpinItem(opts)
+    local unit = opts.unit or ""
     return {
+        text           = opts.text,
         text_func      = opts.text_func,
         separator      = opts.separator or nil,
+        enabled_func   = opts.enabled_func,
         keep_menu_open = true,
-        value_func     = function() return opts.get() .. "%" end,
-        callback       = function()
-            if enabled_func and not enabled_func() then
-                require("infra/sui_core").Notify.toast(_("Disable \"Lock Scale\" first to set a per-module scale."))
-                return
+        value_func     = opts.value_func or function() return tostring(opts.get()) .. unit end,
+        callback       = function(touchmenu)
+            if opts.guard and not opts.guard() then return end
+            local info = opts.info
+            if type(info) == "function" then info = info() end
+            local initial = opts.get()
+            local applied, previewed = initial, false
+            local function commit(value)
+                applied = value
+                opts.set(value)
+                if opts.refresh then opts.refresh(touchmenu) end
             end
-            local SpinWidget = require("ui/widget/spinwidget")
-            local UIManager  = require("ui/uimanager")
-            UIManager:show(SpinWidget:new{
-                title_text    = opts.title,
-                info_text     = opts.info,
-                value         = opts.get(),
-                value_min       = opts.value_min      or SCALE_MIN,
-                value_max       = opts.value_max      or SCALE_MAX,
-                value_step      = opts.value_step     or SCALE_STEP,
-                value_hold_step = opts.value_hold_step,
-                unit            = "%",
-                ok_text       = _("Apply"),
-                cancel_text   = _("Cancel"),
-                default_value = opts.default_value or SCALE_DEF,
-                callback      = function(spin)
-                    opts.set(spin.value)
-                    opts.refresh()
+            require("features/dialogs/sui_dialogs").spin{
+                title     = opts.title,
+                info      = info,
+                value     = initial,
+                min       = opts.value_min,
+                max       = opts.value_max,
+                step      = opts.value_step,
+                hold_step = opts.value_hold_step,
+                unit      = unit,
+                default   = opts.default_value,
+                on_preview = opts.live and function(value)
+                    if value == applied then return end
+                    previewed = true
+                    commit(value)
+                end or nil,
+                on_apply  = function(value)
+                    if previewed and value == applied then return end
+                    commit(value)
                 end,
-            })
+                on_cancel = opts.live and function()
+                    if applied ~= initial then commit(initial) end
+                end or nil,
+            }
         end,
+    }
+end
+
+-- Percentage of the module scale range.
+-- opts: { get, set, refresh, title, info, text_func, separator, enabled_func,
+--         value_min, value_max, value_step, value_hold_step, default_value }
+function M.makeScaleItem(opts)
+    local enabled_func = opts.enabled_func
+    return M.makeSpinItem{
+        text_func       = opts.text_func,
+        separator       = opts.separator,
+        guard           = enabled_func and function()
+            if enabled_func() then return true end
+            require("infra/sui_core").Notify.toast(_("Disable \"Lock Scale\" first to set a per-module scale."))
+        end,
+        title           = opts.title,
+        info            = opts.info,
+        get             = opts.get,
+        set             = opts.set,
+        refresh         = withoutArgs(opts.refresh),
+        value_min       = opts.value_min  or SCALE_MIN,
+        value_max       = opts.value_max  or SCALE_MAX,
+        value_step      = opts.value_step or SCALE_STEP,
+        value_hold_step = opts.value_hold_step,
+        default_value   = opts.default_value or SCALE_DEF,
+        unit            = "%",
     }
 end
 
@@ -1297,38 +1466,31 @@ function M.makeBackdropStrengthItem(opts)
         if opts.format then return opts.format(strength) end
         return Backdrop.formatBackdropStrength(strength, _lc)
     end
-    return {
-        text           = opts.title,
-        enabled_func   = opts.enabled_func,
-        keep_menu_open = true,
-        value_func     = opts.value_func or function() return label(opts.get()) end,
-        callback       = function(touchmenu)
-            local SpinWidget = require("ui/widget/spinwidget")
-            local UIManager  = require("ui/uimanager")
+    return M.makeSpinItem{
+        text          = opts.title,
+        enabled_func  = opts.enabled_func,
+        value_func    = opts.value_func or function() return label(opts.get()) end,
+        live          = true,
+        title         = opts.title,
+        info          = function()
             local info = opts.info
                 or _lc("0% transparent, 100% solid. Values in between add a scrim over the wallpaper.")
-            UIManager:show(SpinWidget:new{
-                title_text    = opts.title,
-                info_text     = info .. "\n" .. T(_lc("Default: %1"), label(opts.default_value)),
-                value         = opts.get(),
-                value_min     = Backdrop.STRENGTH_MIN,
-                value_max     = opts.value_max or Backdrop.STRENGTH_MAX,
-                value_step    = 5,
-                unit          = "%",
-                ok_text       = _("Apply"),
-                cancel_text   = _("Cancel"),
-                default_value = opts.default_value,
-                callback      = function(spin)
-                    opts.set(spin.value)
-                    opts.refresh(touchmenu)
-                end,
-            })
+            return info .. "\n" .. T(_lc("Default: %1"), label(opts.default_value))
         end,
+        get           = opts.get,
+        set           = opts.set,
+        refresh       = opts.refresh,
+        value_min     = Backdrop.STRENGTH_MIN,
+        value_max     = opts.value_max or Backdrop.STRENGTH_MAX,
+        value_step    = 5,
+        default_value = opts.default_value,
+        unit          = "%",
     }
 end
 
 -- Rows editing a surface (see infra/sui_backdrop.lua), the same on every
--- surface: Color (white or gray), Frame and Background Opacity.
+-- surface: Color (white or gray, plus the accent and secondary colours that are
+-- set where the surface supports them), Frame and Background Opacity.
 -- opts: {
 --   surface      — surface descriptor (Backdrop.surface)
 --   refresh      — called once a value is applied
@@ -1347,13 +1509,19 @@ function M.makeSurfaceItems(opts)
         with_strength = require("features/sui_wallpaper").isWallpaperActive
     end
     if type(with_strength) == "function" then with_strength = with_strength() end
+    local tones = {
+        { value = Backdrop.TONE.WHITE, label = _lc("White") },
+        { value = Backdrop.TONE.GRAY,  label = _lc("Gray") },
+    }
+    if Backdrop.supportsTint(surface) then
+        for _i, option in ipairs(require("features/sui_style").paletteOptions(_lc)) do
+            tones[#tones + 1] = option
+        end
+    end
     local items = {
         M.makeRadioSubmenuItem{
             text    = _lc("Color"),
-            options = {
-                { value = Backdrop.TONE.WHITE, label = _lc("White") },
-                { value = Backdrop.TONE.GRAY,  label = _lc("Gray") },
-            },
+            options = tones,
             get     = function() return Backdrop.readTone(surface) end,
             set     = function(tone) Backdrop.saveTone(surface, tone) end,
             refresh = refresh,
@@ -1392,79 +1560,82 @@ function M.makeSurfaceMenu(opts)
     }
 end
 
--- Generic integer stepper (SpinWidget, no "%" suffix) — for small bounded
+-- Integer setting kept within [lo, hi]. Reads give `default` (clamped too)
+-- when nothing is saved, and nil when there is no default either.
+function M.readClampedInt(key, lo, hi, default)
+    local v = SUISettings:readSetting(key)
+    if v == nil then v = default end
+    if v == nil then return nil end
+    return math_max(lo, math_min(hi, math_floor(tonumber(v) or lo)))
+end
+
+function M.saveClampedInt(key, n, lo, hi)
+    SUISettings:saveSetting(key, math_max(lo, math_min(hi, math_floor(tonumber(n) or lo))))
+end
+
+-- Generic integer stepper (spin dialog, no "%" suffix) — for small bounded
 -- counts like grid rows/columns, where makeScaleItem's fixed "%" unit and
 -- SCALE_MIN/MAX defaults don't apply. opts.unit defaults to "" (no suffix
 -- shown after the number).
 function M.makeStepperItem(opts)
-    local unit = opts.unit or ""
-    return {
-        text_func      = opts.text_func,
-        separator      = opts.separator or nil,
-        keep_menu_open = true,
-        value_func     = function() return tostring(opts.get()) .. unit end,
-        callback       = function()
-            local SpinWidget = require("ui/widget/spinwidget")
-            local UIManager  = require("ui/uimanager")
-            UIManager:show(SpinWidget:new{
-                title_text    = opts.title,
-                info_text     = opts.info,
-                value         = opts.get(),
-                value_min     = opts.value_min,
-                value_max     = opts.value_max,
-                value_step    = opts.value_step or 1,
-                unit          = unit,
-                ok_text       = _("Apply"),
-                cancel_text   = _("Cancel"),
-                default_value = opts.default_value,
-                callback      = function(spin)
-                    opts.set(spin.value)
-                    if opts.refresh then opts.refresh() end
-                end,
-            })
-        end,
+    return M.makeSpinItem{
+        text_func       = opts.text_func,
+        separator       = opts.separator,
+        title           = opts.title,
+        info            = opts.info,
+        get             = opts.get,
+        set             = opts.set,
+        refresh         = withoutArgs(opts.refresh),
+        value_min       = opts.value_min,
+        value_max       = opts.value_max,
+        value_step      = opts.value_step or 1,
+        value_hold_step = opts.value_hold_step,
+        default_value   = opts.default_value,
+        unit            = opts.unit,
     }
 end
 
--- Two integer steppers shown in the same dialog at once (DoubleSpinWidget) —
--- same widget/convention KOReader's own CoverBrowser plugin uses for
--- "Items per page in portrait/landscape mosaic mode" (columns + rows
--- together, one Apply). Prefer this over two separate makeStepperItem
--- entries whenever the two numbers are only meaningful as a pair.
+-- Two integer steppers shown in the same dialog at once (Dialogs.spin2) —
+-- "Items per page" style pairs (columns + rows together, one Apply). Prefer
+-- this over two separate makeStepperItem entries whenever the two numbers are
+-- only meaningful as a pair.
 function M.makeDoubleStepperItem(opts)
+    local function side(spec)
+        return {
+            text      = spec.text,
+            value     = spec.get(),
+            min       = spec.value_min,
+            max       = spec.value_max,
+            step      = spec.value_step,
+            hold_step = spec.value_hold_step,
+            default   = spec.default_value,
+            auto      = spec.auto_func and spec.auto_func(),
+            auto_text = spec.auto_text,
+        }
+    end
     return {
         text_func      = opts.text_func,
         value_func     = opts.value_func,
         mandatory_func = opts.mandatory_func,
         separator      = opts.separator or nil,
-        -- Just like KOReader's own native item: no keep_menu_open, so you can
-        -- see the result applying in the view behind.
+        -- No keep_menu_open: Apply closes the sheet (same as single spin).
         callback       = function()
-            local DoubleSpinWidget = require("ui/widget/doublespinwidget")
-            local UIManager        = require("ui/uimanager")
-            local left_value, right_value = opts.left.get(), opts.right.get()
-            UIManager:show(DoubleSpinWidget:new{
-                title_text      = opts.title,
-                width_factor    = opts.width_factor or 0.6,
-                left_text       = opts.left.text,
-                left_value      = left_value,
-                left_min        = opts.left.value_min,
-                left_max        = opts.left.value_max,
-                left_default    = opts.left.default_value,
-                left_precision  = "%01d",
-                right_text      = opts.right.text,
-                right_value     = right_value,
-                right_min       = opts.right.value_min,
-                right_max       = opts.right.value_max,
-                right_default   = opts.right.default_value,
-                right_precision = "%01d",
-                keep_shown_on_apply = true,
-                callback        = function(lv, rv)
-                    opts.left.set(lv)
-                    opts.right.set(rv)
+            require("features/dialogs/sui_dialogs").spin2{
+                title     = opts.title,
+                left      = side(opts.left),
+                right     = side(opts.right),
+                on_apply  = function(left, right, auto)
+                    -- A value still automatic is reset, not stored.
+                    for i, spec in ipairs{ opts.left, opts.right } do
+                        if auto[i] and spec.reset then
+                            spec.reset()
+                        else
+                            spec.set(i == 1 and left or right)
+                        end
+                    end
                     opts.refresh()
                 end,
-            })
+            }
         end,
     }
 end
@@ -1513,115 +1684,104 @@ function M.setModuleGap(pct, mod_id, pfx)
 end
 
 function M.makeGapItem(opts)
-    return {
-        text_func      = opts.text_func,
-        separator      = opts.separator or nil,
-        keep_menu_open = true,
-        value_func     = function() return opts.get() .. "%" end,
-        callback       = function()
-            local SpinWidget = require("ui/widget/spinwidget")
-            local UIManager  = require("ui/uimanager")
-            UIManager:show(SpinWidget:new{
-                title_text    = opts.title,
-                info_text     = opts.info,
-                value         = opts.get(),
-                value_min     = GAP_MIN,
-                value_max     = GAP_MAX,
-                value_step    = GAP_STEP,
-                unit          = "%",
-                ok_text       = _("Apply"),
-                cancel_text   = _("Cancel"),
-                default_value = GAP_DEF,
-                callback      = function(spin)
-                    opts.set(spin.value)
-                    opts.refresh()
-                end,
-            })
-        end,
+    return M.makeSpinItem{
+        text_func     = opts.text_func,
+        separator     = opts.separator,
+        title         = opts.title,
+        info          = opts.info,
+        get           = opts.get,
+        set           = opts.set,
+        refresh       = withoutArgs(opts.refresh),
+        value_min     = GAP_MIN,
+        value_max     = GAP_MAX,
+        value_step    = GAP_STEP,
+        default_value = GAP_DEF,
+        unit          = "%",
     }
 end
 
 
--- Per-module column width (bento grid). Percent of the homescreen row
--- this module occupies in portrait. 100 = full width (default). Modules
--- under 100% whose widths fit side-by-side share a row automatically.
-local BENTO_MIN  = 20
-local BENTO_MAX  = 100
-local BENTO_STEP = 5
-local BENTO_DEF  = 100
+-- Per-module column width (bento grid). Stored as a percent of the row
+-- (33 / 50 / 67 / 100, 100 = full width, the default) and handled as spans in
+-- sixths by infra/sui_bento. Modules whose spans fit in a row share it.
+local Bento = require("infra/sui_bento")
 
 local function _bentoKey(mod_id, pfx)
     return (pfx or "simpleui_hs_") .. "bento_width_" .. (mod_id or "")
 end
 
-local function _clampBento(n)
-    n = math_floor(tonumber(n) or BENTO_DEF)
-    if n < BENTO_MIN then n = BENTO_MIN elseif n > BENTO_MAX then n = BENTO_MAX end
-    -- Snap to step.
-    n = math_floor((n + BENTO_STEP / 2) / BENTO_STEP) * BENTO_STEP
-    if n < BENTO_MIN then n = BENTO_MIN elseif n > BENTO_MAX then n = BENTO_MAX end
-    return n
-end
-
-function M.getBentoWidth(mod_id, pfx)
-    if not mod_id then return BENTO_DEF end
+-- Span of the module; stored values from before the fixed widths snap to the
+-- nearest one.
+function M.getBentoSpan(mod_id, pfx)
+    if not mod_id then return Bento.FULL end
     local v = SUISettings:get(_bentoKey(mod_id, pfx))
     if v == nil then
         -- One-shot migration from the legacy key (G_reader_settings).
         local legacy = _G.G_reader_settings and _G.G_reader_settings:readSetting("simpleui_bento_width_" .. mod_id)
         if legacy ~= nil then
-            local n = _clampBento(legacy)
-            M.setBentoWidth(n, mod_id, pfx)
-            return n
+            local span = Bento.pctToSpan(legacy)
+            M.setBentoSpan(span, mod_id, pfx)
+            return span
         end
-        return BENTO_DEF
+        return Bento.FULL
     end
-    return _clampBento(v)
+    return Bento.pctToSpan(v)
 end
 
-function M.setBentoWidth(pct, mod_id, pfx)
+function M.setBentoSpan(span, mod_id, pfx)
     if mod_id and pfx then
-        SUISettings:set(_bentoKey(mod_id, pfx), _clampBento(pct))
+        SUISettings:set(_bentoKey(mod_id, pfx), Bento.spanToPct(span))
     end
 end
 
-function M.makeBentoWidthItem(opts)
+-- Width as a percent of the row, for modules that size their content by it.
+function M.getBentoWidth(mod_id, pfx)
+    return Bento.spanToPct(M.getBentoSpan(mod_id, pfx))
+end
+
+-- Stores a percent width, snapped to the nearest fixed width.
+function M.setBentoWidth(pct, mod_id, pfx)
+    M.setBentoSpan(Bento.pctToSpan(pct), mod_id, pfx)
+end
+
+-- Radio options for the module widths.
+function M.bentoSpanOptions()
     return {
-        text_func      = opts.text_func or function() return _("Column Width (Bento Grid)") end,
-        separator      = opts.separator or nil,
-        keep_menu_open = true,
-        value_func     = function() return opts.get() .. "%" end,
-        callback       = function()
-            local SpinWidget = require("ui/widget/spinwidget")
-            local UIManager  = require("ui/uimanager")
-            UIManager:show(SpinWidget:new{
-                title_text    = opts.title or _("Column Width (Bento Grid)"),
-                info_text     = opts.info or _("Share of the row this module occupies.\n100% = full width. Modules under 100% share a row when their widths fit (bento grid)."),
-                value         = opts.get(),
-                value_min     = BENTO_MIN,
-                value_max     = BENTO_MAX,
-                value_step    = BENTO_STEP,
-                unit          = "%",
-                ok_text       = _("Apply"),
-                cancel_text   = _("Cancel"),
-                default_value = BENTO_DEF,
-                callback      = function(spin)
-                    opts.set(spin.value)
-                    opts.refresh()
-                end,
-            })
-        end,
+        { value = 2, label = _("1/3") },
+        { value = 3, label = _("1/2") },
+        { value = 4, label = _("2/3") },
+        { value = 6, label = _("Full") },
     }
 end
 
+function M.bentoSpanLabel(span)
+    for _i, option in ipairs(M.bentoSpanOptions()) do
+        if option.value == span then return option.label end
+    end
+    return ""
+end
+
+local function _bentoAutofitKey(pfx)
+    return (pfx or "simpleui_hs_") .. "bento_autofit"
+end
+
+-- Whether changing a module width also adjusts a neighbour so the row stays
+-- full. On by default.
+function M.isBentoAutofit(pfx)
+    return SUISettings:nilOrTrue(_bentoAutofitKey(pfx))
+end
+
+function M.setBentoAutofit(on, pfx)
+    SUISettings:set(_bentoAutofitKey(pfx), on)
+end
 
 -- ---------------------------------------------------------------------------
--- Module Settings Chrome — Top Margin + Column Width
--- Every module's settings screen ends with these two items, regardless of
--- which window built that screen (long-press on a module vs the Settings ▸
--- Modules screen). Single source of truth for the pair, so the different
--- windows that show module settings can't drift out of sync on which items
--- are shown or how they're wired.
+-- Module Settings Chrome — Top Margin + Width and Position
+-- Every module's settings screen ends with these items, regardless of which
+-- window built that screen (long-press on a module vs the Settings ▸ Modules
+-- screen). Single source of truth, so the different windows that show module
+-- settings can't drift out of sync on which items are shown or how they're
+-- wired.
 --
 -- opts: {
 --   mod       — module descriptor (id, name, no_top_margin)
@@ -1629,8 +1789,11 @@ end
 --   refresh   — ctx_menu-style refresh; must already repaint the caller's
 --               window (see SUIWindow.withRepaint) or the new value won't
 --               show until the window is reopened
---   on_change — optional extra work to run after either value is set,
+--   on_change — optional extra work to run after the margin is set,
 --               e.g. invalidating a live screen's module-list cache
+--   layout_sheet — optional function opening the layout sheet of the module;
+--               when set, the screen gets a "Width and Position" row. Left
+--               out by windows that already offer the sheet themselves.
 -- }
 -- ---------------------------------------------------------------------------
 function M.appendModuleChromeItems(items, opts)
@@ -1659,14 +1822,18 @@ function M.appendModuleChromeItems(items, opts)
             refresh   = refresh,
         })
     end
-    items[#items + 1] = M.makeBentoWidthItem({
-        get     = function() return M.getBentoWidth(mod.id, pfx) end,
-        set     = function(v)
-            M.setBentoWidth(v, mod.id, pfx)
-            if on_change then on_change() end
-        end,
-        refresh = refresh,
-    })
+    if opts.layout_sheet then
+        local function currentWidth()
+            return M.bentoSpanLabel(M.getBentoSpan(mod.id, pfx))
+        end
+        items[#items + 1] = {
+            text           = _("Width and Position"),
+            value_func     = currentWidth,
+            mandatory_func = currentWidth,
+            keep_menu_open = true,
+            callback       = opts.layout_sheet,
+        }
+    end
     return items
 end
 
@@ -1677,6 +1844,16 @@ end
 
 function M.isLabelHidden(mod_id)
     return SUISettings:get(_labelHideKey(mod_id)) == true
+end
+
+-- A module's section label sits inside its background box unless the user
+-- moved it above the box.
+local function _labelOutsideKey(mod_id)
+    return "simpleui_label_outside_" .. (mod_id or "")
+end
+
+function M.isLabelOutside(mod_id)
+    return SUISettings:get(_labelOutsideKey(mod_id)) == true
 end
 
 -- ===========================================================================
@@ -1931,6 +2108,20 @@ function M.makeLabelToggleItem(mod_id, refresh, _lc)
         callback       = function()
             SUISettings:set(_labelHideKey(mod_id),
                 not M.isLabelHidden(mod_id) and true or nil)
+            refresh()
+        end,
+    }
+end
+
+function M.makeLabelPlacementItem(mod_id, refresh, _lc)
+    return {
+        text           = _lc("Label inside background"),
+        enabled_func   = function() return not M.isLabelHidden(mod_id) end,
+        checked_func   = function() return not M.isLabelOutside(mod_id) end,
+        keep_menu_open = true,
+        callback       = function()
+            SUISettings:set(_labelOutsideKey(mod_id),
+                not M.isLabelOutside(mod_id) and true or nil)
             refresh()
         end,
     }
@@ -2967,6 +3158,12 @@ function M.applyFirstRunDefaults()
         SUISettings:set(KEY_CLOSE_TARGET, target)
     end
 
+    -- UI font: installs that never picked a font start with the bundled family.
+    if SUISettings:get(SUIFonts.KEY_ENABLED) == nil then
+        SUISettings:set(SUIFonts.KEY_ENABLED, true)
+        SUISettings:set(SUIFonts.KEY_NAME, SUIFonts.FAMILY)
+    end
+
     -- Navbar
     def("simpleui_bar_enabled",  true)
     def("simpleui_topbar_enabled", true)
@@ -3024,6 +3221,9 @@ function M.applyFirstRunDefaults()
     def(PFX .. "currently_show_description",   true)
     def(PFX .. "currently_bar_style",           "with_pct")
     def(PFX .. "currently_stats_style",         "compact")
+    def(PFX .. "currently_stats_icon",          true)
+    -- Module labels: classic by default (Style ▸ Module Labels).
+    def(PFX .. "section_label_caps",            false)
     def(PFX .. "coverdeck_show_title",          true)
     def(PFX .. "coverdeck_show_author",         false)
     def(PFX .. "coverdeck_show_progress",       true)
@@ -3054,7 +3254,7 @@ function M.applyFirstRunDefaults()
 
     -- Folder covers / browse meta
     def("simpleui_fc_enabled",          true)
-    def("simpleui_fc_folder_style",     "auto")
+    def("simpleui_style_folder_type",   "auto")
     def("simpleui_fc_cover_mode",       "2_3")
     def("simpleui_fc_subfolder_cover",  true)
     def("simpleui_browsemeta_enabled",  true)
@@ -3093,8 +3293,8 @@ end
 function M.applyFirstRunLibraryDefaults()
     if SUISettings:get("simpleui_library_defaults_applied") ~= nil then return end
     SUISettings:set("simpleui_library_defaults_applied", true)
-    SUISettings:set("simpleui_fc_show_title_strip",  true)
-    SUISettings:set("simpleui_fc_show_author_strip", true)
+    SUISettings:set("simpleui_fc_captions_show",    true)
+    SUISettings:set("simpleui_fc_captions_content", "title_author")
     SUISettings:flush()
 
     local bim = M.getBookInfoManager()

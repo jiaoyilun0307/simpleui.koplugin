@@ -334,6 +334,8 @@ function AssetBrowser:getFocusableWidgetXY()
     return nil, nil
 end
 
+function AssetBrowser:moveFocusTo() end
+
 function AssetBrowser:onClose()
     if self._filter_input then
         self._filter_input:onCloseKeyboard()

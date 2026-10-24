@@ -13,13 +13,18 @@
 --   Query 1a — per-day buckets over the last ~month: today/week/rolling-7-day/
 --     month, seconds and pages.
 --   Query 1b — duration sums for the year and all-time windows.
---   Query 2  — streak (recent distinct active dates + freeze-aware walk).
+--   Query 2  — streak (recent distinct active dates + freeze-aware walk); the
+--     same dates give the last-7-days dots, so they cost no extra query.
+-- Reading sessions (see SP.getSessionRecords), the chart data (see
+--   SP.getChartData) and the year data (see SP.getYearData) are separate,
+--   on-demand queries.
 -- Finished books: books_year and books_total are counted from the persistent
 --   FinishedBooks ledger, with no DB or sidecar access (see "Finished books").
 
 local logger = require("logger")
 local lfs    = require("libs/libkoreader-lfs")
 local Config = require("infra/sui_config")
+local Perf   = require("infra/sui_perf")
 
 local SP = {}
 
@@ -91,6 +96,8 @@ local function _persistStaleStats(state)
         year_secs     = state.year_secs,
         total_secs    = state.total_secs,
         streak        = state.streak,
+        streak_week   = state.streak_week,
+        longest_streak = state.longest_streak,
         books_year    = state.books_year,
         books_total   = state.books_total,
         db_conn_fatal = state.db_conn_fatal,
@@ -198,6 +205,7 @@ local function fetchTimeSeries(conn, window_since, year_start,
             r.month_pages    = rownum(rw[8] and rw[8][1])
         end
 
+        Perf.mark("stats: short windows query done")
         local rl = conn:exec(string.format([[
             SELECT
                 COALESCE(sum(CASE WHEN start_time >= %d THEN duration ELSE 0 END), 0),
@@ -209,6 +217,7 @@ local function fetchTimeSeries(conn, window_since, year_start,
             r.year_secs  = rownum(rl[1][1])
             r.total_secs = rownum(rl[2] and rl[2][1])
         end
+        Perf.mark("stats: year/total query done")
     end)
     if not ok then
         logger.warn("simpleui: stats_provider: fetchTimeSeries failed: " .. tostring(err))
@@ -235,12 +244,19 @@ end
 -- column; duration > 0 excludes zero-duration rows (e.g. a crash/force-close).
 -- today_str/yesterday_str are passed in, so this makes no os.date calls of
 -- its own.
+--
+-- Also returns the state of each of the last STREAK_DOTS_DAYS days, oldest first
+-- (the last entry is today): "read", "frozen" (covered by a spent freeze) or
+-- "none". `week_dates` are those dates, pre-computed by SP.get(). Every window
+-- reaches back at least 90 days, so the dates are always inside it.
 -- ---------------------------------------------------------------------------
 local STREAK_FIRST_WINDOW_DAYS = 90
 local STREAK_WINDOW_GROWTH     = 4
+local STREAK_DOTS_DAYS         = 14
 
-local function fetchStreak(conn, today_str, yesterday_str, start_today)
+local function fetchStreak(conn, today_str, yesterday_str, start_today, week_dates)
     local streak = 0
+    local week
     local ok, err = pcall(function()
         local SF = _getStreakFreeze()
         if not (SF and SF.computeCurrentDayStreak) then return end
@@ -254,11 +270,17 @@ local function fetchStreak(conn, today_str, yesterday_str, start_today)
                 FROM page_stat_data
                 WHERE start_time >= %d AND duration > 0;
             ]], since))
-            streak = SF.computeCurrentDayStreak(rw and rw[1] or {}, {
+            local active = rw and rw[1] or {}
+            streak = SF.computeCurrentDayStreak(active, {
                 frozen_dates = frozen,
                 today        = today_str,
                 yesterday    = yesterday_str,
             })
+            week = {}
+            local state_of = {}
+            for _, d in ipairs(frozen) do state_of[d] = "frozen" end
+            for _, d in ipairs(active) do state_of[d] = "read" end
+            for i, d in ipairs(week_dates) do week[i] = state_of[d] or "none" end
             -- Complete once the run ends at least a day inside the window
             -- (the slack absorbs day-length drift) or nothing older exists.
             if since == 0 or streak < window_days - 1 then break end
@@ -268,7 +290,29 @@ local function fetchStreak(conn, today_str, yesterday_str, start_today)
     if not ok then
         logger.warn("simpleui: stats_provider: fetchStreak failed: " .. tostring(err))
     end
-    return streak
+    return streak, week
+end
+
+-- Longest run of consecutive active days in the whole history (frozen days
+-- count, like in the current streak). Nil when it cannot be computed.
+local function fetchLongestStreak(conn)
+    local longest
+    local ok, err = pcall(function()
+        local SF = _getStreakFreeze()
+        if not (SF and SF.computeLongestDayStreak) then return end
+        local rw = conn:exec([[
+            SELECT DISTINCT date(start_time, 'unixepoch', 'localtime')
+            FROM page_stat_data
+            WHERE duration > 0;
+        ]])
+        longest = SF.computeLongestDayStreak(rw and rw[1] or {}, {
+            frozen_dates = SF.getFrozenDatesInRange and SF.getFrozenDatesInRange(nil, nil) or {},
+        })
+    end)
+    if not ok then
+        logger.warn("simpleui: stats_provider: fetchLongestStreak failed: " .. tostring(err))
+    end
+    return longest
 end
 
 -- ---------------------------------------------------------------------------
@@ -905,6 +949,248 @@ function SP.invalidateStatusCounts()
     _status_cache = nil
 end
 
+-- ---------------------------------------------------------------------------
+-- Reading sessions
+-- ---------------------------------------------------------------------------
+-- Page events are grouped into sessions: an event joins the running session
+-- when it starts at most SESSION_GAP_SECS after the previous one ended, and
+-- each event counts for at most SESSION_GAP_SECS (a reader left open on a
+-- page must not inflate a session). Sessions shorter than
+-- SESSION_MIN_SECS are ignored. The window functions need SQLite 3.25 or
+-- newer; a failed query is cached for the day too, so an unsupported SQLite
+-- costs one attempt, not one per refresh.
+--
+-- Cached for the calendar day, like the time series, and dropped by the same
+-- invalidations. Computed on demand: only when a card that shows a record is
+-- selected.
+local RECORDS_WINDOW_DAYS = 90
+local SESSION_GAP_SECS    = 600
+local SESSION_MIN_SECS    = 60
+
+local _records     = nil   -- the records table, or false when the query failed
+local _records_day = nil   -- "YYYY-MM-DD" when _records was built
+
+local function fetchSessionRecords(conn, since)
+    local records = { sessions = 0, longest_secs = 0, avg_secs = 0, pages_per_hour = 0 }
+    local ok, err = pcall(function()
+        local rw = conn:exec(string.format([[
+            WITH ev AS (
+                SELECT start_time AS s, MIN(duration, %d) AS d, id_book || '@' || page AS pg,
+                       CASE WHEN start_time - LAG(start_time + MIN(duration, %d)) OVER (ORDER BY start_time) <= %d
+                            THEN 0 ELSE 1 END AS brk
+                FROM page_stat_data
+                WHERE start_time >= %d AND duration > 0
+            ), grouped AS (
+                SELECT d, pg, SUM(brk) OVER (ORDER BY s ROWS UNBOUNDED PRECEDING) AS g FROM ev
+            ), sessions AS (
+                SELECT SUM(d) AS secs, COUNT(DISTINCT pg) AS pages FROM grouped GROUP BY g
+            )
+            SELECT COUNT(*), COALESCE(MAX(secs), 0), COALESCE(AVG(secs), 0),
+                   COALESCE(SUM(pages), 0), COALESCE(SUM(secs), 0)
+            FROM sessions WHERE secs >= %d;
+        ]], SESSION_GAP_SECS, SESSION_GAP_SECS, SESSION_GAP_SECS, since, SESSION_MIN_SECS))
+        if not (rw and rw[1] and rw[1][1]) then return end
+        records.sessions     = rownum(rw[1][1])
+        records.longest_secs = rownum(rw[2] and rw[2][1])
+        records.avg_secs     = rownum(rw[3] and rw[3][1])
+        local pages, secs    = rownum(rw[4] and rw[4][1]), rownum(rw[5] and rw[5][1])
+        if secs > 0 then records.pages_per_hour = pages * 3600 / secs end
+    end)
+    if not ok then
+        logger.warn("simpleui: stats_provider: fetchSessionRecords failed: " .. tostring(err))
+        return false
+    end
+    return records
+end
+
+--- Reading-session records of the last RECORDS_WINDOW_DAYS days:
+--- { sessions, longest_secs, avg_secs, pages_per_hour } (all zero when there is
+--- no reading). pages_per_hour counts each page once per session, like the
+--- per-day page counts elsewhere. Returns nil without a DB connection or when the
+--- query failed. The same table is returned until the cache is invalidated.
+function SP.getSessionRecords(db_conn)
+    if not db_conn then return nil end
+    local today = os.date("%Y-%m-%d")
+    if _records_day ~= today then
+        _records     = fetchSessionRecords(db_conn, os.time() - RECORDS_WINDOW_DAYS * 86400)
+        _records_day = today
+    end
+    return _records or nil
+end
+
+-- ---------------------------------------------------------------------------
+-- Chart data — seconds read per day of the current week and per hour of the
+-- day. Computed on demand, only when a chart card is selected, from the
+-- heatmap data layer (which counts each page once per day). Cached per day and
+-- dropped by SP.invalidate() / SP.invalidateTimeSeries().
+-- ---------------------------------------------------------------------------
+local _charts     = nil   -- the chart table, or false when the queries failed
+local _charts_day = nil   -- "YYYY-MM-DD" when _charts was built
+
+local function dropChartData()
+    _charts_day = nil
+    local HD = package.loaded["engines/sui_heatmap_data"]
+    if HD then HD.invalidate() end
+end
+
+-- The days before today never change during a session, so their share of the
+-- chart data is kept in the settings store and rebuilt once per calendar day;
+-- every refresh only queries today. SP.invalidate() (a full reset) drops it.
+local _CHART_HISTORY_KEY = "simpleui_chart_history_v1"
+
+-- Same for the months of the year before today (see fetchYearData).
+local _YEAR_HISTORY_KEY = "simpleui_year_history_v1"
+
+local function dropChartHistory()
+    local SUIStore = _getSUIStore()
+    if SUIStore and SUIStore.delNoFlush then
+        pcall(SUIStore.delNoFlush, SUIStore, _CHART_HISTORY_KEY)
+        pcall(SUIStore.delNoFlush, SUIStore, _YEAR_HISTORY_KEY)
+    end
+end
+
+-- Returns { day, days = { ["YYYY-MM-DD"] = secs }, by_hour = [weekday][hour] }
+-- for the days up to yesterday, or nil plus the fatal flag when a query failed.
+local function chartHistory(conn, today_str, days_start, hour_start, yesterday)
+    local SUIStore = _getSUIStore()
+    if SUIStore then
+        local ok, stored = pcall(SUIStore.readSetting, SUIStore, _CHART_HISTORY_KEY)
+        if ok and type(stored) == "table" and stored.day == today_str and stored.days then return stored end
+    end
+    local HD = require("engines/sui_heatmap_data")
+    local days, fatal_daily = HD.getDailyReadingData(days_start, yesterday, conn)
+    local by_hour, fatal_hour = HD.getWeekdayHourReadingData(hour_start, yesterday, conn)
+    if fatal_daily or fatal_hour then return nil, true end
+    local history = { day = today_str, days = days, by_hour = by_hour }
+    if SUIStore and SUIStore.setNoFlush then
+        pcall(SUIStore.setNoFlush, SUIStore, _CHART_HISTORY_KEY, history)
+    end
+    return history
+end
+
+local function fetchChartData(conn)
+    local HD = require("engines/sui_heatmap_data")
+    local t = os.date("*t")
+    local monday_offset = (t.wday - 2) % 7   -- t.wday: 1 = Sunday
+    -- Noon-anchored so that a DST change cannot move a day.
+    local function weekDay(i)
+        return os.time{ year = t.year, month = t.month, day = t.day - monday_offset + i, hour = 12 }
+    end
+    local today     = os.time{ year = t.year, month = t.month, day = t.day, hour = 12 }
+    local yesterday = os.time{ year = t.year, month = t.month, day = t.day - 1, hour = 12 }
+    local hour_start = HD.getWeekBlockRange(HD.HOUR_CHART_WEEKS, 0)
+    local days_start = weekDay(-7 * (HD.HEAT_WEEKS - 1))
+
+    local history = chartHistory(conn, os.date("%Y-%m-%d", today), days_start, hour_start, yesterday)
+    if not history then return false end
+    local daily_today, fatal_daily = HD.getDailyReadingData(today, today, conn)
+    local hour_today, fatal_hour = HD.getWeekdayHourReadingData(today, today, conn)
+    if fatal_daily or fatal_hour then return false end
+
+    local days = {}
+    for day, secs in pairs(history.days) do days[day] = secs end
+    for day, secs in pairs(daily_today) do days[day] = (days[day] or 0) + secs end
+
+    local week = { secs = {}, total = 0, today = monday_offset + 1 }
+    for i = 1, 7 do
+        week.secs[i] = days[os.date("%Y-%m-%d", weekDay(i - 1))] or 0
+        week.total   = week.total + week.secs[i]
+    end
+    local by_hour = {}
+    for wd = 1, 7 do
+        by_hour[wd] = {}
+        for h = 0, 23 do
+            by_hour[wd][h] = (history.by_hour[wd] and history.by_hour[wd][h] or 0)
+                + (hour_today[wd] and hour_today[wd][h] or 0)
+        end
+    end
+    local hours, peak_hour = HD.hourTotals(by_hour)
+    local weekdays, peak_weekday = HD.weekdayTotals(by_hour)
+    return { week = week, days = days, hours = hours, peak_hour = peak_hour,
+             weekdays = weekdays, peak_weekday = peak_weekday }
+end
+
+--- Chart data: { week = { secs[1..7] (Monday first), total, today (index) },
+--- days = { ["YYYY-MM-DD"] = secs } for the last HD.HEAT_WEEKS weeks,
+--- hours = secs[1..24] (hour 0 first), peak_hour (0-23, nil without reading),
+--- weekdays = secs[1..7] (Monday first), peak_weekday (1-7, nil without
+--- reading) }.
+--- Returns nil without a DB connection or when a query failed. The same table
+--- is returned until the cache is invalidated.
+function SP.getChartData(db_conn)
+    if not db_conn then return nil end
+    local today = os.date("%Y-%m-%d")
+    if _charts_day ~= today then
+        _charts     = fetchChartData(db_conn)
+        _charts_day = today
+    end
+    return _charts or nil
+end
+
+-- ---------------------------------------------------------------------------
+-- Year data — seconds read per month of the current year. Computed on demand,
+-- only when a card drawing the year is selected, from the heatmap data layer.
+-- Cached per day and dropped by SP.invalidate() / SP.invalidateTimeSeries().
+-- ---------------------------------------------------------------------------
+local _year     = nil   -- the year table, or false when the query failed
+local _year_day = nil   -- "YYYY-MM-DD" when _year was built
+
+-- Seconds read per month of the year up to yesterday, kept in the settings
+-- store and rebuilt once per calendar day, so a refresh only queries today.
+-- Nil when a query failed.
+local function yearHistory(conn, t, today_str)
+    local SUIStore = _getSUIStore()
+    if SUIStore then
+        local ok, stored = pcall(SUIStore.readSetting, SUIStore, _YEAR_HISTORY_KEY)
+        if ok and type(stored) == "table" and stored.day == today_str and type(stored.months) == "table" then
+            return stored.months
+        end
+    end
+    local HD = require("engines/sui_heatmap_data")
+    local months
+    if t.month == 1 and t.day == 1 then
+        months = HD.monthTotals({}, t.year)
+    else
+        -- Noon-anchored so that a DST change cannot move a day.
+        local daily, fatal = HD.getDailyReadingData(
+            os.time{ year = t.year, month = 1, day = 1, hour = 12 },
+            os.time{ year = t.year, month = t.month, day = t.day - 1, hour = 12 }, conn)
+        if fatal then return nil end
+        months = HD.monthTotals(daily, t.year)
+    end
+    if SUIStore and SUIStore.setNoFlush then
+        pcall(SUIStore.setNoFlush, SUIStore, _YEAR_HISTORY_KEY, { day = today_str, months = months })
+    end
+    return months
+end
+
+local function fetchYearData(conn)
+    local HD = require("engines/sui_heatmap_data")
+    local t = os.date("*t")
+    local months = yearHistory(conn, t, os.date("%Y-%m-%d"))
+    if not months then return false end
+    local today = os.time{ year = t.year, month = t.month, day = t.day, hour = 12 }
+    local daily_today, fatal = HD.getDailyReadingData(today, today, conn)
+    if fatal then return false end
+    local out = {}
+    for m = 1, 12 do out[m] = months[m] or 0 end
+    for _, secs in pairs(daily_today) do out[t.month] = out[t.month] + secs end
+    return { months = out, month = t.month }
+end
+
+--- Year data: { months = secs[1..12] (January first), month = current month
+--- (1-12) }. Returns nil without a DB connection or when the query failed. The
+--- same table is returned until the cache is invalidated.
+function SP.getYearData(db_conn)
+    if not db_conn then return nil end
+    local today = os.date("%Y-%m-%d")
+    if _year_day ~= today then
+        _year     = fetchYearData(db_conn)
+        _year_day = today
+    end
+    return _year or nil
+end
+
 -- Partial-invalidation flag, declared here so SP.get(), SP.invalidate() and
 -- SP.invalidateTimeSeries() all close over the same local.
 --   _streak_cache_valid: set when the streak is known-unchanged; consumed and
@@ -952,6 +1238,8 @@ function SP.get(db_conn, year_str, needs_books)
             year_secs     = _cache.year_secs,
             total_secs    = _cache.total_secs,
             streak        = _cache.streak,
+            streak_week   = _cache.streak_week,
+            longest_streak = _cache.longest_streak,
             books_year    = 0,
             books_total   = 0,
             db_conn_fatal = _cache.db_conn_fatal,
@@ -979,6 +1267,13 @@ function SP.get(db_conn, year_str, needs_books)
     local t_week     = os.date("*t", week_start)
     local t_rolling7 = os.date("*t", rolling7_start)
     local t_month    = os.date("*t", month_start)
+    -- The last STREAK_DOTS_DAYS calendar days, oldest first. Anchored at noon so
+    -- that a DST change cannot move a day.
+    local streak_week_dates = {}
+    for i = 1, STREAK_DOTS_DAYS do
+        streak_week_dates[i] = os.date("%Y-%m-%d", os.time{
+            year = t.year, month = t.month, day = t.day - (STREAK_DOTS_DAYS - i), hour = 12 })
+    end
     local week_date     = string.format("%04d-%02d-%02d", t_week.year,     t_week.month,     t_week.day)
     local rolling7_date = string.format("%04d-%02d-%02d", t_rolling7.year, t_rolling7.month, t_rolling7.day)
     local month_date    = string.format("%04d-%02d-%02d", t_month.year,    t_month.month,    t_month.day)
@@ -1033,19 +1328,28 @@ function SP.get(db_conn, year_str, needs_books)
         if not result.db_conn_fatal then
             -- Streak Manager freeze mechanic (time-based earning hook):
             -- no-op when the freeze mechanic is disabled.
+            Perf.mark("stats: freeze module loading")
             local SF = _getStreakFreeze()
+            Perf.mark("stats: freeze module loaded")
             if SF and SF.advanceFreezeTimeFromTotalSecs then
                 pcall(SF.advanceFreezeTimeFromTotalSecs, result.total_secs)
             end
+            Perf.mark("stats: freeze time done")
 
             if _streak_cache_valid then
                 -- Streak only changes on the first session of a new day;
                 -- for later sessions the same day, reuse the cached value.
-                result.streak = (_cache and _cache.streak) or 0
+                result.streak      = (_cache and _cache.streak) or 0
+                result.streak_week = _cache and _cache.streak_week
+                result.longest_streak = _cache and _cache.longest_streak
                 _streak_cache_valid = false
             else
                 local yesterday_str = os.date("%Y-%m-%d", start_today - 86400)
-                result.streak = fetchStreak(db_conn, today_str, yesterday_str, start_today)
+                result.streak, result.streak_week = fetchStreak(
+                    db_conn, today_str, yesterday_str, start_today, streak_week_dates)
+                Perf.mark("stats: current streak done")
+                result.longest_streak = fetchLongestStreak(db_conn)
+                Perf.mark("stats: longest streak done")
 
                 -- Streak Manager freeze mechanic (day-based earning hook):
                 -- only reached when the streak was actually just
@@ -1064,7 +1368,9 @@ function SP.get(db_conn, year_str, needs_books)
         -- the same day still fills them instead of reading zeros.
         return result
     end
+    Perf.mark("stats: before finished books")
     local by, bt = countFinishedBooks(year_str or tostring(t.year))
+    Perf.mark("stats: finished books done")
     local previous = _cache
     result.books_year  = by
     result.books_total = bt
@@ -1077,6 +1383,7 @@ function SP.get(db_conn, year_str, needs_books)
     _cache_day = today_str
     _db_stamp  = queries_ok and db_stamp or nil
     _persistStaleStats(result)
+    Perf.mark("stats: persist done")
     return result
 end
 
@@ -1090,6 +1397,10 @@ end
 -- ---------------------------------------------------------------------------
 function SP.invalidate(keep_status_counts)
     _cache_day          = nil
+    _records_day        = nil
+    _year_day           = nil
+    dropChartData()
+    dropChartHistory()
     _streak_cache_valid = false
     if not keep_status_counts then SP.invalidateStatusCounts() end
 end
@@ -1105,6 +1416,9 @@ end
 -- day, so any later close that day is a safe no-op to skip.
 -- ---------------------------------------------------------------------------
 function SP.invalidateTimeSeries()
+    _records_day = nil
+    _year_day    = nil
+    dropChartData()
     if not _cache then return end
     _streak_cache_valid = _cache_day == os.date("%Y-%m-%d") and _cache.today_secs > 0
     _cache_day          = nil

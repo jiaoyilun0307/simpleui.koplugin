@@ -35,7 +35,7 @@ local LRU          = require("infra/sui_lru")
 local Memory       = require("infra/sui_memory")
 local PAD          = UI.PAD
 local PAD2         = UI.PAD2
-local CLR_TEXT_SUB = UI.CLR_TEXT_SUB
+local Chrome       = require("features/sui_module_chrome")
 
 -- ---------------------------------------------------------------------------
 -- Constants
@@ -88,13 +88,13 @@ local MAIN_ORDER_KEY        = "coverdeck_main_order"      -- pfx .. this
 -- Progress badge (pentagon overlay on the centre cover, same drawing
 -- primitive as the book-grid modules' progress badge) — off by default,
 -- unlike the coverdeck_show_* elements above. Color follows the same
--- "Follow Library / Dark / Light" 3-way choice as the book-grid modules'
+-- "Follow Style / Dark / Light" 3-way choice as the book-grid modules'
 -- own per-badge color override (see engines/sui_book_grid.lua's
--- GridRenderer.getBadgeColorOverride) — nil means "Follow Library". Named
+-- GridRenderer.getBadgeColorOverride) — nil means "Follow Style". Named
 -- "Progress Badge" throughout, matching the book-grid/Library terminology
 -- for the same badge_key ("progress").
 local SETTING_SHOW_PROGRESS_BADGE  = "coverdeck_show_progress_badge"   -- pfx .. this; default OFF
-local SETTING_PROGRESS_BADGE_COLOR = "coverdeck_progress_badge_color"  -- pfx .. this; nil|"dark"|"light"
+local SETTING_PROGRESS_BADGE_COLOR = "coverdeck_progress_badge_color"  -- pfx .. this; nil|"dark"|"light"|"accent"|"secondary"
 -- When progress badge is on: also paint it on right-hand peeks (true) or
 -- only on the centre cover (nil/false). Default off, same opt-in
 -- convention as SETTING_SHOW_PROGRESS_BADGE.
@@ -198,17 +198,14 @@ local function showProgressBadgeOnPeeks(pfx)
     return SUISettings:readSetting(pfx .. SETTING_PROGRESS_BADGE_ON_PEEKS) == true
 end
 
--- nil ("Follow Library") / "dark" / "light" — mirrors
+-- nil ("Follow Style") / "dark" / "light" / "accent" / "secondary" — mirrors
 -- GridRenderer.getBadgeColorOverride/setBadgeColor's shape, scoped by pfx
 -- only since coverdeck is a single-instance module (no per-instance id).
 local function getProgressBadgeColorOverride(pfx)
-    local v = SUISettings:readSetting(pfx .. SETTING_PROGRESS_BADGE_COLOR)
-    if v == "dark" or v == "light" then return v end
-    return nil
+    return SUIStyle.badgeChoice(SUISettings:readSetting(pfx .. SETTING_PROGRESS_BADGE_COLOR))
 end
 local function setProgressBadgeColor(pfx, v)
-    if v ~= "dark" and v ~= "light" then v = nil end -- nil = clear override, follow Library
-    SUISettings:saveSetting(pfx .. SETTING_PROGRESS_BADGE_COLOR, v)
+    SUISettings:saveSetting(pfx .. SETTING_PROGRESS_BADGE_COLOR, SUIStyle.badgeChoice(v)) -- nil = clear override, follow Library
 end
 
 -- Every coverdeck_show_* key defaults to ON (an unset key reads as true),
@@ -892,7 +889,7 @@ end
 -- Uses a wrapping text box rather than the single-line TextWidget behind
 -- makeColoredText, since this message is long enough to need multiple lines
 -- at the module's own width.
-local function _emptyPlaceholder(w, h, text_alpha)
+local function _emptyPlaceholder(w, h, text_alpha, ink)
     local face = Font:getFace(SUIStyle.FACE_REGULAR, SUIStyle.FS_BODY)
     local line_h = math.floor(1.3 * face.size + 0.5)
     local args = {
@@ -903,7 +900,7 @@ local function _emptyPlaceholder(w, h, text_alpha)
         height_adjust = true,
         height_overflow_show_ellipsis = true,
         alignment = "center",
-        fgcolor   = CLR_TEXT_SUB,
+        fgcolor   = (ink or Chrome.PLAIN_INK).sub,
     }
 
     return CenterContainer:new{
@@ -937,16 +934,18 @@ function M.build(w, ctx)
     local fps = getFps(source, ctx)
     if not fps or #fps == 0 then
         logger.dbg(string.format("coverdeck: no books found (source=%s)", tostring(source)))
-        return _emptyPlaceholder(w, M.getHeight(ctx), ctx.text_alpha)
+        return _emptyPlaceholder(w, M.getHeight(ctx), ctx.text_alpha, ctx.ink)
     end
 
     local SH = getSH()
     if not SH then
-        return _emptyPlaceholder(w, M.getHeight(ctx), ctx.text_alpha)
+        return _emptyPlaceholder(w, M.getHeight(ctx), ctx.text_alpha, ctx.ink)
     end
 
-    local CLR_TEXT_EFF     = SUIStyle.COLOR.text_primary
-    local CLR_TEXT_SUB_EFF = CLR_TEXT_SUB
+    -- Content colours over the module fill.
+    local ink              = ctx.ink or Chrome.PLAIN_INK
+    local CLR_TEXT_EFF     = ink.blk
+    local CLR_TEXT_SUB_EFF = ink.sub
 
     -- Scales: c.scale/c.thumb_scale/c.lbl_scale (from ctx.cfg) are raw
     -- values; ctx.landscape_factor is applied on top here.
@@ -1202,13 +1201,13 @@ function M.build(w, ctx)
     if show_progress then
         local _bar_w = center_w
         local _bar_h = bar_h
-        local _init_bar = UI.progressBar(_bar_w, bd.percent, _bar_h)
+        local _init_bar = UI.progressBar(_bar_w, bd.percent, _bar_h, ink.bar_fg, ink.bar_bg)
         local bar_container = OverlapGroup:new{
             dimen = _init_bar:getSize(),
             _init_bar,
         }
         local function _update_bar(_nb, nd)
-            bar_container[1] = UI.progressBar(_bar_w, (nd and nd.percent or 0), _bar_h)
+            bar_container[1] = UI.progressBar(_bar_w, (nd and nd.percent or 0), _bar_h, ink.bar_fg, ink.bar_bg)
         end
         table.insert(_cd_bd_only_funcs, _update_bar)
         progress_widget = bar_container
@@ -1616,6 +1615,15 @@ function M.getMenuItems(ctx_menu)
         _lc     = _lc,
     }
     local progress_badge_group = {
+        Config.makeBadgeSizeItem{
+            info         = _lc("Scale for the progress badge."),
+            enabled_func = function() return showProgressBadge(pfx) end,
+            get          = function() return Config.getBadgeScalePct("coverdeck", pfx) end,
+            set          = function(v) Config.setBadgeScale(v, "coverdeck", pfx) end,
+            refresh      = refresh,
+            _lc          = _lc,
+            separator    = true,
+        },
         {
             text           = _lc("Progress Badge"),
             checked_func   = function() return showProgressBadge(pfx) end,
@@ -1639,22 +1647,10 @@ function M.getMenuItems(ctx_menu)
         Config.makeRadioSubmenuItem{
             text         = _lc("Progress Badge Color"),
             enabled_func = function() return showProgressBadge(pfx) end,
-            options      = {
-                { value = nil,     label = _lc("Follow Library") },
-                { value = "dark",  label = _lc("Dark") },
-                { value = "light", label = _lc("Light") },
-            },
-            get          = function() return getProgressBadgeColorOverride(pfx) end,
+            options      = SUIStyle.badgeColorOptions(_lc, _lc("Follow Style")),
+            get          = function() return SUIStyle.badgeChoiceShown(getProgressBadgeColorOverride(pfx)) end,
             set          = function(v) setProgressBadgeColor(pfx, v) end,
             refresh      = refresh,
-        },
-        Config.makeBadgeSizeItem{
-            info         = _lc("Scale for the progress badge."),
-            enabled_func = function() return showProgressBadge(pfx) end,
-            get          = function() return Config.getBadgeScalePct("coverdeck", pfx) end,
-            set          = function(v) Config.setBadgeScale(v, "coverdeck", pfx) end,
-            refresh      = refresh,
-            _lc          = _lc,
         },
     }
     return Config.buildModuleMenu({

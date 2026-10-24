@@ -30,9 +30,7 @@ local CLR_TEXT_SUB = UI.CLR_TEXT_SUB
 local _BASE_PH_FS = SUIStyle.FS_BODY    -- 18: placeholder text
 
 
-local _BASE_ICON_SZ   = Screen:scaleBySize(52)
-local _BASE_FRAME_PAD = Screen:scaleBySize(18)
-local _BASE_CORNER_R  = Screen:scaleBySize(22)
+local _BASE_FRAME_SZ  = Screen:scaleBySize(88)
 local _BASE_LBL_SP    = Screen:scaleBySize(7)
 local _BASE_LBL_H     = Screen:scaleBySize(20)
 local _BASE_LBL_FS    = SUIStyle.FS_DETAIL  -- 15: quick-action label text
@@ -59,18 +57,16 @@ local _MIN_ICON_GAP = Screen:scaleBySize(4)
 -- adjustment.
 local function _naiveBaseDims()
     return {
-        icon_sz   = _BASE_ICON_SZ,
-        frame_pad = _BASE_FRAME_PAD,
-        corner_r  = _BASE_CORNER_R,
-        icon_gap  = _BASE_ICON_GAP,
+        frame_sz = _BASE_FRAME_SZ,
+        icon_gap = _BASE_ICON_GAP,
     }
 end
 
 -- Re-anchors what "Scale = 100%" means for a row of this inner_w: shrinks
--- the naive baseline (icon size, padding, corner radius, and — as a last
--- resort — the gap) just enough that MAX_QA_ITEMS icons fit inside inner_w
--- at the module's nice gap. On anything roomy enough already, this is a
--- no-op and the naive baseline is returned unchanged.
+-- the naive baseline (frame size and — as a last resort — the gap) just
+-- enough that MAX_QA_ITEMS icons fit inside inner_w at the module's nice gap.
+-- On anything roomy enough already, this is a no-op and the naive baseline is
+-- returned unchanged.
 -- Deliberately re-anchors the *baseline* rather than clamping the final,
 -- already-scaled dims: clamping after scaling would make every Scale value
 -- collapse to the same on-screen size once a full row stopped fitting,
@@ -86,10 +82,9 @@ local function _getFitBaseline(inner_w)
     if cached then return cached end
 
     local base = _naiveBaseDims()
-    local base_frame_sz = base.icon_sz + base.frame_pad * 2
     local gap = base.icon_gap
     local max_frame = math.floor((inner_w - (MAX_QA_ITEMS - 1) * gap) / MAX_QA_ITEMS)
-    if max_frame < base_frame_sz then
+    if max_frame < base.frame_sz then
         if max_frame < 16 then
             -- Even a minimal icon wouldn't leave room for the nice gap —
             -- shrink the gap itself before shrinking icons any further.
@@ -97,11 +92,8 @@ local function _getFitBaseline(inner_w)
             max_frame = math.floor((inner_w - (MAX_QA_ITEMS - 1) * gap) / MAX_QA_ITEMS)
         end
         max_frame = math.max(16, max_frame)
-        local ratio = max_frame / base_frame_sz
-        base.icon_sz   = math.max(16, math.floor(base.icon_sz   * ratio))
-        base.frame_pad = math.max(4,  math.floor(base.frame_pad * ratio))
-        base.corner_r  = math.max(4,  math.floor(base.corner_r  * ratio))
-        base.icon_gap  = gap
+        base.frame_sz = max_frame
+        base.icon_gap = gap
     end
     _fit_baseline_cache[inner_w] = base
     return base
@@ -114,15 +106,14 @@ end
 local function _getQADims(scale, inner_w)
     scale = scale or 1.0
     local base      = _getFitBaseline(inner_w)
-    local icon_sz   = math.max(16, math.floor(base.icon_sz   * scale))
-    local frame_pad = math.max(4,  math.floor(base.frame_pad * scale))
+    local cell      = QARenderer.cellDims(math.max(24, math.floor(base.frame_sz * scale)))
     local lbl_sp    = math.max(1,  math.floor(_BASE_LBL_SP    * scale))
     local lbl_h     = math.max(8,  math.floor(_BASE_LBL_H     * scale))
     return {
-        icon_sz   = icon_sz,
-        frame_pad = frame_pad,
-        frame_sz  = icon_sz + frame_pad * 2,
-        corner_r  = math.max(4, math.floor(base.corner_r * scale)),
+        icon_sz   = cell.icon_sz,
+        frame_pad = cell.frame_pad,
+        frame_sz  = cell.icon_sz + cell.frame_pad * 2,
+        corner_r  = cell.corner_r,
         lbl_sp    = lbl_sp,
         lbl_h     = lbl_h,
         lbl_fs    = math.max(6, math.floor(_BASE_LBL_FS * scale)),
@@ -142,10 +133,12 @@ end
 -- ---------------------------------------------------------------------------
 -- Core widget builder (shared by all slots)
 -- ---------------------------------------------------------------------------
-local function buildQAWidget(w, action_ids, show_labels, on_tap_fn, d, shape, surface, colors, align)
+-- `on_stops(stops)`, when given, receives the buttons as { id, widget } D-pad
+-- focus stops, left to right.
+local function buildQAWidget(w, action_ids, show_labels, on_tap_fn, d, shape, surface, colors, align, on_stops)
     local clr_blk = colors and colors.blk or SUIStyle.COLOR.text_primary
     local clr_sub = colors and colors.sub or CLR_TEXT_SUB
-    local ph_fs = math.max(8, math.floor(_BASE_PH_FS * (d.frame_sz / (_BASE_ICON_SZ + _BASE_FRAME_PAD * 2))))
+    local ph_fs = math.max(8, math.floor(_BASE_PH_FS * (d.frame_sz / _BASE_FRAME_SZ)))
     local function _placeholder()
         local hold_on = SUISettings:nilOrTrue("simpleui_hs_settings_on_hold")
         local ph_text = hold_on and _("No actions configured  —  long press to configure")
@@ -188,7 +181,8 @@ local function buildQAWidget(w, action_ids, show_labels, on_tap_fn, d, shape, su
         left_off = n == 1 and math.floor((inner_w - d.frame_sz) / 2) or 0
     end
 
-    local row = HorizontalGroup:new{ align = "top" }
+    local row   = HorizontalGroup:new{ align = "top" }
+    local stops = {}
 
     for i = 1, n do
         local aid = valid_ids[i]
@@ -208,13 +202,16 @@ local function buildQAWidget(w, action_ids, show_labels, on_tap_fn, d, shape, su
             lbl_bold       = d.lbl_bold,
             on_tap_fn      = on_tap_fn,
             tap_event_name = "TapQA",
+            focusable      = on_stops ~= nil,
         })
 
         if i > 1 then
             row[#row + 1] = HorizontalSpan:new{ width = gap }
         end
         row[#row + 1] = tappable
+        stops[i] = { id = i, widget = tappable }
     end
+    if on_stops then on_stops(stops) end
 
     return FrameContainer:new{
         bordersize   = 0, padding = 0,
@@ -394,7 +391,8 @@ local function makeInstance(inst_id)
         local styles = Config.resolveTextStyles(ctx, S.id, S.text_elems)
         d.lbl_fs = math.max(6, math.floor(d.lbl_fs * lf * (styles.label.scale or 1)))
         d.lbl_face, d.lbl_bold = SUIStyle.getTextFace(styles.label, d.lbl_fs)
-        return buildQAWidget(w, qa_ids, show_labels, ctx.on_qa_tap, d, getShape(ctx.pfx), SUIWallpaper.resolveSurface(buttonSurface(ctx.pfx)), nil, getAlign(ctx.pfx))
+        return buildQAWidget(w, qa_ids, show_labels, ctx.on_qa_tap, d, getShape(ctx.pfx), SUIWallpaper.resolveSurface(buttonSurface(ctx.pfx)), nil, getAlign(ctx.pfx),
+            ctx.kbStops and function(stops) ctx.kbStops(S.id, stops) end)
     end
 
     function S.getHeight(ctx)
@@ -508,7 +506,7 @@ M.menu_group   = "quick_actions"
 M.setting_suffixes = { "_btn_strength", "_btn_tone", "_btn_show_frame" }
 
 -- Layout-editor summary of an instance: the labels of its configured actions.
-function M.getInstanceSubtitle(inst_id, _pfx, pfx_qa)
+function M.getSummary(inst_id, _pfx, pfx_qa)
     local names = {}
     for _, qa_id in ipairs(SUISettings:readSetting(pfx_qa .. inst_id .. "_items") or {}) do
         local entry = QA.getEntry(qa_id)
@@ -521,7 +519,7 @@ end
 -- Expose base frame size for menu.lua (MAX_QA_ITEMS referenced there).
 -- Returns the 100%-scale value; callers that need the current scaled value
 -- should call _getQADims(Config.getModuleScale(...)).frame_sz directly.
-M.FRAME_SZ             = _BASE_ICON_SZ + _BASE_FRAME_PAD * 2
+M.FRAME_SZ             = _BASE_FRAME_SZ
 -- Expose the shared icon-tile row builder and its sizing helper so other
 -- modules (the QA "Group" popup) can render tiles identical to the
 -- Quick Actions Row widget instead of duplicating the icon/label logic.

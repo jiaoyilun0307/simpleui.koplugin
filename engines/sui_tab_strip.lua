@@ -18,6 +18,11 @@
 --                   -- external widget; it is never selectable (underline style only)
 --       on_select = function(id) end,
 --       fgcolor   = optional color (defaults to the primary text color),
+--       ink_fn    = optional function returning the text colour (nil: the
+--                   plain one), read on every render; replaces fgcolor and
+--                   draws the active underline in that colour,
+--       indicator = optional { color, fg }: colour of the active indicator and
+--                   of the label on it (default: the accent),
 --       style     = "underline" | "pill" (default "underline"),
 --       visible_count = tabs shown at once (default: all). Chevrons appear
 --                       only when there are more tabs than that, and each
@@ -27,7 +32,6 @@
 --                       window to start at tab index `first`; the owner
 --                       rebuilds the strip with that `first`. Required when
 --                       the tabs do not all fit
---       has_wallpaper = chevrons paint transparently over the wallpaper
 --       first         = index of the leftmost visible tab, to resume a window
 --                       position received through on_scroll
 --       active        = initially active tab id (default: the first tab)
@@ -48,11 +52,18 @@
 --                          -- minimum strip height of a style; `surface` is the
 --                          -- pill option of TabStrip.new
 --   strip:setLabel(text)   -- show a static label; nil restores the tabs
+--   strip:refresh()        -- rebuild the tabs or label on display after the
+--                          -- colours changed; returns true when they changed
 --   strip:setSpan(x, w)    -- move/resize the strip; the next setActive/setLabel
 --                          -- call rebuilds the content for the new width
 --   strip:getCellX(id)     -- offset where the content of a tab or spacer cell starts;
 --                          -- nil while a label is shown or the tab is outside the
 --                          -- window. Valid after setActive/setLabel
+--   strip:getStops()       -- D-pad focus stops of the content on display, left
+--                          -- to right: { id, widget, x } for each tab and each
+--                          -- window chevron (id "prev" / "next"), x being the
+--                          -- offset from the strip's left edge. Empty while a
+--                          -- label is shown. Valid after setActive/setLabel
 --
 -- In the underline style the first tab has no leading padding, so its text
 -- starts exactly at the strip's left edge (right after the chevron while one
@@ -70,10 +81,10 @@ local WidgetContainer = require("ui/widget/container/widgetcontainer")
 local HorizontalGroup = require("ui/widget/horizontalgroup")
 local OverlapGroup    = require("ui/widget/overlapgroup")
 local Backdrop        = require("infra/sui_backdrop")
-local LineWidget      = require("ui/widget/linewidget")
 local TextWidget      = require("ui/widget/textwidget")
 local Screen          = require("device").screen
 
+local Accent    = require("infra/sui_accent")
 local SUIStyle  = require("features/sui_style")
 local TabWindow = require("engines/sui_tab_window")
 
@@ -94,21 +105,23 @@ local TabStrip = WidgetContainer:extend{
     tabs          = nil,
     on_select     = nil,
     fgcolor       = nil,
+    ink_fn        = nil,
+    indicator     = nil,
     style         = "underline",
     visible_count = nil,
     on_scroll     = nil,
-    has_wallpaper = false,
     radius        = nil,
     surface       = NO_SURFACE,
     _first        = 1,
     _view_key     = nil,
+    _stops        = nil,
 }
 
 -- Tap container shared with the other SimpleUI tab/cell renderers.
 local function _tapContainer(content, w, h, id, on_tap)
     local QARenderer = require("engines/sui_quickactions_render")
     return QARenderer.buildTapContainer(content, w, h, id,
-        { on_tap_fn = on_tap, tap_event_name = "TapSUITab" }, "TapSUITab")
+        { on_tap_fn = on_tap, tap_event_name = "TapSUITab", focusable = true }, "TapSUITab")
 end
 
 -- Builds the label widget for one tab. The widest of the regular and bold
@@ -118,6 +131,20 @@ local function _measureLabel(self, label, max_w)
     local regular = TextWidget:new{ text = label, face = self.face, fgcolor = fg, max_width = max_w, padding = 0 }
     local bold    = TextWidget:new{ text = label, face = self.face, fgcolor = fg, max_width = max_w, padding = 0, bold = true }
     return regular, bold, math.max(regular:getWidth(), bold:getWidth())
+end
+
+-- Records a D-pad focus stop of the content being built.
+function TabStrip:_addStop(id, widget, x)
+    local stops = self._stops
+    stops[#stops + 1] = { id = id, widget = widget, x = x }
+end
+
+-- Records the window chevrons around the tab stops already recorded; `lead`
+-- and `trail` are the chevron cells of `_openWindow`, each holding its button.
+function TabStrip:_addChevronStops(lead, trail)
+    local stops = self._stops
+    if lead  then table.insert(stops, 1, { id = "prev", widget = lead[1], x = 0 }) end
+    if trail then stops[#stops + 1] = { id = "next", widget = trail[1], x = self.width } end
 end
 
 -- Builds the cell of one text tab: the label plus, for the active tab, an underline.
@@ -138,11 +165,9 @@ function TabStrip:_buildTextCell(e, lead_pad, cell_w)
     }
     if active then
         local underline_h = Screen:scaleBySize(2)
-        cell[#cell + 1] = LineWidget:new{
-            dimen          = Geom:new{ w = e.w, h = underline_h },
-            background     = self.fgcolor,
-            overlap_offset = { lead_pad, self.height - underline_h },
-        }
+        local underline = require("infra/sui_core").solidBar(e.w, underline_h, (self:_indicator()))
+        underline.overlap_offset = { lead_pad, self.height - underline_h }
+        cell[#cell + 1] = underline
     end
     return _tapContainer(cell, cell_w, self.height, e.tab.id, self.on_select)
 end
@@ -184,15 +209,21 @@ function TabStrip:_buildUnderlineTabs()
         local lead_pad = i == 1 and 0 or pad
         local cell_w   = lead_pad + e.w + pad
         self._cell_x[e.tab.id] = x + lead_pad
+        if e.tab.spacer_w then
+            row[#row + 1] = HorizontalSpan:new{ width = cell_w }
+        else
+            local cell = self:_buildTextCell(e, lead_pad, cell_w)
+            self:_addStop(e.tab.id, cell, x)
+            row[#row + 1] = cell
+        end
         x = x + cell_w
-        row[#row + 1] = e.tab.spacer_w and HorizontalSpan:new{ width = cell_w }
-            or self:_buildTextCell(e, lead_pad, cell_w)
     end
     if trail then
         -- The trailing chevron sits at the strip's right edge.
         row[#row + 1] = HorizontalSpan:new{ width = math.max(0, lead_w + tabs_w - x) }
         row[#row + 1] = trail
     end
+    self:_addChevronStops(lead, trail)
     return row
 end
 
@@ -231,10 +262,9 @@ function TabStrip:_openWindow(cell_h, avail_w, flush)
         arrow_w = Screen:scaleBySize(PageNav.ICON_SIZE) + (flush and 1 or 2) * arrow_pad
         local prev_btn, next_btn = PageNav.buildButtons(first, TabWindow.maxFirst(total, visible), cell_h,
             function(delta) self:_scroll(delta) end, {
-                has_wallpaper = self.has_wallpaper,
-                transparent   = true,   -- the box corners show through the button cell
                 h_pad         = arrow_pad,
                 hide_disabled = true,
+                focusable     = true,
             })
         local function arrowCell(button, Container)
             return button and Container:new{ dimen = Geom:new{ w = arrow_w, h = cell_h }, button }
@@ -270,7 +300,7 @@ function TabStrip:_buildPillCell(tab, cell_w, cell_h, gap, pill_radius)
         text                   = tab.label,
         face                   = self.face,
         bold                   = active,
-        fgcolor                = active and Blitbuffer.COLOR_WHITE or self.fgcolor,
+        fgcolor                = active and select(2, self:_indicator()) or self.fgcolor,
         max_width              = pill_dim.w - 2 * text_pad,
         truncate_with_ellipsis = true,
         padding                = 0,
@@ -286,7 +316,7 @@ function TabStrip:_buildPillCell(tab, cell_w, cell_h, gap, pill_radius)
                 height   = pill_dim.h,
                 strength = Backdrop.STRENGTH_MAX,
                 radius   = pill_radius,
-                color    = self.fgcolor,
+                color    = (self:_indicator()),
                 dimen    = pill_dim,
             },
             CenterContainer:new{ dimen = pill_dim, label },
@@ -315,10 +345,13 @@ function TabStrip:_buildPillTabs()
     local x = border + lead_w
     for i, tab in ipairs(tabs) do
         self._cell_x[tab.id] = x
+        local cell = self:_buildPillCell(tab, widths[i], inner_h, gap, pill_radius)
+        self:_addStop(tab.id, cell, x)
+        row[#row + 1] = cell
         x = x + widths[i]
-        row[#row + 1] = self:_buildPillCell(tab, widths[i], inner_h, gap, pill_radius)
     end
     if trail then row[#row + 1] = trail end
+    self:_addChevronStops(lead, trail)
 
     local dimen = Geom:new{ w = self.width, h = self.height }
     local box = OverlapGroup:new{ allow_mirroring = false, dimen = dimen }
@@ -354,17 +387,39 @@ function TabStrip:_buildLabel(text)
     }
 end
 
+-- Colour of the active tab's indicator (the underline, or the pill) and of the
+-- label on the pill. The accent unless the owner gave `indicator`
+-- ({ color, fg }), as it does over a fill the accent would blend into.
+function TabStrip:_indicator()
+    local indicator = self.indicator
+    if indicator then return indicator.color, indicator.fg end
+    return SUIStyle.accent(self.fgcolor), SUIStyle.accentFg(Blitbuffer.COLOR_WHITE)
+end
+
+-- Takes the text colour from `ink_fn` (nil: the plain colour) so a strip over
+-- a fill that changes follows it; the underline then uses that colour too.
+-- Returns a key that changes with it.
+function TabStrip:_resolveInk()
+    if not self.ink_fn then return "" end
+    local ink = self.ink_fn()
+    self.fgcolor   = ink or SUIStyle.COLOR.text_primary
+    self.indicator = ink and { color = ink, fg = SUIStyle.COLOR.surface } or nil
+    return ink and tostring(ink:getColor8().a) or "-"
+end
+
 -- Replaces the content when the requested view differs from the current one.
 function TabStrip:_render(view_key, build)
     if self._view_key == view_key then return false end
     self._view_key = view_key
+    self._stops    = {}
     if self[1] then self[1]:free() end
     self[1] = build()
     return true
 end
 
 function TabStrip:_renderTabs()
-    local key = "tab:" .. tostring(self._active) .. ":" .. self._first
+    local key = "tab:" .. tostring(self._active) .. ":" .. self._first .. ":" .. Accent.stamp()
+        .. ":" .. self:_resolveInk()
     return self:_render(key, function() return self:_buildTabs() end)
 end
 
@@ -393,15 +448,27 @@ function TabStrip:setActive(id, keep_window)
     return self:_renderTabs()
 end
 
+function TabStrip:getStops()
+    return self._stops or {}
+end
+
 function TabStrip:getCellX(id)
     if self._label or not self._cell_x then return nil end
     return self._cell_x[id]
 end
 
+-- Rebuilds the tabs or label on display when the colours they are painted in
+-- have changed. Returns true when the content changed.
+function TabStrip:refresh()
+    if self._label then return self:setLabel(self._label) end
+    if #self.tabs == 0 then return false end
+    return self:_renderTabs()
+end
+
 function TabStrip:setLabel(text)
     if not text then return self:setActive(self._active) end
     self._label = text
-    return self:_render("label:" .. text, function() return self:_buildLabel(text) end)
+    return self:_render("label:" .. text .. ":" .. self:_resolveInk(), function() return self:_buildLabel(text) end)
 end
 
 local M = {}
@@ -424,10 +491,11 @@ function M.new(opts)
         tabs          = opts.tabs or {},
         on_select     = opts.on_select,
         fgcolor       = opts.fgcolor or SUIStyle.COLOR.text_primary,
+        ink_fn        = opts.ink_fn,
+        indicator     = opts.indicator,
         style         = opts.style,
         visible_count = opts.visible_count,
         on_scroll     = opts.on_scroll,
-        has_wallpaper = opts.has_wallpaper,
         radius        = opts.radius,
         surface       = opts.surface,
         dimen         = Geom:new{ w = opts.width, h = opts.height },

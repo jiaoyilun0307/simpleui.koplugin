@@ -29,6 +29,7 @@ local _CenterContainer, _FrameContainer, _HorizontalGroup, _HorizontalSpan
 local _InputContainer, _TextWidget
 local _ImageWidget, _VerticalGroup, _VerticalSpan, _OverlapGroup, _LineWidget
 local _Geom, _Font, _GestureRange, _WidgetContainer
+local Accent = require("infra/sui_accent")
 local function CenterContainer() _CenterContainer = _CenterContainer or require("ui/widget/container/centercontainer"); return _CenterContainer end
 local function FrameContainer()  _FrameContainer  = _FrameContainer  or require("ui/widget/container/framecontainer");  return _FrameContainer  end
 local function HorizontalGroup() _HorizontalGroup = _HorizontalGroup or require("ui/widget/horizontalgroup");           return _HorizontalGroup end
@@ -87,7 +88,8 @@ local QARenderer = {}
 -- Wraps `content` in an InputContainer of size w×h that dispatches taps to
 -- spec.on_tap_fn(action_id) via a dedicated gesture event — spec.tap_event_name
 -- when given, else `default_event`. Shared by buildCell and buildListRow,
--- whose tap-dispatch wiring was otherwise identical.
+-- whose tap-dispatch wiring was otherwise identical. With spec.focusable the
+-- container is also a D-pad focus stop (see UI.makeFocusable).
 local function _buildTapContainer(content, w, h, action_id, spec, default_event)
     local event_name = spec.tap_event_name or default_event
     local tappable = InputContainer():new{
@@ -108,6 +110,8 @@ local function _buildTapContainer(content, w, h, action_id, spec, default_event)
         if self._on_tap_fn then self._on_tap_fn(self._action_id) end
         return true
     end
+    -- spec.focusable: the container also takes part in D-pad navigation.
+    if spec.focusable then UI().makeFocusable(tappable, tappable["on" .. event_name]) end
     return tappable
 end
 
@@ -117,12 +121,18 @@ QARenderer.buildTapContainer = _buildTapContainer
 -- Layer 1 — shared primitives
 -- ===========================================================================
 
+-- Ink of a dimmed icon drawn in `fgcolor`: the inactive colour that still reads
+-- on the same fill, light over a dark fill (light `fgcolor`) and gray otherwise.
+local function _dimInk(fgcolor)
+    local COLOR = SUIStyle().COLOR
+    if fgcolor and fgcolor:getColor8().a >= 0x80 then return COLOR.text_dim_inverse end
+    return COLOR.text_dim
+end
+
 -- Builds an icon widget for `entry` (as returned by QA.getEntry), resolving
 -- nerd-font glyph → image file → single-letter fallback, in that order, and
--- always returning it already wrapped in UI.wrapDimmable(., entry.dim) — the
--- caller never has to remember to dim it itself (see header history: a
--- forgotten wrapDimmable call in one of the four consumers left wifi/night
--- mode icons undimmed while the other three were fine).
+-- always returning it already dimmed when `entry.dim` is set — the caller
+-- never has to dim it itself.
 --
 -- This behavior is now the single, unified path for all four consumers.
 -- Before this extraction the four call sites disagreed on several points;
@@ -159,6 +169,8 @@ QARenderer.buildTapContainer = _buildTapContainer
 --     in a CenterContainer(container_w, container_h) instead of returning it
 --     bare (module_action_list does this so a narrow icon still gets a
 --     full-row-height hitbox; the others return the ImageWidget directly).
+--   opts.tint            — recolour an image icon to `fgcolor`, for icons drawn
+--     on a surface whose fill is not the paper (see QARenderer.onSurfaceColor).
 function QARenderer.buildIcon(entry, size, fgcolor, opts)
     opts = opts or {}
     local style = SUIStyle()
@@ -167,13 +179,17 @@ function QARenderer.buildIcon(entry, size, fgcolor, opts)
     local container_w   = opts.container_w or size
     local container_h   = opts.container_h or size
 
+    -- A dimmed icon is drawn directly in the dim ink: masking an icon that is
+    -- already recoloured would paint it blank.
+    local ink = entry.dim and _dimInk(fgcolor) or fgcolor
+
     local icon_widget
     local nerd_char = Config().nerdIconChar(entry.icon)
     if nerd_char then
         local glyph = ui.makeColoredText{
             text    = nerd_char,
             face    = style.glyphFace(size),
-            fgcolor = fgcolor,
+            fgcolor = ink,
             padding = 0,
         }
         icon_widget = CenterContainer():new{
@@ -189,16 +205,21 @@ function QARenderer.buildIcon(entry, size, fgcolor, opts)
             height  = size,
             is_icon = true,
             alpha   = true,
+            original_in_nightmode = opts.tint or nil, -- the mask recolours it, night mode must not invert it
         } or nil
         local rendered = iw ~= nil and pcall(function() iw:_render() end)
 
         if iw and rendered then
+            if opts.tint then
+                iw = ui.makeAlphaMaskWidget(iw, ink, Geom():new{ w = size, h = size })
+            end
             icon_widget = opts.wrap_image_in_container
                 and CenterContainer():new{
                     dimen = Geom():new{ w = container_w, h = container_h },
                     iw,
                 }
                 or iw
+            if not opts.tint then icon_widget = ui.wrapDimmable(icon_widget, entry.dim, ink) end
         else
             if iw then iw:free() end
             icon_widget = CenterContainer():new{
@@ -206,15 +227,14 @@ function QARenderer.buildIcon(entry, size, fgcolor, opts)
                 ui.makeColoredText{
                     text    = (entry.label and Text.cut(entry.label, 1):upper()) or "?",
                     face    = style.letterFace(size, opts.fallback_face),
-                    fgcolor = fgcolor,
+                    fgcolor = ink,
                     padding = 0,
                 },
             }
         end
     end
 
-    if not icon_widget then return nil end
-    return ui.wrapDimmable(icon_widget, entry.dim)
+    return icon_widget
 end
 
 -- Surface of a frame that paints nothing.
@@ -241,6 +261,30 @@ local function _buildRoundedBackdrop(width, height, corner_r, surface)
     end
 
     return _attachThemeHandlers(widget)
+end
+
+-- Colour of the content drawn on the surface of a cell or button (`spec` has
+-- `shape`, `surface` and `fgcolor`, as in QARenderer.buildCell): the text colour
+-- of the surface when its fill is not the paper (accent tone), else
+-- `spec.fgcolor` (default: primary text). A bare shape paints no surface.
+-- Second value: true when that colour belongs to the surface.
+function QARenderer.onSurfaceColor(spec)
+    local surface = spec.shape ~= "bare" and spec.surface or nil
+    if surface and surface.foreground then return surface.foreground, true end
+    return spec.fgcolor or SUIStyle().COLOR.text_primary, false
+end
+
+-- Icon size relative to the frame that holds it; shared by every framed cell.
+QARenderer.ICON_FRAME_RATIO = 0.52
+
+-- Icon size, inner padding and corner radius of a frame of `frame_sz` pixels.
+function QARenderer.cellDims(frame_sz)
+    local icon_sz = math.floor(frame_sz * QARenderer.ICON_FRAME_RATIO)
+    return {
+        icon_sz   = icon_sz,
+        frame_pad = math.floor((frame_sz - icon_sz) / 2),
+        corner_r  = math.floor(frame_sz / 4),
+    }
 end
 
 -- Builds the border/background frame around `inner_widget` (typically the
@@ -458,6 +502,8 @@ end
 --     wrapped in an InputContainer with its own tap GestureRange dispatching
 --     to on_tap_fn(action_id). When omitted, the cell is returned untapped
 --     (the Quick Settings bar dispatches taps itself against frame_widget).
+--   focusable — with on_tap_fn, the tap container is also a D-pad focus
+--     stop (see UI.makeFocusable).
 function QARenderer.buildCell(action_id, spec)
     spec = spec or {}
     local style = SUIStyle()
@@ -466,7 +512,13 @@ function QARenderer.buildCell(action_id, spec)
     local frame_sz = spec.frame_sz or spec.icon_sz
     local fgcolor  = spec.fgcolor or style.COLOR.text_primary
 
-    local icon_widget = QARenderer.buildIcon(entry, spec.icon_sz, fgcolor, spec.icon_opts)
+    -- The icon sits on the surface, the label below it on the page.
+    local icon_fg, on_surface = QARenderer.onSurfaceColor(spec)
+    local icon_opts = spec.icon_opts
+    if on_surface then
+        icon_opts = setmetatable({ tint = true }, { __index = icon_opts })
+    end
+    local icon_widget = QARenderer.buildIcon(entry, spec.icon_sz, icon_fg, icon_opts)
     local frame_widget = QARenderer.buildFrame(icon_widget, frame_sz, {
         shape      = spec.shape,
         surface    = spec.surface,
@@ -557,6 +609,9 @@ function QARenderer.buildListRow(action_id, spec)
     return _buildTapContainer(hg, content_w, spec.row_h, action_id, spec, "TapALCell")
 end
 
+-- Width of the active indicator of a floating bar, relative to the tab width.
+local FLOATING_INDICATOR_FRAC = 0.4
+
 -- Builds one bottom-bar tab cell: icon and/or label (per spec.mode) plus an
 -- active-tab indicator line pinned to the top. Used by sui_bottombar.lua.
 --
@@ -570,9 +625,13 @@ end
 --   lbl_face, lbl_bold — font face of the tab label and its emboldening flag;
 --     same convention as buildCell.
 --   mode        — "icons" / "text" / "both".
---   full_width  — true draws the active-indicator line (full-width bar);
---     a floating bar draws none.
---   fgcolor     — icon/label color (also used as the active-indicator color).
+--   full_width  — true draws the active-indicator line across the cell
+--     (full-width bar); a floating bar draws a short centred one, and only
+--     when an accent colour is set.
+--   fgcolor     — icon/label color; also the active-indicator colour when no
+--     accent colour is set.
+--   surface_color — colour of the bar the cell sits on; the active label and
+--     glyph icon take the accent colour only when it contrasts with it.
 --   inactive_indicator_color — drawn under a full-width bar's top edge when
 --     the tab isn't active and the bar is opaque; nil = omitted.
 function QARenderer.buildTabCell(action_id, active, spec)
@@ -581,11 +640,15 @@ function QARenderer.buildTabCell(action_id, active, spec)
     local entry = QA().getEntry(action_id)
     local item_fg = spec.fgcolor or style.COLOR.text_primary
     local mode = spec.mode or "both"
+    local content_fg, tinted = item_fg, false
+    if active and spec.surface_color and Accent.isReadableOn(spec.surface_color) then
+        content_fg, tinted = Accent.color(), true
+    end
 
     local vg = VerticalGroup():new{ align = "center" }
 
     if mode == "icons" or mode == "both" then
-        local icon_widget = QARenderer.buildIcon(entry, spec.icon_sz, item_fg, {
+        local icon_widget = QARenderer.buildIcon(entry, spec.icon_sz, content_fg, {
             container_w = spec.tab_w,
             container_h = spec.icon_sz,
         })
@@ -596,13 +659,20 @@ function QARenderer.buildTabCell(action_id, active, spec)
         if mode == "both" then
             vg[#vg + 1] = VerticalSpan():new{ width = spec.icon_txt_sp or 0 }
         end
-        vg[#vg + 1] = QARenderer.buildLabel{
+        local label = {
             text      = entry.label,
             face      = _labelFace(spec),
             bold      = spec.lbl_bold,
-            fgcolor   = item_fg,
+            fgcolor   = content_fg,
             max_width = QARenderer.tabLabelMaxWidth(spec.tab_w),
         }
+        -- TextWidget draws colours as gray; a tinted label keeps its colour.
+        if tinted then
+            label.truncate_with_ellipsis = true
+            vg[#vg + 1] = UI().makeColoredText(label)
+        else
+            vg[#vg + 1] = QARenderer.buildLabel(label)
+        end
     end
 
     local content = CenterContainer():new{
@@ -620,11 +690,9 @@ function QARenderer.buildTabCell(action_id, active, spec)
 
     if spec.full_width then
         if active then
-            og[#og + 1] = LineWidget():new{
-                dimen          = Geom():new{ w = spec.tab_w, h = spec.indic_h },
-                background     = item_fg, -- active underline tracks fg
-                overlap_offset = { 0, 0 },
-            }
+            local indicator = UI().solidBar(spec.tab_w, spec.indic_h, style.accent(item_fg))
+            indicator.overlap_offset = { 0, 0 }
+            og[#og + 1] = indicator
         elseif spec.inactive_indicator_color then
             og[#og + 1] = LineWidget():new{
                 dimen          = Geom():new{ w = spec.tab_w, h = spec.indic_h },
@@ -632,6 +700,11 @@ function QARenderer.buildTabCell(action_id, active, spec)
                 overlap_offset = { 0, 0 },
             }
         end
+    elseif active and Accent.color() then
+        local w = math.floor(spec.tab_w * FLOATING_INDICATOR_FRAC)
+        local indicator = UI().solidBar(w, spec.indic_h, Accent.color())
+        indicator.overlap_offset = { math.floor((spec.tab_w - w) / 2), 0 }
+        og[#og + 1] = indicator
     end
 
     return og

@@ -36,7 +36,7 @@
 --     -- optional state hook (called every render): when present, the
 --     -- action is treated as having an on/off state, and getEntry() sets
 --     -- entry.dim = true whenever it returns false. Consumers building the
---     -- icon widget dim it via UI.wrapDimmable instead of switching to a
+--     -- icon widget dim it (QARenderer.buildIcon) instead of switching to a
 --     -- separate "off" icon asset (see wifi_toggle / night_mode below).
 --     is_active   = function(id) -> boolean,
 --     -- execution:
@@ -457,12 +457,7 @@ local function _showBookmarkBrowserSourceDialog(bb_ui)
     local hs_was_open = open_screen_inst ~= nil
     local home_dir   = G_reader_settings:readSetting("home_dir")
     local function open_with_source(fetch_fn, subfolders)
-        local info_msg = require("ui/widget/infomessage"):new{
-            text    = _("Fetching bookmarks…"),
-            timeout = 0.1,
-            _navbar_closing_intentionally = true,
-        }
-        UIManager:show(info_msg)
+        UI.Notify.sticky(_("Fetching bookmarks…"), { timeout = 0.1, repaint = false })
         UIManager:nextTick(function()
             local books = {}
             if type(fetch_fn) == "function" then
@@ -577,7 +572,7 @@ local function _showPowerDialog(plugin)
         _dismiss(true)
         UIManager:forceRePaint()
         UIManager:nextTick(function()
-            UI.Notify.sticky(text, { compact = true })
+            UI.Notify.sticky(text)
             UIManager:nextTick(function()
                 UIManager:broadcastEvent(Event:new(event_name))
             end)
@@ -595,7 +590,7 @@ local function _showPowerDialog(plugin)
         items[#items + 1] = { text = _("Reboot"), sui_icon = "power", callback = function()
             -- Confirm dialog may cancel; restore the tab, then ask.
             _dismiss(false)
-            UIManager:askForReboot()
+            require("features/dialogs/sui_dialogs").askReboot()
         end }
     end
     if Device:canSuspend() then
@@ -1594,8 +1589,8 @@ function QA.sui_show_custom_qa_list(plugin, ctx_menu, ctx)
                     end)
                 end,
                 on_delete = function()
-                    local ConfirmBox = require("ui/widget/confirmbox")
-                    ctx_menu.UIManager:show(ConfirmBox:new{
+                    local Dialogs = require("features/dialogs/sui_dialogs")
+                    Dialogs.confirm{
                         text        = string.format(ctx_menu._("Delete quick action \"%s\"?"), c.label),
                         ok_text     = ctx_menu._("Delete"),
                         cancel_text = ctx_menu._("Cancel"),
@@ -1611,7 +1606,7 @@ function QA.sui_show_custom_qa_list(plugin, ctx_menu, ctx)
                             if ctx_menu and ctx_menu.refresh then ctx_menu.refresh() end
                             ctx.repaint()
                         end,
-                    })
+                    }
                 end,
                 on_tap = function()
                     QA.showQuickActionDialog(plugin, _id, function()
@@ -1762,7 +1757,8 @@ function QA.sui_build_qa_icons(plugin, ctx_menu, ctx)
                 on_hold = function() end,
                 on_tap = function()
                     local default_label = _title .. " (" .. _("default") .. ")"
-                    QA.showIconPicker(current_icon, function(new_icon)
+                    QA.showIconPicker{ icon = current_icon, default_label = default_label, allow_nerd = true,
+                      on_select = function(new_icon)
                         local function _guardedSetIcon(path, on_valid)
                             if path == nil then on_valid(nil); return end
                             local ok_ss, SUIStyle = pcall(require, "features/sui_style")
@@ -1818,7 +1814,7 @@ function QA.sui_build_qa_icons(plugin, ctx_menu, ctx)
                                 ctx.repaint()
                             end)
                         end
-                    end, default_label, true)
+                    end }
                 end,
             }
         end
@@ -1828,7 +1824,7 @@ function QA.sui_build_qa_icons(plugin, ctx_menu, ctx)
                 text = _("System Actions"):upper(),
                 is_divider = true,
                 sui_build = function(ctx)
-                    return require("engines/sui_window").SectionLabel{ text = _("System Actions"):upper(), inner_w = ctx.inner_w }
+                    return require("engines/sui_window").SectionLabel{ text = _("System Actions"), inner_w = ctx.inner_w }
                 end
             }
             for _, entry in ipairs(defaults) do add_entry(entry) end
@@ -1838,7 +1834,7 @@ function QA.sui_build_qa_icons(plugin, ctx_menu, ctx)
                 text = _("Custom Actions"):upper(),
                 is_divider = true,
                 sui_build = function(ctx)
-                    return require("engines/sui_window").SectionLabel{ text = _("Custom Actions"):upper(), inner_w = ctx.inner_w }
+                    return require("engines/sui_window").SectionLabel{ text = _("Custom Actions"), inner_w = ctx.inner_w }
                 end
             }
             for _, entry in ipairs(customs) do add_entry(entry) end
@@ -1848,7 +1844,7 @@ function QA.sui_build_qa_icons(plugin, ctx_menu, ctx)
                 text = _("Custom Screens"):upper(),
                 is_divider = true,
                 sui_build = function(ctx)
-                    return require("engines/sui_window").SectionLabel{ text = _("Custom Screens"):upper(), inner_w = ctx.inner_w }
+                    return require("engines/sui_window").SectionLabel{ text = _("Custom Screens"), inner_w = ctx.inner_w }
                 end
             }
             for _, entry in ipairs(screens) do add_entry(entry) end
@@ -1862,8 +1858,8 @@ function QA.sui_build_qa_icons(plugin, ctx_menu, ctx)
         footer_text = _("Reset All"),
         footer_icon = "update",
         footer_action = function(ctx2)
-            local ConfirmBox = require("ui/widget/confirmbox")
-            ctx_menu.UIManager:show(ConfirmBox:new{
+            local Dialogs = require("features/dialogs/sui_dialogs")
+            Dialogs.confirm{
                 text = _("Reset all Quick Actions icons to default?"),
                 ok_text = _("Reset"),
                 cancel_text = _("Cancel"),
@@ -1871,7 +1867,7 @@ function QA.sui_build_qa_icons(plugin, ctx_menu, ctx)
                     QA.performResetAllQAIcons(plugin)
                     ctx2.repaint()
                 end,
-            })
+            }
         end
     })
 end
@@ -1888,19 +1884,42 @@ function QA.getEntry(id)
         local cfg = SUISettings:get("simpleui_qa_" .. id) or {}
         local default_icon
         local ok_ss, SUIStyle = pcall(require, "features/sui_style")
+        -- resolveIcon respects Style → Icons overrides and falls back to the
+        -- slot's default_icon (nerd glyph). getIcon alone only returned a
+        -- stored override, so path/collection QAs always fell through to
+        -- CUSTOM_ICON (previously a generic file glyph).
+        local function _slotDefault(slot_id, fallback)
+            if ok_ss and SUIStyle and SUIStyle.resolveIcon then
+                return SUIStyle.resolveIcon(slot_id) or fallback
+            end
+            return fallback
+        end
         if cfg.qa_folder then
-            default_icon = (ok_ss and SUIStyle and SUIStyle.getIcon("sui_qa_group")) or Config.CUSTOM_GROUP_ICON or Config.CUSTOM_ICON
+            default_icon = _slotDefault("sui_qa_group", Config.CUSTOM_GROUP_ICON or Config.CUSTOM_ICON)
         elseif cfg.dispatcher_action and cfg.dispatcher_action ~= "" then
-            default_icon = (ok_ss and SUIStyle and SUIStyle.getIcon("sui_qa_system")) or Config.CUSTOM_DISPATCHER_ICON
+            default_icon = _slotDefault("sui_qa_system", Config.CUSTOM_DISPATCHER_ICON)
         elseif cfg.plugin_key and cfg.plugin_key ~= "" then
-            default_icon = (ok_ss and SUIStyle and SUIStyle.getIcon("sui_qa_plugin")) or Config.CUSTOM_PLUGIN_ICON
+            default_icon = _slotDefault("sui_qa_plugin", Config.CUSTOM_PLUGIN_ICON)
         else
-            default_icon = (ok_ss and SUIStyle and SUIStyle.getIcon("sui_qa_folder")) or Config.CUSTOM_ICON
+            -- path, collection, and any other non-typed custom QA
+            default_icon = _slotDefault("sui_qa_folder", Config.CUSTOM_ICON)
         end
 
         local icon = cfg.icon or default_icon
-        if cfg.icon == Config.CUSTOM_ICON or cfg.icon == Config.CUSTOM_PLUGIN_ICON
-                or cfg.icon == Config.CUSTOM_DISPATCHER_ICON or cfg.icon == Config.CUSTOM_GROUP_ICON then
+        -- Sentinel defaults: the type's current CUSTOM_* constant, plus
+        -- legacy values from before the nerd-glyph migration so existing
+        -- QAs pick up the new defaults without a manual reset.
+        local is_sentinel = icon == nil
+            or icon == Config.CUSTOM_ICON
+            or icon == Config.CUSTOM_PLUGIN_ICON
+            or icon == Config.CUSTOM_DISPATCHER_ICON
+            or icon == Config.CUSTOM_GROUP_ICON
+            or icon == "nerd:F15B"
+            or icon == "nerd:E955"
+            or (type(icon) == "string" and icon:match("icons/custom%.svg$") ~= nil)
+            or (type(icon) == "string" and icon:match("icons/group%.svg$") ~= nil)
+            or (type(icon) == "string" and icon:match("icons/plugin%.svg$") ~= nil)
+        if is_sentinel then
             icon = default_icon
         end
 
@@ -2010,97 +2029,112 @@ local function _loadCustomIconList()
     return icons
 end
 
-local function _showNerdIconPreview(sentinel, on_confirm, on_back)
-    local ConfirmBox = require("ui/widget/confirmbox")
-    local nerd_char  = Config.nerdIconChar(sentinel)
-    local hex        = sentinel:match("nerd:(.+)")
-    UIManager:show(ConfirmBox:new{
-        text        = ("U+%s  %s"):format(hex, nerd_char) .. "\n\n" ..
-                      _("Use this Nerd Font icon?"),
-        ok_text     = _("Confirm"),
-        cancel_text = _("Cancel"),
-        ok_callback = function() on_confirm(sentinel) end,
-        cancel_callback = function() if on_back then on_back() end end,
-    })
-end
+-- Page to type the hex codepoint of a Nerd Font symbol. The first OK previews
+-- the symbol and the second confirms it; editing the text starts over. An
+-- empty text picks the default icon.
+local function _showNerdIconPage(sheet, current_icon, on_pick)
+    local hex = current_icon and current_icon:match("^nerd:([0-9A-Fa-f]+)$") or ""
+    local note, pending, submit
 
-local function _showNerdIconInput(current_icon, on_select, on_cancel)
-    local InputDialog = require("ui/widget/inputdialog")
-    local current_hex = ""
-    if current_icon then
-        current_hex = current_icon:match("^nerd:([0-9A-Fa-f]+)$") or ""
+    local function parse(raw)
+        local code = raw:match("^([0-9A-Fa-f]+)$")
+        if not (code and #code <= 6) then
+            return nil, _("Invalid input. Please enter 1–6 hexadecimal digits (0–9, A–F).")
+        end
+        local sentinel = "nerd:" .. code:upper()
+        if not Config.nerdIconChar(sentinel) then
+            return nil, _("Codepoint out of valid Unicode range (0–10FFFF).")
+        end
+        return sentinel
     end
-    local dlg
-    local function _openInputDlg()
-        dlg = InputDialog:new{
-            title       = _("Nerd Font Icon"),
-            input       = current_hex:upper(),
-            input_hint  = _("hex code, e.g. E001"),
-            description = _("Enter the Unicode codepoint (hex) of a Nerd Fonts symbol.\nYou can look up codes with wakamaifondue.com using the file:\n  /koreader/fonts/nerdfonts/symbols.ttf\nLeave blank and press OK to remove a Nerd Font icon."),
-            buttons = {{
-                {
-                    text     = _("Cancel"),
-                    callback = function()
-                        UIManager:close(dlg)
-                        if on_cancel then on_cancel() end
-                    end,
-                },
-                {
-                    text             = _("OK"),
-                    is_enter_default = true,
-                    callback         = function()
-                        local raw = dlg:getInputText()
-                        if raw:match("^%s*$") then
-                            UIManager:close(dlg)
-                            on_select(nil)
-                            return
-                        end
-                        local hex = raw:match("^%s*([0-9A-Fa-f]+)%s*$")
-                        if hex and #hex >= 1 and #hex <= 6 then
-                            local sentinel = "nerd:" .. hex:upper()
-                            if Config.nerdIconChar(sentinel) then
-                                UIManager:close(dlg)
-                                _showNerdIconPreview(sentinel,
-                                    on_select,
-                                    function() UIManager:nextTick(_openInputDlg) end)
-                            else
-                                UI.Notify.toast(_("Codepoint out of valid Unicode range (0–10FFFF)."))
-                            end
-                        else
-                            UI.Notify.toast(_("Invalid input. Please enter 1–6 hexadecimal digits (0–9, A–F)."))
-                        end
-                    end,
-                },
-            }},
+
+    local function content()
+        local sections = {
+            { type = "field", id = 1, value = hex:upper(), hint = _("hex code, e.g. E001") },
         }
-        UIManager:show(dlg)
+        if pending then
+            sections[#sections + 1] = {
+                type     = "preview",
+                icon     = pending,
+                title    = "U+" .. pending:match("nerd:(.+)"),
+                subtitle = _("Use this Nerd Font icon?"),
+            }
+        end
+        sections[#sections + 1] = { type = "note", text = note }
+        return {
+            sections = sections,
+            footer = {
+                { text = _("Cancel"), callback = function() sheet:closePage() end },
+                { text = pending and _("Confirm") or _("OK"), primary = true, callback = function() submit() end },
+            },
+        }
     end
-    _openInputDlg()
+
+    local function redraw(new_note, new_pending)
+        note, pending = new_note, new_pending
+        sheet:update(content())
+    end
+
+    submit = function()
+        local raw = require("util").trim(sheet:getFieldText(1))
+        if raw == "" then
+            on_pick(nil)
+            return
+        end
+        local sentinel, problem = parse(raw)
+        if not sentinel then
+            redraw(problem)
+        elseif sentinel ~= pending then
+            redraw(nil, sentinel)
+        else
+            on_pick(sentinel)
+        end
+    end
+
+    local page = content()
+    page.title    = _("Nerd Font Icon")
+    page.message  = _("Enter the Unicode codepoint (hex) of a Nerd Fonts symbol.\nYou can look up codes with wakamaifondue.com using the file:\n  /koreader/fonts/nerdfonts/symbols.ttf\nLeave blank and press OK to remove a Nerd Font icon.")
+    page.on_enter = submit
+    page.on_edit  = function() if note or pending then redraw() end end
+    sheet:showPage(page)
 end
 
-function QA.showIconPicker(current_icon, on_select, default_label, allow_nerd, on_cancel)
-    local icons      = _loadCustomIconList()
-    local is_nerd    = Config.isNerdIcon(current_icon)
-    local is_svg     = current_icon and not is_nerd
-    -- Reopens the picker after a sub-dialog (Nerd symbol input, asset browser)
-    -- is cancelled.
-    local function reopen()
-        QA.showIconPicker(current_icon, on_select, default_label, allow_nerd, on_cancel)
+-- Icon picker. `opts`:
+--   icon           current icon (path, Nerd sentinel or nil)
+--   default_label  label of the entry that picks the default icon
+--   allow_nerd     offer the Nerd Font symbols
+--   on_select      function(icon|nil) called with the picked icon
+--   on_cancel      the picker sheet was dismissed
+--   parent         flow sheet (ActionSheet.show) to show the picker on, as a
+--                  page, instead of a sheet of its own
+function QA.showIconPicker(opts)
+    local ActionSheet = require("engines/sui_action_sheet")
+    local current_icon, on_select, parent = opts.icon, opts.on_select, opts.parent
+    local icons   = _loadCustomIconList()
+    local is_nerd = Config.isNerdIcon(current_icon)
+    local is_svg  = current_icon and not is_nerd
+    local sheet   -- the window showing the picker
+
+    -- Leaves the picker: closes its sheet, or the `levels` pages it takes on
+    -- `parent`, and reports the icon.
+    local function choose(icon, levels)
+        if parent then parent:closePage(levels) else sheet:close() end
+        on_select(icon)
     end
 
     local items = {{
-        text     = default_label or _("Default"),
+        text     = opts.default_label or _("Default"),
         checked  = not current_icon,
-        callback = function() on_select(nil) end,
+        callback = function() choose(nil) end,
     }}
-    if allow_nerd then
+    if opts.allow_nerd then
         items[#items + 1] = {
-            text     = _("Nerd Font symbol…"),
-            checked  = is_nerd,
-            callback = function()
-                _showNerdIconInput(current_icon, function(new_icon)
-                    on_select(new_icon)
-                end, reopen)
+            text          = _("Nerd Font symbol…"),
+            value_preview = is_nerd and current_icon or nil,
+            checked       = is_nerd,
+            chevron       = true,
+            callback      = function()
+                _showNerdIconPage(sheet, current_icon, function(icon) choose(icon, 2) end)
             end,
         }
     end
@@ -2119,8 +2153,7 @@ function QA.showIconPicker(current_icon, on_select, default_label, allow_nerd, o
                 -- caller's own on_select guard, not by the picker itself.
                 extensions = SUIStyle.SUPPORTED_ICON_EXTS,
                 title      = _("Choose icon"),
-                onConfirm  = function(path) on_select(path) end,
-                onCancel   = reopen,
+                onConfirm  = function(path) choose(path) end,
             })
         end,
     }
@@ -2134,17 +2167,23 @@ function QA.showIconPicker(current_icon, on_select, default_label, allow_nerd, o
             local p = icon
             items[#items + 1] = {
                 text     = p.label,
+                preview  = p.path,
                 checked  = is_svg and current_icon == p.path or false,
-                callback = function() on_select(p.path) end,
+                callback = function() choose(p.path) end,
             }
         end
     end
-    require("engines/sui_action_sheet").pick{
-        name      = "sui_win_icon_picker",
-        title     = _("Choose icon"),
-        items     = items,
-        on_cancel = on_cancel,
-    }
+
+    local spec = { title = _("Choose icon"), sections = { ActionSheet.list(items) } }
+    if parent then
+        sheet = parent
+        sheet:showPage(spec)
+    else
+        spec.name       = "sui_win_icon_picker"
+        spec.flow       = true
+        spec.on_dismiss = opts.on_cancel
+        sheet = ActionSheet.show(spec)
+    end
 end
 
 -- ---------------------------------------------------------------------------
@@ -2270,8 +2309,7 @@ end
 -- ---------------------------------------------------------------------------
 
 function QA.showQuickActionDialog(plugin, qa_id, on_done)
-    local MultiInputDialog = require("ui/widget/multiinputdialog")
-
+    local ActionSheet      = require("engines/sui_action_sheet")
     local getNonFavColl    = Config.getNonFavoritesCollections
     local collections      = getNonFavColl and getNonFavColl() or {}
     table.sort(collections, function(a, b) return a:lower() < b:lower() end)
@@ -2280,7 +2318,6 @@ function QA.showQuickActionDialog(plugin, qa_id, on_done)
     local start_path  = cfg.path or G_reader_settings:readSetting("home_dir") or "/"
     local chosen_icon = cfg.icon
     local dlg_title   = qa_id and _("Edit Quick Action") or _("New Quick Action")
-    local TOTAL_H     = require("screens/sui_bottombar").TOTAL_H
 
     local current_action_type = nil
     local current_action_val1 = nil
@@ -2339,145 +2376,94 @@ function QA.showQuickActionDialog(plugin, qa_id, on_done)
         if on_done then on_done() end
     end
 
-    local active_dialog = nil
-    local openActionPicker
-    -- Forward-declared alongside openActionPicker above: cancelActionPicker()
-    -- (defined next) calls _buildSaveDialog() but is itself defined before
-    -- _buildSaveDialog's own declaration further down. Without this forward
-    -- declaration, that call would resolve to a nonexistent global and crash
-    -- with "attempt to call global '_buildSaveDialog' (a nil value)" whenever
-    -- cancelActionPicker() runs with a type or qa_id already set (i.e.
-    -- cancelling any of the sub-pickers, not just the very first one).
-    local _buildSaveDialog
+    -- The editor sheet. Its pickers are pages of it, so it keeps what was
+    -- typed while they are shown.
+    local form
+    local openActionPicker, openIconPicker
 
-    local function cancelActionPicker()
-        if not current_action_type and not qa_id then
-            if on_done then on_done() end
-        else
-            _buildSaveDialog(false)
-        end
-    end
-
-    _buildSaveDialog = function(update_name_with_title)
-        if active_dialog then UIManager:close(active_dialog); active_dialog = nil end
-
-        local default_lbl = _("Default")
-        if current_action_type == "path" or current_action_type == "collection" then default_lbl = _("Default (Folder)")
-        elseif current_action_type == "plugin" then default_lbl = _("Default (Plugin)")
-        elseif current_action_type == "dispatcher" then default_lbl = _("Default (System)")
-        end
-
-        local function openIconPicker()
-            if active_dialog then
-                local inputs = active_dialog:getFields()
-                if inputs and inputs[1] then cfg.label = inputs[1] end
-                UIManager:close(active_dialog)
-                active_dialog = nil
-            end
-            
-            QA.showIconPicker(chosen_icon, function(new_icon)
-                chosen_icon = new_icon
-                _buildSaveDialog(false)
-            end, default_lbl, true, function()
-                -- When the icon picker is cancelled, go back to the properties
-                _buildSaveDialog(false)
-            end)
-        end
-
-        local action_label = _("Action") .. ": "
+    -- Label of the action row, label of the entry that picks the default icon
+    -- and the icon the action type shows by default.
+    local function describeAction()
+        local label        = _("Action") .. ": "
+        local default_lbl  = _("Default")
         local icon_default = Config.CUSTOM_ICON
         if current_action_type == "path" or current_action_type == "collection" then
-            action_label = action_label .. (current_action_title or "")
-            icon_default = Config.CUSTOM_ICON
+            label       = label .. (current_action_title or "")
+            default_lbl = _("Default (Folder)")
         elseif current_action_type == "plugin" then
-            action_label = action_label .. (current_action_title or "")
+            label        = label .. (current_action_title or "")
+            default_lbl  = _("Default (Plugin)")
             icon_default = Config.CUSTOM_PLUGIN_ICON
         elseif current_action_type == "dispatcher" then
-            action_label = action_label .. (current_action_title or "")
+            label        = label .. (current_action_title or "")
+            default_lbl  = _("Default (System)")
             icon_default = Config.CUSTOM_DISPATCHER_ICON
         elseif current_action_type == "group" then
-            action_label = action_label .. string.format(N_("Group (%d item)", "Group (%d items)", #pending_group_items), #pending_group_items)
+            label        = label .. string.format(N_("Group (%d item)", "Group (%d items)", #pending_group_items), #pending_group_items)
             icon_default = Config.CUSTOM_GROUP_ICON
         else
-            action_label = action_label .. _("None")
+            label = label .. _("None")
         end
-        
-        if update_name_with_title and current_action_title then
-            cfg.label = current_action_title
-        end
-
-        local fields = { { description = _("Name"), text = cfg.label or current_action_title or "", hint = _("Action name…") } }
-
-        active_dialog = MultiInputDialog:new{
-            title  = dlg_title,
-            fields = fields,
-            buttons = {
-                { { text = action_label, callback = function()
-                    if active_dialog then
-                        local inputs = active_dialog:getFields()
-                        if inputs and inputs[1] then cfg.label = inputs[1] end
-                    end
-                    openActionPicker() 
-                end } },
-                { { text = iconButtonLabel(default_lbl),
-                    callback = function() openIconPicker() end } },
-                { { text = _("Cancel"),
-                    callback = function() UIManager:close(active_dialog); active_dialog = nil end },
-                  { text = _("Save"), is_enter_default = true,
-                    callback = function()
-                        if not current_action_type then
-                            UI.Notify.toast(_("Please select an action."))
-                            return
-                        end
-                        local inputs = active_dialog:getFields()
-                        local final_label = Config.sanitizeLabel(inputs[1]) or current_action_title or _("Action")
-                        
-                        UIManager:close(active_dialog); active_dialog = nil
-                        
-                        local p_path, p_coll, p_pk, p_pm, p_da
-                        if current_action_type == "path" then p_path = current_action_val1
-                        elseif current_action_type == "collection" then p_coll = current_action_val1
-                        elseif current_action_type == "plugin" then p_pk = current_action_val1; p_pm = current_action_val2
-                        elseif current_action_type == "dispatcher" then p_da = current_action_val1
-                        end
-
-                        commitQA(final_label, p_path, p_coll, chosen_icon or icon_default, p_pk, p_pm, p_da,
-                            current_action_type == "group" or nil)
-                    end } },
-            },
-        }
-        UIManager:show(active_dialog)
-        pcall(function() active_dialog:onShowKeyboard() end)
+        return label, default_lbl, icon_default
     end
 
-    local sanitize = Config.sanitizeLabel
+    local function formActions()
+        local label, default_lbl, icon_default = describeAction()
+        return {
+            { text = label, chevron = true, callback = function() openActionPicker() end },
+            { text = iconButtonLabel(default_lbl), value_preview = chosen_icon or icon_default,
+              chevron = true, callback = function() openIconPicker() end },
+        }
+    end
 
+    -- Redraws the editor after the action or the icon changed; `rename` also
+    -- names the quick action after the new action.
+    local function refreshForm(rename)
+        if rename and current_action_title then form:setFieldText(1, current_action_title) end
+        form:setActions(formActions())
+    end
+
+    local function setAction(kind, val1, val2, title)
+        current_action_type  = kind
+        current_action_val1  = val1
+        current_action_val2  = val2
+        current_action_title = title
+        refreshForm(true)
+    end
+
+    openIconPicker = function()
+        local _label, default_lbl = describeAction()
+        QA.showIconPicker{
+            parent        = form,
+            icon          = chosen_icon,
+            default_label = default_lbl,
+            allow_nerd    = true,
+            on_select     = function(new_icon)
+                chosen_icon = new_icon
+                refreshForm(false)
+            end,
+        }
+    end
+
+    -- The pickers below sit on the Action Type page: leaving two pages at
+    -- once returns to the editor.
     local function openFolderPicker()
         local ok_pc, PathChooser = pcall(require, "ui/widget/pathchooser")
         if not ok_pc or not PathChooser then
             UI.Notify.toast(_("Path chooser not available."))
-            if active_dialog then UIManager:show(active_dialog) else cancelActionPicker() end
             return
         end
-        local pc = PathChooser:new{
+        UIManager:show(PathChooser:new{
             select_directory = true,
             select_file      = false,
             show_files       = false,
             path             = start_path,
             onConfirm        = function(chosen_path)
                 chosen_path = chosen_path:gsub("/$", "")
-                current_action_type = "path"
-                current_action_val1 = chosen_path
-                current_action_title = chosen_path:match("([^/]+)$") or chosen_path
-                UIManager:scheduleIn(0.3, function()
-                    _buildSaveDialog(true)
-                end)
+                form:closePage()
+                setAction("path", chosen_path, nil, chosen_path:match("([^/]+)$") or chosen_path)
             end,
-            onCancel = function()
-                UIManager:scheduleIn(0.3, function() cancelActionPicker() end)
-            end,
-        }
-        UIManager:show(pc)
+        })
     end
 
     local function openCollectionPicker()
@@ -2485,23 +2471,16 @@ function QA.showQuickActionDialog(plugin, qa_id, on_done)
         for _i, coll_name in ipairs(collections) do
             local name = coll_name
             items[#items + 1] = { text = name, callback = function()
-                current_action_type = "collection"
-                current_action_val1 = name
-                current_action_title = name
-                _buildSaveDialog(true)
+                setAction("collection", name, nil, name)
             end }
         end
-        require("engines/sui_action_sheet").pick{
-            name = "sui_win_qa_collection", title = _("Collection"), icon = "collections",
-            items = items, on_cancel = cancelActionPicker,
-        }
+        ActionSheet.pick{ parent = form, levels = 2, title = _("Collection"), icon = "collections", items = items }
     end
 
     local function openPluginPicker()
         local plugin_actions = _scanFMPlugins()
         if #plugin_actions == 0 then
             UI.Notify.toast(_("No plugins found."))
-            cancelActionPicker()
             return
         end
         table.sort(plugin_actions, function(a, b) return a.title:lower() < b.title:lower() end)
@@ -2509,24 +2488,16 @@ function QA.showQuickActionDialog(plugin, qa_id, on_done)
         for _i, a in ipairs(plugin_actions) do
             local _a = a
             items[#items + 1] = { text = _a.title, callback = function()
-                current_action_type = "plugin"
-                current_action_val1 = _a.fm_key
-                current_action_val2 = _a.fm_method
-                current_action_title = _a.title
-                _buildSaveDialog(true)
+                setAction("plugin", _a.fm_key, _a.fm_method, _a.title)
             end }
         end
-        require("engines/sui_action_sheet").pick{
-            name = "sui_win_qa_plugin", title = _("Plugin"), icon = "plugin",
-            items = items, on_cancel = cancelActionPicker,
-        }
+        ActionSheet.pick{ parent = form, levels = 2, title = _("Plugin"), icon = "plugin", items = items }
     end
 
     local function openDispatcherPicker()
         local actions = _scanDispatcherActions()
         if #actions == 0 then
             UI.Notify.toast(_("No system actions found."))
-            cancelActionPicker()
             return
         end
         table.sort(actions, function(a, b) return a.title:lower() < b.title:lower() end)
@@ -2534,16 +2505,10 @@ function QA.showQuickActionDialog(plugin, qa_id, on_done)
         for _i, a in ipairs(actions) do
             local _a = a
             items[#items + 1] = { text = _a.title, callback = function()
-                current_action_type = "dispatcher"
-                current_action_val1 = _a.id
-                current_action_title = _a.title
-                _buildSaveDialog(true)
+                setAction("dispatcher", _a.id, nil, _a.title)
             end }
         end
-        require("engines/sui_action_sheet").pick{
-            name = "sui_win_qa_dispatcher", title = _("System Actions"), icon = "settings",
-            items = items, on_cancel = cancelActionPicker,
-        }
+        ActionSheet.pick{ parent = form, levels = 2, title = _("System Actions"), icon = "settings", items = items }
     end
 
     -- Availability filter mirroring sui_menu.lua's actionAvailable(), duplicated
@@ -2561,7 +2526,7 @@ function QA.showQuickActionDialog(plugin, qa_id, on_done)
         return true
     end
 
-    -- Group member picker: a sheet of checked rows, redrawn in place on every
+    -- Group member picker: a page of checked rows, redrawn in place on every
     -- toggle. Tap order sets the group's display order; nesting (a group inside a group) is blocked
     -- by excluding other qa_folder entries from the pool.
     local function openGroupMemberPicker()
@@ -2588,9 +2553,6 @@ function QA.showQuickActionDialog(plugin, qa_id, on_done)
             order[#order + 1] = id
         end
 
-        local ActionSheet = require("engines/sui_action_sheet")
-        local window
-
         local items = {}
         for _i, a in ipairs(pool) do
             local _id  = a.id
@@ -2606,57 +2568,69 @@ function QA.showQuickActionDialog(plugin, qa_id, on_done)
                     order[#order + 1] = _id
                 end
                 item.checked = selected[_id] == true
-                window:repaint()
+                form:repaint()
             end
             items[#items + 1] = item
         end
 
-        window = ActionSheet.show{
-            name       = "sui_win_qa_group",
-            title      = _("Group: select actions"),
-            icon       = "group",
-            sections   = { ActionSheet.list(items) },
-            on_dismiss = cancelActionPicker,
-            footer     = {
-                { text = _("Cancel"), callback = function()
-                    window:close()
-                    cancelActionPicker()
-                end },
-                { text = _("Done"), callback = function()
-                    window:close()
+        form:showPage{
+            title    = _("Group: select actions"),
+            icon     = "group",
+            sections = { ActionSheet.list(items) },
+            footer   = {
+                { text = _("Cancel"), callback = function() form:closePage() end },
+                { text = _("Done"), primary = true, callback = function()
+                    form:closePage(2)
                     pending_group_items = order
-                    current_action_type = "group"
-                    current_action_val1 = nil
-                    current_action_val2 = nil
-                    current_action_title = _("Group")
-                    _buildSaveDialog(true)
+                    setAction("group", nil, nil, _("Group"))
                 end },
             },
         }
     end
 
     openActionPicker = function()
-        if active_dialog then UIManager:close(active_dialog); active_dialog = nil end
-        require("engines/sui_action_sheet").pick{
-            name      = "sui_win_action_type",
-            title     = _("Action Type"),
-            on_cancel = cancelActionPicker,
-            items     = {
+        form:showPage{
+            title    = _("Action Type"),
+            sections = { ActionSheet.list{
                 { text = _("Folder"), sui_icon = "folder", callback = openFolderPicker },
                 { text = _("Collection"), sui_icon = "collections", enabled = #collections > 0,
-                  callback = openCollectionPicker },
-                { text = _("Plugin"), sui_icon = "plugin", callback = openPluginPicker },
-                { text = _("System Actions"), sui_icon = "settings", callback = openDispatcherPicker },
-                { text = _("Group of Quick Actions"), sui_icon = "group", callback = openGroupMemberPicker },
-            },
+                  chevron = true, callback = openCollectionPicker },
+                { text = _("Plugin"), sui_icon = "plugin", chevron = true, callback = openPluginPicker },
+                { text = _("System Actions"), sui_icon = "settings", chevron = true,
+                  callback = openDispatcherPicker },
+                { text = _("Group of Quick Actions"), sui_icon = "group", chevron = true,
+                  callback = openGroupMemberPicker },
+            } },
         }
     end
 
-    if not qa_id then
-        openActionPicker()
-    else
-        _buildSaveDialog(false)
-    end
+    form = require("features/dialogs/sui_dialogs").form{
+        flow      = true,
+        title     = dlg_title,
+        ok_text   = _("Save"),
+        fields    = {
+            { label = _("Name"), value = cfg.label or current_action_title or "", hint = _("Action name…") },
+        },
+        actions   = formActions(),
+        validate  = function()
+            if not current_action_type then return _("Please select an action.") end
+        end,
+        on_submit = function(texts)
+            local _label, _default_lbl, icon_default = describeAction()
+            local final_label = Config.sanitizeLabel(texts[1]) or current_action_title or _("Action")
+
+            local p_path, p_coll, p_pk, p_pm, p_da
+            if current_action_type == "path" then p_path = current_action_val1
+            elseif current_action_type == "collection" then p_coll = current_action_val1
+            elseif current_action_type == "plugin" then p_pk = current_action_val1; p_pm = current_action_val2
+            elseif current_action_type == "dispatcher" then p_da = current_action_val1
+            end
+
+            commitQA(final_label, p_path, p_coll, chosen_icon or icon_default, p_pk, p_pm, p_da,
+                current_action_type == "group" or nil)
+        end,
+    }
+    if not qa_id then openActionPicker() end
 end
 
 -- ---------------------------------------------------------------------------
@@ -2751,9 +2725,10 @@ function QA.makeIconsMenuItems(plugin)
                     end,
                     keep_menu_open = true,
                     callback = function()
-                        QA.showIconPicker(
-                            SUIStyle.getIcon(slot.id),
-                            function(new_path)
+                        QA.showIconPicker{
+                            icon          = SUIStyle.getIcon(slot.id),
+                            default_label = type(slot.label) == "function" and slot.label() or slot.label,
+                            on_select     = function(new_path)
                                 _guardedSetIcon(new_path, function(safe_path)
                                     SUIStyle.setIcon(slot.id, safe_path)
                                     QA.invalidateCustomQACache()
@@ -2764,8 +2739,7 @@ function QA.makeIconsMenuItems(plugin)
                                     if ok and ScreenEngine then ScreenEngine.refreshAllLiveImmediate(false) end
                                 end)
                             end,
-                            type(slot.label) == "function" and slot.label() or slot.label
-                        )
+                        }
                     end,
                 }
             end
@@ -2815,7 +2789,8 @@ function QA.makeIconsMenuItems(plugin)
                     current_icon = Config.getCustomQAConfig(_id).icon
                 end
                 local default_label = _title .. " (" .. _("default") .. ")"
-                QA.showIconPicker(current_icon, function(new_icon)
+                QA.showIconPicker{ icon = current_icon, default_label = default_label,
+                  on_select = function(new_icon)
                     _guardedSetIcon(new_icon, function(safe_icon)
                         if _is_default then
                             QA.setDefaultActionIcon(_id, safe_icon)
@@ -2842,7 +2817,7 @@ function QA.makeIconsMenuItems(plugin)
                         local ok, ScreenEngine = pcall(require, "engines/sui_screen_engine")
                         if ok and ScreenEngine then ScreenEngine.refreshAllLiveImmediate(false) end
                     end)
-                end, default_label)
+                end }
             end,
         }
     end
@@ -2854,8 +2829,7 @@ end
 -- ---------------------------------------------------------------------------
 
 function QA.makeMenuItems(plugin, ctx_menu)
-    local ConfirmBox  = require("ui/widget/confirmbox")
-    local InputDialog = require("ui/widget/inputdialog")
+    local Dialogs = require("features/dialogs/sui_dialogs")
 
     local MAX_CUSTOM_QA = Config.MAX_CUSTOM_QA
 
@@ -2953,7 +2927,7 @@ function QA.makeMenuItems(plugin, ctx_menu)
                     text     = _("Delete"),
                     callback = function()
                         local c = Config.getCustomQAConfig(_id)
-                        UIManager:show(ConfirmBox:new{
+                        Dialogs.confirm{
                             text        = string.format(_("Delete quick action \"%s\"?"), c.label),
                             ok_text     = _("Delete"),
                             cancel_text = _("Cancel"),
@@ -2964,7 +2938,7 @@ function QA.makeMenuItems(plugin, ctx_menu)
                                 plugin:_rebuildAllNavbars()
                                 if ctx_menu and ctx_menu.refresh then ctx_menu.refresh() end
                             end,
-                        })
+                        }
                     end,
                 }
                 return sub
@@ -3269,13 +3243,13 @@ local function _recentOpenBook(filepath)
         ReaderUI:showReader(VirtualPaths.toVirtual(filepath))
     end
     if G_reader_settings:isTrue("file_ask_to_open") then
-        local ConfirmBox = require("ui/widget/confirmbox")
-        UIManager:show(ConfirmBox:new{
+        local Dialogs = require("features/dialogs/sui_dialogs")
+        Dialogs.confirm{
             text        = _("Open this file?") .. "\n\n" .. BD.filename(filepath:match("([^/]+)$")),
             ok_text     = _("Open"),
             cancel_text = _("Cancel"),
             ok_callback = doOpen,
-        })
+        }
     else
         doOpen()
     end

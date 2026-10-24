@@ -343,7 +343,6 @@ local function tabIndexBy(menu, key, value)
 end
 
 local CLASSIC_BTN_DP = 60   -- classic layout button size
-local BTN_ICON_PCT   = 0.52 -- icon size, relative to the button size
 
 -- Face of the panel's text at `size`, in the font chosen for the bar's labels.
 -- Returns the face and whether the text widget has to embolden it.
@@ -372,7 +371,7 @@ end
 -- label settings, truncated to that many pixels.
 local function buttonSpec(btn_size, label_w)
     local spec = {
-        icon_sz    = math.floor(btn_size * BTN_ICON_PCT),
+        icon_sz    = _QARenderer().cellDims(btn_size).icon_sz,
         frame_sz   = btn_size,
         fixed_size = true,
         shape      = getShape(),
@@ -404,15 +403,17 @@ end
 
 -- Tap targets of a panel: `buttons` are { widget, callback } entries hit-tested
 -- against the gesture, `taps` the handlers of the slider bars that rely on the
--- panel to route their taps.
+-- panel to route their taps, `focus_rows` the rows of step controls that join
+-- the menu's focus layout.
 local function newRefs()
-    return { buttons = {}, taps = {} }
+    return { buttons = {}, taps = {}, focus_rows = {} }
 end
 
 -- Builds one button per configured slot, in slot order, and registers each
--- tap target in refs.buttons. Returns the button groups.
+-- tap target in refs.buttons. Returns the button groups and the focus row
+-- the buttons form in the menu's focus layout (see refs.focus_rows).
 local function buildActionWidgets(touch_menu, refs, makeButton)
-    local widgets = {}
+    local widgets, focus_row = {}, {}
     for _i, action_id in ipairs(getSlots()) do
         local group, frame = makeButton(action_id)
         table.insert(refs.buttons, {
@@ -420,8 +421,10 @@ local function buildActionWidgets(touch_menu, refs, makeButton)
             callback = function() return runAction(touch_menu, action_id) end,
         })
         widgets[#widgets + 1] = group
+        focus_row[#focus_row + 1] = UI.makeFocusable(frame)
     end
-    return widgets
+    if #focus_row > 0 then table.insert(refs.focus_rows, focus_row) end
+    return widgets, focus_row
 end
 
 -- Row spreading the button `cells` over `width`: the first button starts at the
@@ -596,9 +599,6 @@ local function warmthChannel()
     }
 end
 
-local MINIMAL_ROW_DP   = 36  -- height of a Minimal slider row
-local MINIMAL_SPACE_DP = 10  -- tap area a Minimal control adds beside its content, and gap before the bar
-
 -- Step controls of a slider row, by style. A builder takes the `show_parent`
 -- of the menu and the `actions` of the three controls (minus, plus, top) and
 -- returns them with the `gap` kept between the bar and its neighbours, the
@@ -628,26 +628,11 @@ local CONTROLS = {
             height  = minus:getSize().h,
         }
     end,
-    -- Drawn symbols flush with the ends of the row, around a bar whose knob
-    -- carries the value. The tap areas of the controls fill the spaces between
-    -- the visible items, which are all twice MINIMAL_SPACE_DP.
+    -- Drawn symbols around a bar whose knob carries the value.
     [SLIDER_STYLE.MINIMAL] = function(_show_parent, actions)
-        local Control = _SUISlider().Control
-        local space   = Screen:scaleBySize(MINIMAL_SPACE_DP)
-        local height  = Screen:scaleBySize(MINIMAL_ROW_DP)
-        local function control(fields)
-            fields.height, fields.inset = height, space
-            return Control:new(fields)
-        end
-        return {
-            minus        = control{ symbol = "minus", edge = "left", callback = actions.minus },
-            plus         = control{ symbol = "plus", edge = "right", callback = actions.plus },
-            gap          = space,
-            top_gap      = 0,
-            height       = height,
-            value_on_bar = true,
-            bar          = sliderBar,
-        }
+        local controls = _SUISlider().stepControls(actions)
+        controls.bar = sliderBar
+        return controls
     end,
 }
 
@@ -655,7 +640,8 @@ local CONTROLS = {
 -- (or the name alone when the bar shows the value), above a row made of a "−"
 -- control, the bar, a "+" control and, in most styles, a "Max" control, `width`
 -- wide.
--- Registers the bar's own tap handler, if any, in `refs`.
+-- Registers the bar's own tap handler, if any, and the row of its step controls
+-- in `refs`.
 local function buildSlider(touch_menu, width, refs, channel)
     local show_parent = touch_menu.show_parent
     local current     = channel.read()
@@ -699,31 +685,15 @@ local function buildSlider(touch_menu, width, refs, channel)
         value_bold  = value_bold,
     }
 
-    local top = controls.top
-    local bar_w = width - 2 * controls.gap - controls.minus:getSize().w - controls.plus:getSize().w
-    if top then bar_w = bar_w - controls.top_gap - top:getSize().w end
-    bar = (controls.bar or channel.bar)(channel, bar_w, controls.height, current, {
+    bar = (controls.bar or channel.bar)(channel, _SUISlider().barWidth(width, controls), controls.height, current, {
         commit      = apply,
         release     = function() caption:refresh() end,
         show_parent = show_parent,
     })
     if bar.tap then table.insert(refs.taps, bar.tap) end
 
-    local function span(w) return HorizontalSpan:new{ width = w } end
-    -- A bar that carries its value above it is taller than the controls: they
-    -- sit on the bar row at its bottom.
-    local row = HorizontalGroup:new{
-        align = controls.value_on_bar and "bottom" or "center",
-        controls.minus,
-        span(controls.gap),
-        bar.widget,
-        span(controls.gap),
-        controls.plus,
-    }
-    if top then
-        table.insert(row, span(controls.top_gap))
-        table.insert(row, top)
-    end
+    table.insert(refs.focus_rows, { controls.minus, controls.plus, controls.top })
+    local row = _SUISlider().row(controls, bar.widget)
     return VerticalGroup:new{
         align = "left",
         caption,
@@ -788,7 +758,7 @@ local function buildClassicPanel(touch_menu)
             TextWidget:new{
                 text    = _("No actions configured.\nGo to Bars → Quick Settings Bar."),
                 face    = Font:getFace("cfont"),
-                fgcolor = SUIStyle.COLOR.text_secondary,
+                fgcolor = SUIStyle.COLOR.text_primary,
             },
         }
     end
@@ -993,7 +963,7 @@ local BOOK_ITEM_BUILDERS = {
         end
     end,
     progress = function(_ui, m, progress)
-        return UI.progressBar(m.bar_w, progress().fraction, m.bar_h, SUIStyle.COLOR.text_primary)
+        return UI.progressBar(m.bar_w, progress().fraction, m.bar_h, SUIStyle.accent())
     end,
 }
 
@@ -1036,14 +1006,15 @@ local function buildBookExitButton(touch_menu, refs, m)
 
     local spec  = buttonSpec(m.btn_size)
     local label = _("Exit")
+    local fg, on_surface = _QARenderer().onSurfaceColor(spec)
     local content = HorizontalGroup:new{
         align = "center",
         _QARenderer().buildIcon({
             icon  = SUIStyle.resolveIcon(EXIT_ICON_SLOT),
             label = label,
-        }, spec.icon_sz, spec.fgcolor),
+        }, spec.icon_sz, fg, { tint = on_surface }),
         HorizontalSpan:new{ width = m.exit_gap },
-        TextWidget:new{ text = label, face = m.body_face, fgcolor = spec.fgcolor },
+        UI.makeColoredText{ text = label, face = m.body_face, fgcolor = on_surface and fg or nil },
         HorizontalSpan:new{ width = m.exit_tail },
     }
     local frame = _QARenderer().buildFrame(content, m.btn_size, {
@@ -1066,12 +1037,18 @@ end
 -- right end. nil when the row would be empty.
 local function buildBookActionRow(touch_menu, refs, m)
     local buttons = HorizontalGroup:new{ align = "top" }
-    for i, group in ipairs(buildActionWidgets(touch_menu, refs, buttonFactory(m.btn_size))) do
+    local groups, focus_row = buildActionWidgets(touch_menu, refs, buttonFactory(m.btn_size))
+    for i, group in ipairs(groups) do
         if i > 1 then table.insert(buttons, HorizontalSpan:new{ width = m.btn_gap }) end
         table.insert(buttons, group)
     end
     local exit = buildBookExitButton(touch_menu, refs, m)
     if #buttons == 0 and not exit then return nil end
+    if exit then
+        -- Exit joins the buttons' focus row, creating it when there are no buttons.
+        if #focus_row == 0 then table.insert(refs.focus_rows, focus_row) end
+        focus_row[#focus_row + 1] = UI.makeFocusable(exit)
+    end
 
     local row = HorizontalGroup:new{ align = "center", buttons }
     if exit then
@@ -1222,6 +1199,9 @@ local function patchTouchMenu()
         -- Build panel (sets self._sui_qs_refs)
         local panel, refs = buildPanel(self)
         self._sui_qs_refs = refs
+        for _i, row in ipairs(refs.focus_rows) do
+            table.insert(self.layout, row)
+        end
 
         -- Native page handlers expect numeric pagination state. This panel is
         -- a single fixed page, so keep page-key and swipe events safe.
@@ -1431,8 +1411,6 @@ _showQSBarSettingsWindow = function(touch_menu)
             items          = QSBar.makeMenuItems(ctx_menu),
             inner_w        = ctx.inner_w,
             repaint        = function() ctx.repaint() end,
-            lock_overlay   = ctx.lockOverlay,
-            unlock_overlay = ctx.unlockOverlay,
             push_stack     = function(id, params)
                 if type(id) == "string" then ctx.push(id, params) else ctx.push("nested_menu", params) end
             end,
@@ -1509,19 +1487,13 @@ local function makeEnableItem(ctx_menu)
         separator      = true,
         callback       = function()
             local on  = isEnabled()
-            local uim = (ctx_menu and ctx_menu.UIManager) or UIManager
             SUISettings:saveSetting(ENABLED_KEY, not on)
-            uim:show(require("ui/widget/confirmbox"):new{
+            require("features/dialogs/sui_dialogs").askRestart{
                 text = string.format(
                     _("The Quick Settings Bar will be %s after restart.\n\nRestart now?"),
                     on and _("disabled") or _("enabled")
                 ),
-                ok_text = _("Restart"), cancel_text = _("Later"),
-                ok_callback = function()
-                    SUISettings:flush()
-                    uim:restartKOReader()
-                end,
-            })
+            }
         end,
     }
 end

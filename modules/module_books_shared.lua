@@ -46,7 +46,7 @@ local _BASE_COVER_H  = math_floor(Screen:scaleBySize(122) * 3 / 2)
 local _BASE_RECENT_W = Screen:scaleBySize(75)
 local _BASE_RECENT_H = Screen:scaleBySize(112)
 local _BASE_RB_GAP1    = Screen:scaleBySize(4)
-local _BASE_RB_BAR_H   = Screen:scaleBySize(5)
+local _BASE_RB_BAR_H   = SUIStyle.PROGRESS_BAR_H
 local _BASE_RB_GAP2    = Screen:scaleBySize(3)
 local _BASE_RB_LABEL_H = Screen:scaleBySize(14)
 
@@ -301,7 +301,7 @@ end
 --
 -- progressBadgeDesc(bd, eff_size, color) → desc|nil
 --   Pure builder of the pentagon's descriptor (see CoverWidgets). color is
---   "dark"|"light"|nil (nil follows Library). nil when the book has no
+--   "dark"|"light"|"accent"|"secondary"|nil (nil follows Style). nil when the book has no
 --   progress to show.
 --
 -- buildProgressBadgeWidget(bd, eff_size, color) → widget|nil
@@ -311,7 +311,7 @@ end
 -- coverBadgeDesc(bd, cw, ch, opts) → desc|nil, edge_margin
 --   Descriptor sized for a single cover of cw × ch, with the margin the badge
 --   keeps from the cover edge. opts is optional:
---     color            "dark"|"light"|nil (nil follows Library)
+--     color            "dark"|"light"|"accent"|"secondary"|nil (nil follows Style)
 --     ref_w, ref_h     reference cover size, keeping the badge size
 --                      consistent on narrower slots
 --     scale_pct        scales the badge only (default 100); its edge margin
@@ -324,22 +324,8 @@ end
 --     allow_mirroring  false keeps the badge where it is placed in RTL
 --                      layouts, for covers laid out in logical coordinates
 -- ---------------------------------------------------------------------------
-local _FC = nil
-local function getFC()
-    if not _FC then
-        local ok, m = pcall(require, "features/library/sui_foldercovers")
-        if ok and m then _FC = m end
-    end
-    return _FC
-end
-
-local function _resolveProgressBadgeDark(color)
-    local resolved = color
-    if not resolved then
-        local fc = getFC()
-        resolved = (fc and fc.getBadgeColorProgress and fc.getBadgeColorProgress()) or "dark"
-    end
-    return resolved == "dark"
+local function _resolveProgressBadgeColor(color)
+    return color or require("features/sui_cover_elements").getColor("progress")
 end
 
 function SH.progressBadgeDesc(bd, eff_size, color)
@@ -348,7 +334,7 @@ function SH.progressBadgeDesc(bd, eff_size, color)
     local CW = getCoverWidgets()
     if not CW then return nil end
     return CW.buildProgressBadgeDesc(eff_size, bd.status, bd.percent, SUIStyle.BADGE_BORDER_SZ,
-        _resolveProgressBadgeDark(color))
+        _resolveProgressBadgeColor(color))
 end
 
 local function badgeWidget(desc)

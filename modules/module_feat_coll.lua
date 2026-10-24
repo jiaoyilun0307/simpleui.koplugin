@@ -24,6 +24,7 @@ local Geom            = require("ui/geometry")
 local Config      = require("infra/sui_config")
 local SUISettings = require("infra/sui_store")
 local SUIStyle    = require("features/sui_style")
+local Chrome       = require("features/sui_module_chrome")
 local UI          = require("infra/sui_core")
 local GridRenderer = require("engines/sui_book_grid")
 local Sources = require("engines/sui_book_sources")
@@ -147,6 +148,7 @@ local function makeInstance(inst_id)
             UI.makeColoredText{
                 text    = ph_text,
                 face    = Font:getFace(SUIStyle.FACE_REGULAR, SUIStyle.FS_BODY),
+                fgcolor = (ctx.ink or Chrome.PLAIN_INK).sub,
                 width   = w - PAD * 2,
             },
         }
@@ -166,7 +168,7 @@ M.instances_key = "simpleui_coll_row_instances"
 M.makeInstance  = makeInstance
 
 -- Layout-editor summary of an instance: the collection it features.
-function M.getInstanceSubtitle(inst_id, pfx)
+function M.getSummary(inst_id, pfx)
     local name = SUISettings:readSetting(pfx .. inst_id .. "_coll_name")
     if name and name ~= "" then return name end
     return _("No collection selected")

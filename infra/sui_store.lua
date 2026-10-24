@@ -110,6 +110,12 @@ function SUISettings:generation()
     return _generation
 end
 
+--- Marks derived values stale without writing a setting, for inputs that are
+--- not settings (night mode).
+function SUISettings:invalidateDerived()
+    _generation = _generation + 1
+end
+
 --- Wraps a function of no arguments so that its result is recomputed only
 --- when a setting has changed since the previous call. Meant for values
 --- derived from settings and read on hot paths such as widget painting.

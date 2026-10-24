@@ -25,8 +25,6 @@
 -- ----------
 --   LibrarySearch.show()
 
-local InputDialog    = require("ui/widget/inputdialog")
-local UIManager      = require("ui/uimanager")
 local _              = require("gettext")
 local T              = require("ffi/util").template
 
@@ -52,13 +50,13 @@ local function _openBook(filepath)
         ReaderUI:showReader(VirtualPaths.toVirtual(filepath))
     end
     if G_reader_settings:isTrue("file_ask_to_open") then
-        local ConfirmBox = require("ui/widget/confirmbox")
-        UIManager:show(ConfirmBox:new{
+        local Dialogs = require("features/dialogs/sui_dialogs")
+        Dialogs.confirm{
             text        = _("Open this file?") .. "\n\n" .. (filepath:match("([^/]+)$") or filepath),
             ok_text     = _("Open"),
             cancel_text = _("Cancel"),
             ok_callback = doOpen,
-        })
+        }
     else
         doOpen()
     end
@@ -178,29 +176,18 @@ function LibrarySearch.show()
         return
     end
 
-    local search_dialog
-    local function doSearch()
-        local query = search_dialog:getInputText()
-        if query == "" then return end
-        UIManager:close(search_dialog)
-        local results = search(home_dir, query)
-        if #results == 0 then
-            UI.Notify.toast(T(_("No results for: %1"), query))
-        else
-            showResults(query, results)
-        end
-    end
-    search_dialog = InputDialog:new{
-        title = _("Search library"),
-        buttons = {
-            {
-                { text = _("Cancel"), id = "close", callback = function() UIManager:close(search_dialog) end },
-                { text = _("Search"), is_enter_default = true, callback = doSearch },
-            },
-        },
+    require("features/dialogs/sui_dialogs").prompt{
+        title     = _("Search library"),
+        ok_text   = _("Search"),
+        on_submit = function(query)
+            local results = search(home_dir, query)
+            if #results == 0 then
+                UI.Notify.toast(T(_("No results for: %1"), query))
+            else
+                showResults(query, results)
+            end
+        end,
     }
-    UIManager:show(search_dialog)
-    search_dialog:onShowKeyboard()
 end
 
 return LibrarySearch

@@ -86,7 +86,8 @@ end
 -- Shared actions (previously duplicated with sui_library_browse.lua)
 -- ---------------------------------------------------------------------------
 
-function SeriesGrouping.openCoverPicker(vpath, fc, BookInfoManager)
+-- `sheet` (optional): flow sheet to show the picker on, as a page.
+function SeriesGrouping.openCoverPicker(vpath, fc, BookInfoManager, sheet)
     local series_items = _sg_items_cache[vpath]
     local picker_items = {}
     for _, item in ipairs(series_items or {}) do
@@ -104,10 +105,12 @@ function SeriesGrouping.openCoverPicker(vpath, fc, BookInfoManager)
         items         = picker_items,
         menu          = fc,
         empty_message = _("No books found in this series."),
+        parent        = sheet,
     }
 end
 
-function SeriesGrouping.createCollection(vpath, series_name)
+-- `sheet` (optional): flow sheet to show the name prompt on, as a page.
+function SeriesGrouping.createCollection(vpath, series_name, sheet)
     local series_items = _sg_items_cache[vpath]
     local paths = {}
     for _, item in ipairs(series_items or {}) do
@@ -117,6 +120,7 @@ function SeriesGrouping.createCollection(vpath, series_name)
         suggested_name = series_name or "",
         paths          = paths,
         empty_message  = _("No books found in this series."),
+        parent         = sheet,
     }
 end
 
@@ -375,30 +379,38 @@ function SeriesGrouping.install()
             local series_name = (item.text or ""):gsub("/$", "")
             local vpath       = item.path
             local items       = {}
+            local sheet
 
             if cover_available then
                 items[#items + 1] = {
-                    text     = _("Set folder cover"),
-                    sui_icon = "cover",
-                    callback = function()
+                    text      = _("Set folder cover"),
+                    sui_icon  = "cover",
+                    keep_open = true,
+                    chevron   = true,
+                    callback  = function()
                         local ok_bim, BookInfoManager = pcall(require, "bookinfomanager")
                         if ok_bim and BookInfoManager then
-                            SeriesGrouping.openCoverPicker(vpath, fc, BookInfoManager)
+                            SeriesGrouping.openCoverPicker(vpath, fc, BookInfoManager, sheet)
+                        else
+                            sheet:close()
                         end
                     end,
                 }
             end
             items[#items + 1] = {
-                text     = _("Create collection"),
-                sui_icon = "collections",
-                callback = function() SeriesGrouping.createCollection(vpath, series_name) end,
+                text      = _("Create collection"),
+                sui_icon  = "collections",
+                keep_open = true,
+                chevron   = true,
+                callback  = function() SeriesGrouping.createCollection(vpath, series_name, sheet) end,
             }
 
             local ActionSheet = require("engines/sui_action_sheet")
-            ActionSheet.show{
+            sheet = ActionSheet.show{
                 name       = "sui_win_series_actions",
                 title      = series_name,
                 icon       = "folder",
+                flow       = true,
                 auto_close = true,
                 sections   = { ActionSheet.list(items) },
             }

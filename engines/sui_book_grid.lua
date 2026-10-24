@@ -34,20 +34,15 @@
 --   show_text, show_overlay, badge_progress, badge_new (→ progress_style/
 --   badge_new_mode — see _migrateProgressStyle/getBadgeNewMode).
 
-local Blitbuffer      = require("ffi/blitbuffer")
 local Memory          = require("infra/sui_memory")
-local BD              = require("ui/bidi")
 local T               = require("ffi/util").template
-local Font            = require("ui/font")
 local FrameContainer  = require("ui/widget/container/framecontainer")
 local Geom            = require("ui/geometry")
 local GestureRange    = require("ui/gesturerange")
 local HorizontalGroup = require("ui/widget/horizontalgroup")
 local HorizontalSpan  = require("ui/widget/horizontalspan")
-local IconWidget      = require("ui/widget/iconwidget")
 local InputContainer  = require("ui/widget/container/inputcontainer")
 local WidgetContainer = require("ui/widget/container/widgetcontainer")
-local LineWidget      = require("ui/widget/linewidget")
 local OverlapGroup    = require("ui/widget/overlapgroup")
 local CenterContainer = require("ui/widget/container/centercontainer")
 local VerticalGroup   = require("ui/widget/verticalgroup")
@@ -55,6 +50,7 @@ local VerticalSpan    = require("ui/widget/verticalspan")
 local _ = require("infra/sui_i18n").translate
 
 local Config      = require("infra/sui_config")
+local PageNav     = require("engines/sui_page_nav")
 local SectionLabel = require("engines/sui_section_label")
 local PageState    = SectionLabel.PageState
 local UI          = require("infra/sui_core")
@@ -62,10 +58,9 @@ local SUISettings = require("infra/sui_store")
 local SUIStyle    = require("features/sui_style")
 local Text        = require("infra/sui_text")
 local SUIWallpaper = require("features/sui_wallpaper")
+local Chrome      = require("features/sui_module_chrome")
 local PAD    = UI.PAD
-local Screen = require("device").screen
 
-local CLR_TEXT_SUB    = UI.CLR_TEXT_SUB
 local _BASE_RB_PCT_FS = SUIStyle.FS_DETAIL  -- 15: "XX% Read" label font size
 
 local GridRenderer = {}
@@ -112,23 +107,16 @@ local function getCoverWidgets()
     return _CoverWidgets
 end
 
--- FC (features/library/sui_foldercovers) is the source of truth for the
--- default badge COLOR (Library → Cover Settings → Overlays → Badges menu).
+-- The cover elements registry (features/sui_cover_elements) is the source of
+-- truth for the default badge COLOR (Style → Covers → Badges menu).
 -- Book-grid modules fall back to the same getters instead of keeping a
 -- parallel settings tree, unless overridden per module instance (see
 -- GridRenderer.getBadgeColor). Badge SIZE is a separate, independent
 -- per-module-instance setting — see GridRenderer.getBadgeScale below; it
--- does not read from FC. What to show (per module) is likewise a separate
--- concern — see showBadgePages/Series/getBadgeNewMode and
+-- does not read from the registry. What to show (per module) is likewise a
+-- separate concern — see showBadgePages/Series/getBadgeNewMode and
 -- GridRenderer.getProgressStyle below.
-local _FC = nil
-local function getFC()
-    if not _FC then
-        local ok, m = pcall(require, "features/library/sui_foldercovers")
-        if ok and m then _FC = m end
-    end
-    return _FC
-end
+local CoverElements = require("features/sui_cover_elements")
 
 -- Drops cached module references so the GC can collect them as soon as
 -- package.loaded is cleared, instead of waiting on the upvalue. Called on
@@ -136,7 +124,6 @@ end
 function GridRenderer.reset()
     _SH = nil
     _CoverWidgets = nil
-    _FC = nil
     local ok, SH = pcall(require, "modules/module_books_shared")
     if ok and SH and SH.invalidateSeriesCache then SH.invalidateSeriesCache() end
 end
@@ -253,9 +240,9 @@ function GridRenderer.showBadgeSeries(pfx, id, mode)
 end
 
 -- "New" badge mode: "none" | "badge" (rounded rectangle) | "ribbon"
--- (diagonal corner ribbon) — same two visual styles as the Library's own
--- New badge Type picker (features/library/sui_foldercovers.lua,
--- FC.getNewMode()), reusing the same ribbon-drawing code
+-- (diagonal corner ribbon) — same two visual styles as the Style New Book
+-- badge Type picker (features/sui_cover_elements.lua), reusing the same
+-- ribbon-drawing code
 -- (features/library/sui_cover_widgets.lua's CoverWidgets.paintCornerRibbon
 -- via CoverWidgets.buildCornerRibbonWidget).
 --
@@ -295,31 +282,28 @@ function GridRenderer.setBadgeNewMode(pfx, id, v)
 end
 
 -- ---------------------------------------------------------------------------
--- Per-badge color override — same idea as the Library's own per-badge Dark/
--- Light setting (features/library/sui_foldercovers.lua), but scoped to one
--- module instance instead of global. nil (never set, or cleared via
--- setBadgeColor(pfx, id, key, nil) — "Follow Library") falls back to the
--- shared Library color via `fc_getter`.
+-- Per-badge color override — same idea as the Style default per-badge color
+-- (features/sui_cover_elements.lua), but scoped to one module instance
+-- instead of global. nil (never set, or cleared via
+-- setBadgeColor(pfx, id, key, nil) — "Follow Style") falls back to the
+-- Style default from the cover elements registry.
 -- badge_key: "pages" | "series" | "new" | "progress"
 -- ---------------------------------------------------------------------------
 function GridRenderer.getBadgeColorOverride(pfx, id, badge_key)
-    local v = SUISettings:readSetting(pfx .. id .. "_badge_color_" .. badge_key)
-    if v == "dark" or v == "light" then return v end
-    return nil
+    return SUIStyle.badgeChoice(SUISettings:readSetting(pfx .. id .. "_badge_color_" .. badge_key))
 end
-function GridRenderer.getBadgeColor(pfx, id, badge_key, fc_getter)
+function GridRenderer.getBadgeColor(pfx, id, badge_key)
     return GridRenderer.getBadgeColorOverride(pfx, id, badge_key)
-        or (fc_getter and fc_getter() or "light")
+        or CoverElements.getColor(badge_key)
 end
 function GridRenderer.setBadgeColor(pfx, id, badge_key, v)
-    if v ~= "dark" and v ~= "light" then v = nil end -- nil = clear override, follow Library
-    SUISettings:saveSetting(pfx .. id .. "_badge_color_" .. badge_key, v)
+    SUISettings:saveSetting(pfx .. id .. "_badge_color_" .. badge_key, SUIStyle.badgeChoice(v)) -- nil = clear override, follow Style
 end
 
 -- ---------------------------------------------------------------------------
 -- Book-grid badge SIZE — per-module-instance setting (pfx .. id .. "_badge_
 -- scale"), independent from the Library grid's own "Badge Size"
--- (features/library/sui_foldercovers.lua's FC.getBadgeScale/setBadgeScale).
+-- (features/sui_cover_elements.lua's getSizePct/setSizePct).
 --
 -- The user-facing default is 100%, matching the Library's own "Badge Size"
 -- control. Module badges render 10% bigger than that baseline by default;
@@ -357,13 +341,6 @@ GridRenderer.GRID_ROWS_MAX = 3
 GridRenderer.GRID_COLS_MIN = 4
 GridRenderer.GRID_COLS_MAX = 5
 
-local function _clampInt(n, lo, hi)
-    n = math.floor(tonumber(n) or lo)
-    if n < lo then return lo end
-    if n > hi then return hi end
-    return n
-end
-
 -- Extra height reserved below the cover for the active progress bar/label,
 -- counting only what's actually drawn. draw_progress/draw_text are
 -- module-level settings (not per-book), so the same value applies to every
@@ -378,20 +355,18 @@ local function cellExtraHeight(draw_progress, draw_text, gap1, bar_h, gap2, labe
 end
 
 function GridRenderer.getGridRows(pfx, id, default_rows)
-    local v = SUISettings:readSetting(pfx .. id .. "_grid_rows")
-    if v == nil then return default_rows or 1 end
-    return _clampInt(v, GridRenderer.GRID_ROWS_MIN, GridRenderer.GRID_ROWS_MAX)
+    return Config.readClampedInt(pfx .. id .. "_grid_rows",
+        GridRenderer.GRID_ROWS_MIN, GridRenderer.GRID_ROWS_MAX, default_rows or 1)
 end
 function GridRenderer.getGridCols(pfx, id, default_cols)
-    local v = SUISettings:readSetting(pfx .. id .. "_grid_cols")
-    if v == nil then return _clampInt(default_cols or 5, GridRenderer.GRID_COLS_MIN, GridRenderer.GRID_COLS_MAX) end
-    return _clampInt(v, GridRenderer.GRID_COLS_MIN, GridRenderer.GRID_COLS_MAX)
+    return Config.readClampedInt(pfx .. id .. "_grid_cols",
+        GridRenderer.GRID_COLS_MIN, GridRenderer.GRID_COLS_MAX, default_cols or 5)
 end
 function GridRenderer.setGridRows(pfx, id, n)
-    SUISettings:saveSetting(pfx .. id .. "_grid_rows", _clampInt(n, GridRenderer.GRID_ROWS_MIN, GridRenderer.GRID_ROWS_MAX))
+    Config.saveClampedInt(pfx .. id .. "_grid_rows", n, GridRenderer.GRID_ROWS_MIN, GridRenderer.GRID_ROWS_MAX)
 end
 function GridRenderer.setGridCols(pfx, id, n)
-    SUISettings:saveSetting(pfx .. id .. "_grid_cols", _clampInt(n, GridRenderer.GRID_COLS_MIN, GridRenderer.GRID_COLS_MAX))
+    Config.saveClampedInt(pfx .. id .. "_grid_cols", n, GridRenderer.GRID_COLS_MIN, GridRenderer.GRID_COLS_MAX)
 end
 
 -- ---------------------------------------------------------------------------
@@ -423,9 +398,9 @@ end
 -- badges_cfg, unlike pages/series/new) because it's derived from the
 -- module's single progress_style setting ("badge").
 --
--- Color defaults to the shared Library setting (features/library/
--- sui_foldercovers.lua's FC getters, the same ones the Library "Badges"
--- menu controls), but each badge can be overridden per module instance via
+-- Color defaults to the Style setting (features/sui_cover_elements.lua, the
+-- registry behind the Style → Covers → Badges menu), but each badge can be
+-- overridden per module instance via
 -- GridRenderer.getBadgeColor/setBadgeColor. Size is likewise per module
 -- instance (GridRenderer.getBadgeScale(pfx, id)), independent from every
 -- other module and from the Library grid's own badge size.
@@ -436,8 +411,7 @@ end
 function GridRenderer.resolveBadgeConfig(badges_cfg, pfx, id, show_progress_badge)
     if not badges_cfg then return nil end
     local CW = getCoverWidgets()
-    local fc = getFC()
-    if not CW or not fc then return nil end
+    if not CW then return nil end
 
     local cfg = {
         CW            = CW,
@@ -460,12 +434,12 @@ function GridRenderer.resolveBadgeConfig(badges_cfg, pfx, id, show_progress_badg
     cfg.corner_badge_scale = cfg.badge_scale * _BG_CORNER_BADGE_BASE_BOOST
     -- Badges sit on the card, not on the room its shadow takes.
     cfg.inset = SUIStyle.coverShadowOffset(SUIStyle.SHADOW_MODULES)
-    cfg.dark = {
-        pages    = GridRenderer.getBadgeColor(pfx, id, "pages",    fc.getBadgeColorPages)    == "dark",
-        series   = GridRenderer.getBadgeColor(pfx, id, "series",   fc.getBadgeColorSeries)   == "dark",
-        new      = GridRenderer.getBadgeColor(pfx, id, "new",      fc.getBadgeColorNew)      == "dark",
+    cfg.badge_color = {
+        pages    = GridRenderer.getBadgeColor(pfx, id, "pages"),
+        series   = GridRenderer.getBadgeColor(pfx, id, "series"),
+        new      = GridRenderer.getBadgeColor(pfx, id, "new"),
     }
-    cfg.progress_color = GridRenderer.getBadgeColor(pfx, id, "progress", fc.getBadgeColorProgress)
+    cfg.progress_color = GridRenderer.getBadgeColor(pfx, id, "progress")
     return cfg
 end
 
@@ -486,7 +460,7 @@ function GridRenderer.applyBadges(cover_widget, bd, fp, cw, ch, cfg)
     -- Pages badge (bottom-left) — hidden for finished books, same rule as
     -- the Library grid (a finished book doesn't need its page count).
     if cfg.show_pages and bd.status ~= "complete" and bd.pages then
-        local wg = CW.buildRectBadgeWidget(bd.pages .. _(" p."), false, cell_min, cfg.dark.pages, false, corner_badge_scale)
+        local wg = CW.buildRectBadgeWidget(bd.pages .. _(" p."), false, cell_min, cfg.badge_color.pages, false, corner_badge_scale)
         if wg then
             wg.overlap_offset = { edge_margin, ch - wg.dimen.h - margin }
             overlap[#overlap + 1] = wg
@@ -501,7 +475,7 @@ function GridRenderer.applyBadges(cover_widget, bd, fp, cw, ch, cfg)
         local SH = getSH()
         local sd = SH and SH.getBookSeries(fp)
         if sd then
-            local wg = CW.buildRectBadgeWidget("#" .. sd.series_index, false, cell_min, cfg.dark.series, false, corner_badge_scale)
+            local wg = CW.buildRectBadgeWidget("#" .. sd.series_index, false, cell_min, cfg.badge_color.series, false, corner_badge_scale)
             if wg then
                 wg.overlap_offset = { edge_margin, margin }
                 overlap[#overlap + 1] = wg
@@ -532,17 +506,17 @@ function GridRenderer.applyBadges(cover_widget, bd, fp, cw, ch, cfg)
         -- "Unread" here means "0% and no status" — SH.getBookData() always
         -- defaults percent to 0, so the two aren't distinguishable from bd
         -- alone. Good enough for a homescreen glance badge.
-        local dark = cfg.dark.new
+        local new_color = cfg.badge_color.new
         if cfg.new_mode == "ribbon" then
             -- Not boosted — the ribbon keeps its own size (badge_scale).
-            local wg = CW.buildCornerRibbonWidget(cw, ch, dark, badge_scale)
+            local wg = CW.buildCornerRibbonWidget(cw, ch, new_color, badge_scale)
             if wg then
                 -- Full-size layer, no overlap_offset needed.
                 overlap[#overlap + 1] = wg
                 badges_added = true
             end
         else -- "badge"
-            local wg = CW.buildRectBadgeWidget(_("New"), true, cell_min, dark, true, corner_badge_scale)
+            local wg = CW.buildRectBadgeWidget(_("New"), true, cell_min, new_color, true, corner_badge_scale)
             if wg then
                 wg.overlap_offset = { cw - wg.dimen.w - edge_margin, margin }
                 overlap[#overlap + 1] = wg
@@ -719,6 +693,7 @@ function GridRenderer.build(w, ctx, opts)
     end
     if #fps == 0 then
         PageState.setCount(ctx, id, 1)
+        UI.setFocusRows(ctx, id, grid_rows, {})
         return nil
     end
 
@@ -727,7 +702,8 @@ function GridRenderer.build(w, ctx, opts)
     PageState.setCount(ctx, id, npages)
 
     local _clr_blk        = SUIStyle.COLOR.text_primary
-    local _clr_sub        = CLR_TEXT_SUB
+    -- Content colours over the module fill.
+    local ink             = ctx.ink or Chrome.PLAIN_INK
 
     local SH          = getSH()
     local pfx         = ctx.pfx
@@ -810,9 +786,13 @@ function GridRenderer.build(w, ctx, opts)
     local badge_cfg = not use_overlay
         and GridRenderer.resolveBadgeConfig(opts.badges, pfx, id, use_progress_badge)
         or nil
+    -- D-pad focus stops of the cells, per grid row (see UI.setFocusRows).
+    local row_stops = {}
     local i = 0
     for r = 1, grid_rows do
         if i >= #page_fps then break end
+        local stops = {}
+        row_stops[r] = stops
         local hrow = HorizontalGroup:new{ align = "top" }
         if r > 1 then row[#row + 1] = VerticalSpan:new{ width = row_gap } end
         row[#row + 1] = hrow
@@ -830,7 +810,8 @@ function GridRenderer.build(w, ctx, opts)
         -- (with its own tap handling, if needed) of size cw × cell_h, and
         -- optionally a list of cover slots to merge into `cover_slots`
         -- (same { container, idx, fp, w, h } format used below, so
-        -- GridRenderer.updateCovers keeps working unchanged).
+        -- GridRenderer.updateCovers keeps working unchanged). When ctx has
+        -- kbStops the cell should be a D-pad focus stop (UI.makeFocusable).
         if opts.renderCell then
             local extra_slots
             cell_widget, extra_slots = opts.renderCell(fp, cw, cell_h, ctx)
@@ -902,20 +883,20 @@ function GridRenderer.build(w, ctx, opts)
             -- bar instead of rebuilding this whole cell.
             local _bar_w = cw
             local _bar_h = D.RB_BAR_H
-            local _init_bar = UI.progressBar(_bar_w, bd.percent, _bar_h)
+            local _init_bar = UI.progressBar(_bar_w, bd.percent, _bar_h, ink.bar_fg, ink.bar_bg)
             local bar_container = OverlapGroup:new{
                 dimen = _init_bar:getSize(),
                 _init_bar,
             }
             cell[#cell+1] = bar_container
             _update_bar = function(nd)
-                bar_container[1] = UI.progressBar(_bar_w, (nd and nd.percent or 0), _bar_h)
+                bar_container[1] = UI.progressBar(_bar_w, (nd and nd.percent or 0), _bar_h, ink.bar_fg, ink.bar_bg)
             end
         end
 
         if draw_text then
             cell[#cell+1] = SH.vspan(draw_progress and D.RB_GAP2 or D.RB_GAP1, ctx.vspan_pool)
-            local _pct_fg = _clr_sub
+            local _pct_fg = ink.sub
             local pct_w = UI.makeColoredText{
                 text      = opts.labelForItem and opts.labelForItem(bd)
                             or string.format(_("%d%% Read"), math.floor((bd.percent or 0) * 100 + 0.5)),
@@ -962,6 +943,7 @@ function GridRenderer.build(w, ctx, opts)
             if self._open_fn then self._open_fn(self._fp) end
             return true
         end
+        if ctx.kbStops then UI.makeFocusable(tappable, tappable.onTapBook) end
         -- Only registered when this module's "Long press on cover" is set
         -- to "book_dialog" (see Config.getCoverHoldMode / makeModule.build
         -- above). When it isn't, no Hold/HoldRelease events are registered
@@ -1007,22 +989,14 @@ function GridRenderer.build(w, ctx, opts)
         cell_widget = tappable
         end -- opts.renderCell
 
-        if ctx.kb_recent_focus_idx == i then
-            local bw = Screen:scaleBySize(3)
-            cell_widget = OverlapGroup:new{
-                dimen = Geom:new{ w = cw, h = cell_h },
-                cell_widget,
-                LineWidget:new{ dimen = Geom:new{ w = cw, h = bw },    background = SUIStyle.COLOR.text_primary },
-                LineWidget:new{ dimen = Geom:new{ w = cw, h = bw },    background = SUIStyle.COLOR.text_primary, overlap_offset = {0, cell_h - bw} },
-                LineWidget:new{ dimen = Geom:new{ w = bw, h = cell_h }, background = SUIStyle.COLOR.text_primary },
-                LineWidget:new{ dimen = Geom:new{ w = bw, h = cell_h }, background = SUIStyle.COLOR.text_primary, overlap_offset = {cw - bw, 0} },
-            }
-        end
+        if cell_widget.onTapSelect then stops[#stops + 1] = { id = i, widget = cell_widget } end
 
         if c > 1 then hrow[#hrow + 1] = HorizontalSpan:new{ width = gap } end
         hrow[#hrow + 1] = cell_widget
         end
     end
+
+    UI.setFocusRows(ctx, id, grid_rows, row_stops)
 
     -- ── Swipe between pages (wraparound), no visual indicator ───────────
     -- No chevron or bar: the row always shows up to `max_items` covers,
@@ -1071,18 +1045,8 @@ function GridRenderer.build(w, ctx, opts)
             Swipe = { GestureRange:new{ ges = "swipe", range = function() return swipe_area.dimen end } },
         }
         function swipe_area:onSwipe(_, ges)
-            local dir = ges.direction
-            if BD.mirroredUILayout() then
-                if dir == "west" then dir = "east" elseif dir == "east" then dir = "west" end
-            end
-            local delta
-            if dir == "west" then
-                delta = 1    -- next page
-            elseif dir == "east" then
-                delta = -1   -- previous page
-            else
-                return false
-            end
+            local delta = PageNav.swipeDelta(ges)
+            if not delta then return false end
             -- _turnBookModPage (screen engine) owns clamping, persisting the
             -- new page in ctx, and the surgical repaint of both this row/grid
             -- and its header's "page/npages" indicator + chevrons — the same
@@ -1672,15 +1636,15 @@ end
 --       field reference and the values a style can take.
 --   badges        table?   { pages=mode, series=mode, new=mode }
 --       — Library-style corner badges (see GridRenderer.applyBadges). Size
---       comes from the shared Library "Badges" settings, not from here;
---       color defaults there too but can be overridden per module instance
---       (see badge_colors below). The fourth Library badge, Progress, is
+--       is a per-module setting (GridRenderer.getBadgeScale); color
+--       defaults to the Style "Badges" settings but can be overridden per
+--       module instance (see badge_colors below). The fourth Library badge, Progress, is
 --       not here — it's progress_style="badge" above.
 --   badge_colors  bool?    (default true) — when true, each enabled badge
 --       (pages/series/new, and the progress corner badge) gets its own
---       "Color" submenu (Follow Library/Dark/Light) next to its toggle.
+--       "Color" submenu (Follow Style/Dark/Light) next to its toggle.
 --       Set to false for a module that wants a shorter menu and is fine
---       always following the shared Library color.
+--       always following the Style color.
 --   extra_settings  { { key, label, default }, ... }?  — additional toggles
 --       (settings key = pfx..id.."_"..key; appear in the menu after the
 --       default toggles; the value read is accessible to getFileList/
@@ -1909,7 +1873,7 @@ function GridRenderer.makeModule(spec)
 
         if spec.cols_choice then
             -- Lightweight sibling of the "Grid size" double-stepper below:
-            -- same SpinWidget-backed single-value stepper
+            -- same single-value spin dialog
             -- (Config.makeStepperItem) for a consistent widget/feel across
             -- the whole "Proportions" submenu, but only Columns (4-5) — no Rows —
             -- reusing the same GRID_COLS_MIN/MAX-backed storage. See
@@ -1928,9 +1892,8 @@ function GridRenderer.makeModule(spec)
         end
 
         if spec.grid then
-            -- Same widget/convention that native KOReader uses in "Items
-            -- per page in mosaic mode": Columns + Rows in the same dialog,
-            -- one Apply — instead of two separate SpinWidgets.
+            -- Columns + Rows in the same dialog, one Apply, instead of two
+            -- separate spin dialogs.
             size_group[#size_group + 1] = Config.makeDoubleStepperItem{
                 text_func = function() return _lc("Grid size") end,
                 value_func = function()
@@ -1968,6 +1931,7 @@ function GridRenderer.makeModule(spec)
         local lbl = spec.label_fn and spec.label_fn(pfx) or spec.label
         if lbl then
             appearance_extra[#appearance_extra + 1] = Config.makeLabelToggleItem(id, refresh, _lc)
+            appearance_extra[#appearance_extra + 1] = Config.makeLabelPlacementItem(id, refresh, _lc)
         end
         if spec.extra_appearance_items then
             for _, it in ipairs(spec.extra_appearance_items(ctx_menu)) do
@@ -1990,22 +1954,24 @@ function GridRenderer.makeModule(spec)
             local pb_group = {}
             local badge_colors_on = spec.badge_colors ~= false
 
-            -- "Follow Library" (nil) / Dark / Light — same 3-way choice for
-            -- every badge; factored out to avoid repeating the option list
-            -- four times below.
-            local function _colorOptions()
-                return {
-                    { value = nil,     label = _lc("Follow Library") },
-                    { value = "dark",  label = _lc("Dark") },
-                    { value = "light", label = _lc("Light") },
-                }
-            end
+            -- Badge size first so it is easy to find among the badge rows.
+            pb_group[#pb_group + 1] = Config.makeBadgeSizeItem{
+                separator = true,
+                info      = _lc("Scale for this module's corner badges (progress, pages, series, new book)."),
+                get       = function() return Config.getBadgeScalePct(id, pfx) end,
+                set       = function(v) Config.setBadgeScale(v, id, pfx) end,
+                refresh   = refresh,
+                _lc       = _lc,
+            }
+
+            -- "Follow Style" (nil) / Dark / Light / Accent / Secondary, the same
+            -- choice for every badge.
             local function _colorItem(text, badge_key, enabled_func)
                 return Config.makeRadioSubmenuItem{
                     text         = text,
                     enabled_func = enabled_func,
-                    options      = _colorOptions(),
-                    get          = function() return GridRenderer.getBadgeColorOverride(pfx, id, badge_key) end,
+                    options      = SUIStyle.badgeColorOptions(_lc, _lc("Follow Style")),
+                    get          = function() return SUIStyle.badgeChoiceShown(GridRenderer.getBadgeColorOverride(pfx, id, badge_key)) end,
                     set          = function(v) GridRenderer.setBadgeColor(pfx, id, badge_key, v) end,
                     refresh      = refresh,
                 }
@@ -2067,18 +2033,10 @@ function GridRenderer.makeModule(spec)
             -- in via spec.badges (not every book-grid module needs all
             -- three; e.g. "New"/"Series" are redundant on the New Books
             -- module itself). Color and size are both per-module here —
-            -- color falls back to the shared Library color when left on
-            -- "Follow Library"; size (below) is independent from every
+            -- color falls back to the Style color when left on
+            -- "Follow Style"; size (below) is independent from every
             -- other module and from the Library grid's own badge size —
             -- see GridRenderer.getBadgeScale's doc comment for why.
-            pb_group[#pb_group + 1] = Config.makeBadgeSizeItem{
-                separator = true,
-                info      = _lc("Scale for this module's corner badges (progress, pages, series, new book)."),
-                get       = function() return Config.getBadgeScalePct(id, pfx) end,
-                set       = function(v) Config.setBadgeScale(v, id, pfx) end,
-                refresh   = refresh,
-                _lc       = _lc,
-            }
             if not _toggleLocked(badges.pages) then
                 local pages_group = {
                     {

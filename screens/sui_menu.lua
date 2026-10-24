@@ -8,7 +8,6 @@ local Device    = require("device")
 local Screen    = Device.screen
 local lfs       = require("libs/libkoreader-lfs")
 local logger    = require("logger")
-local util      = require("util")
 local _ = require("infra/sui_i18n").translate
 local N_ = require("infra/sui_i18n").ngettext
 local T = require("ffi/util").template
@@ -17,24 +16,42 @@ local T = require("ffi/util").template
 -- does not pull them into memory before the user ever opens the settings menu.
 -- On low-memory devices these requires were the most likely point of silent
 -- failure that caused the menu entry to open nothing.
-local function ConfirmBox()       return require("ui/widget/confirmbox")        end
-local function InputDialog()      return require("ui/widget/inputdialog")       end
-local function MultiInputDialog() return require("ui/widget/multiinputdialog") end
+local function Dialogs() return require("features/dialogs/sui_dialogs") end
+local function NativeWidgets() return require("features/dialogs/sui_native_widgets") end
+-- Offers a restart for a change that needs one.
+local function askRestart(text) Dialogs().askRestart{ text = text } end
 local function PathChooser()      return require("ui/widget/pathchooser")       end
 local function SortWidget()       return require("ui/widget/sortwidget")        end
 
 local Config    = require("infra/sui_config")
 local UI        = require("infra/sui_core")
+local Accent    = require("infra/sui_accent")
 local Bottombar = require("screens/sui_bottombar")
 local SUISettings = require("infra/sui_store")
 local Backdrop    = require("infra/sui_backdrop")
+
+-- Asks for the top bar custom text; `on_set(text)` runs once it is stored.
+local function promptCustomText(on_set)
+    Dialogs().prompt{
+        title       = _("Custom Text"),
+        description = string.format(N_("Text shown in the top bar.\nMaximum %d character.",
+                      "Text shown in the top bar.\nMaximum %d characters.", Config.TOPBAR_CUSTOM_TEXT_MAX),
+                      Config.TOPBAR_CUSTOM_TEXT_MAX),
+        value       = Config.getTopbarCustomText(),
+        ok_text     = _("Set"),
+        allow_empty = true,
+        on_submit   = function(text)
+            Config.setTopbarCustomText(text)
+            on_set(text)
+        end,
+    }
+end
 -- Single source of truth for the *full* action set (built-ins + externally
 -- registered actions, e.g. Custom Screens' "open_custom_screen:<id>" QAs —
 -- see infra/sui_custom_screens.lua). Config.ALL_ACTIONS only ever mirrors the
 -- built-ins, so every pool below is built from QA.allIds() instead.
 local QA        = require("features/sui_quickactions")
 local Arrange   = require("features/sui_arrange")
-local LabelOptions = require("features/library/sui_label_options")
 
 -- ---------------------------------------------------------------------------
 -- Installer function
@@ -413,17 +430,6 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
             end
         end
 
-        local function restartPrompt(text)
-            UIManager:show(ConfirmBox():new{
-                text        = text,
-                ok_text     = _("Restart"), cancel_text = _("Later"),
-                ok_callback = function()
-                    SUISettings:flush()
-                    UIManager:restartKOReader()
-                end,
-            })
-        end
-
         -- ── menu ─────────────────────────────────────────────────────────────
         local items = {
                 -- ── Subfolder: General ────────────────────────────────────────────
@@ -437,7 +443,7 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
                         callback     = function()
                             if getGeral() == "predefinido" then return end
                             setGeral("predefinido")
-                            restartPrompt(_("Pagination bar set to Default.\n\nRestart now?"))
+                            askRestart(_("Pagination bar set to Default.\n\nRestart now?"))
                         end,
                     },
                     {
@@ -448,7 +454,7 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
                         callback     = function()
                             if getGeral() == "navpager" then return end
                             setGeral("navpager")
-                            restartPrompt(_("Navpager enabled.\n\nRestart now?"))
+                            askRestart(_("Navpager enabled.\n\nRestart now?"))
                         end,
                     },
                     {
@@ -458,7 +464,7 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
                         callback     = function()
                             if getGeral() == "oculto" then return end
                             setGeral("oculto")
-                            restartPrompt(_("Pagination bar hidden.\n\nRestart now?"))
+                            askRestart(_("Pagination bar hidden.\n\nRestart now?"))
                         end,
                     },
                 },
@@ -544,7 +550,7 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
                         end,
                         callback       = function()
                             SUISettings:saveSetting("simpleui_bar_pagination_size", "xs")
-                            restartPrompt(_("Pagination bar size will change after restart.\n\nRestart now?"))
+                            askRestart(_("Pagination bar size will change after restart.\n\nRestart now?"))
                         end,
                     },
                     {
@@ -556,7 +562,7 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
                         end,
                         callback       = function()
                             SUISettings:saveSetting("simpleui_bar_pagination_size", "s")
-                            restartPrompt(_("Pagination bar size will change after restart.\n\nRestart now?"))
+                            askRestart(_("Pagination bar size will change after restart.\n\nRestart now?"))
                         end,
                     },
                     {
@@ -568,7 +574,7 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
                         end,
                         callback       = function()
                             SUISettings:saveSetting("simpleui_bar_pagination_size", "m")
-                            restartPrompt(_("Pagination bar size will change after restart.\n\nRestart now?"))
+                            askRestart(_("Pagination bar size will change after restart.\n\nRestart now?"))
                         end,
                     },
                 },
@@ -610,7 +616,7 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
         -- Custom Text item — toggle visibility via tap, edit text via long-press.
         do
             local k = "custom_text"
-            -- "Edit Custom Text" -- plain action item, opens InputDialog directly on tap.
+            -- "Edit Custom Text" -- plain action item, opens the text prompt on tap.
             items[#items + 1] = {
                 text_func = function()
                     local t = Config.getTopbarCustomText()
@@ -621,51 +627,24 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
                 end,
                 keep_menu_open = true,
                 callback = function()
-                    local dlg
-                    dlg = InputDialog():new{
-                        title       = _("Custom Text"),
-                        input       = Config.getTopbarCustomText(),
-                        description = string.format(N_("Text shown in the top bar.\nMaximum %d character.",
-                                      "Text shown in the top bar.\nMaximum %d characters.", Config.TOPBAR_CUSTOM_TEXT_MAX),
-                                      Config.TOPBAR_CUSTOM_TEXT_MAX),
-                        input_type  = "text",
-                        buttons     = {{
-                            {
-                                text     = _("Cancel"),
-                                id       = "close",
-                                callback = function() UIManager:close(dlg) end,
-                            },
-                            {
-                                text             = _("Set"),
-                                is_enter_default = true,
-                                callback         = function()
-                                    local text = dlg:getInputText()
-                                    Config.setTopbarCustomText(text)
-                                    UIManager:close(dlg)
-                                    -- Auto-enable when text is set and item is hidden.
-                                    if text ~= "" then
-                                        local cfg = getTopbarConfig()
-                                        if not cfg.order_center then cfg.order_center = {} end
-                                        if (cfg.side[k] or "hidden") == "hidden" then
-                                            cfg.side[k] = "right"
-                                        local new_left, new_center = {}, {}
-                                        for _, v in ipairs(cfg.order_left) do if v ~= k then new_left[#new_left + 1] = v end end
-                                        cfg.order_left = new_left
-                                        for _, v in ipairs(cfg.order_center) do if v ~= k then new_center[#new_center + 1] = v end end
-                                        cfg.order_center = new_center
-                                            local found = false
-                                            for _i, v in ipairs(cfg.order_right) do if v == k then found = true; break end end
-                                            if not found then cfg.order_right[#cfg.order_right + 1] = k end
-                                            saveTopbarConfig(cfg)
-                                        end
-                                    end
-                                    plugin:_scheduleRebuild()
-                                end,
-                            },
-                        }},
-                    }
-                    UIManager:show(dlg)
-                    dlg:onShowKeyboard()
+                    promptCustomText(function(text)
+                        -- Auto-enable when text is set and item is hidden.
+                        local cfg = getTopbarConfig()
+                        if text ~= "" and (cfg.side[k] or "hidden") == "hidden" then
+                            if not cfg.order_center then cfg.order_center = {} end
+                            cfg.side[k] = "right"
+                            local new_left, new_center = {}, {}
+                            for _, v in ipairs(cfg.order_left) do if v ~= k then new_left[#new_left + 1] = v end end
+                            cfg.order_left = new_left
+                            for _, v in ipairs(cfg.order_center) do if v ~= k then new_center[#new_center + 1] = v end end
+                            cfg.order_center = new_center
+                            local found = false
+                            for _i, v in ipairs(cfg.order_right) do if v == k then found = true; break end end
+                            if not found then cfg.order_right[#cfg.order_right + 1] = k end
+                            saveTopbarConfig(cfg)
+                        end
+                        plugin:_scheduleRebuild()
+                    end)
                 end,
                 separator = true,
                 sui_hidden = ctx_menu and ctx_menu.is_sui and true or nil,
@@ -827,14 +806,7 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
                 callback     = function()
                     local on = SUISettings:nilOrTrue("simpleui_topbar_enabled")
                     SUISettings:saveSetting("simpleui_topbar_enabled", not on)
-                    UIManager:show(ConfirmBox():new{
-                        text = string.format(_("Status Bar will be %s after restart.\n\nRestart now?"), on and _("disabled") or _("enabled")),
-                        ok_text = _("Restart"), cancel_text = _("Later"),
-                        ok_callback = function()
-                            SUISettings:flush()
-                            UIManager:restartKOReader()
-                        end,
-                    })
+                    askRestart(string.format(_("Status Bar will be %s after restart.\n\nRestart now?"), on and _("disabled") or _("enabled")))
                 end,
                 separator = true,
             },
@@ -883,28 +855,10 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
                                                     text = _("Edit Custom Text"),
                                                     icon = "edit",
                                                     on_tap = function()
-                                                        local InputDialog = require("ui/widget/inputdialog")
-                                                        local dlg
-                                                        dlg = InputDialog:new{
-                                                            title       = _("Custom Text"),
-                                                            input       = Config.getTopbarCustomText(),
-                                                            description = string.format(ctx_menu.N_("Text shown in the top bar.\nMaximum %d character.",
-                                                                          "Text shown in the top bar.\nMaximum %d characters.", Config.TOPBAR_CUSTOM_TEXT_MAX),
-                                                                          Config.TOPBAR_CUSTOM_TEXT_MAX),
-                                                            input_type  = "text",
-                                                            buttons     = {{
-                                                                { text = _("Cancel"), id = "close", callback = function() ctx_menu.UIManager:close(dlg) end },
-                                                                { text = _("Set"), is_enter_default = true, callback = function()
-                                                                    local text = dlg:getInputText()
-                                                                    Config.setTopbarCustomText(text)
-                                                                    ctx_menu.UIManager:close(dlg)
-                                                                    plugin:_scheduleRebuild()
-                                                                    ctx.repaint()
-                                                                end },
-                                                            }},
-                                                        }
-                                                        ctx_menu.UIManager:show(dlg)
-                                                        dlg:onShowKeyboard()
+                                                        promptCustomText(function()
+                                                            plugin:_scheduleRebuild()
+                                                            ctx.repaint()
+                                                        end)
                                                     end,
                                                 }
                                             }
@@ -1006,48 +960,29 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
                     }
                 end or nil,
             },
-            {
-                text_func = function()
-                    return _("Size")
-                end,
-                value_func = function() return Config.getTopbarSizePct() .. "%" end,
-                keep_menu_open = true,
-                callback = function()
-                    local SpinWidget = require("ui/widget/spinwidget")
-                    UIManager:show(SpinWidget:new{
-                        title_text    = _("Status Bar Size"),
-                        info_text     = _("Height of the top status bar.\n100% is the default size."),
-                        value         = Config.getTopbarSizePct(),
-                        value_min     = Config.TOPBAR_SIZE_MIN,
-                        value_max     = Config.TOPBAR_SIZE_MAX,
-                        value_step    = Config.TOPBAR_SIZE_STEP,
-                        unit          = "%",
-                        ok_text       = _("Apply"),
-                        cancel_text   = _("Cancel"),
-                        default_value = Config.TOPBAR_SIZE_DEF,
-                        callback      = function(spin)
-                            Config.setTopbarSizePct(spin.value)
-                            UI.invalidateDimCache()
-                            plugin:_rewrapAllWidgets()
-                            -- Topbar size is global chrome, not Homescreen-specific — refresh
-                            -- whichever screen(s) are actually live (Homescreen or a Custom
-                            -- Screen), not just the flat built-in-Homescreen instance.
-                            local ok_se, ScreenEngine = pcall(require, "engines/sui_screen_engine")
-                            if ok_se and ScreenEngine then ScreenEngine.refreshAllLiveImmediate(true) end
-                            -- Repaint the settings screen itself so this row's value_func
-                            -- picks up the new percentage now, not the next time it's opened.
-                            if ctx_menu and ctx_menu.refresh then ctx_menu.refresh() end
-                            UIManager:show(ConfirmBox():new{
-                                text       = _("A restart is required to apply the new bar size across all layouts.\n\nRestart now?"),
-                                ok_text    = _("Restart"),
-                                cancel_text = _("Later"),
-                                ok_callback = function()
-                                    SUISettings:flush()
-                                    UIManager:restartKOReader()
-                                end,
-                            })
-                        end,
-                    })
+            Config.makeSpinItem{
+                text_func    = function() return _("Size") end,
+                title        = _("Status Bar Size"),
+                info         = _("Height of the top status bar.\n100% is the default size."),
+                get          = Config.getTopbarSizePct,
+                value_min    = Config.TOPBAR_SIZE_MIN,
+                value_max    = Config.TOPBAR_SIZE_MAX,
+                value_step   = Config.TOPBAR_SIZE_STEP,
+                default_value= Config.TOPBAR_SIZE_DEF,
+                unit         = "%",
+                set          = function(value)
+                    Config.setTopbarSizePct(value)
+                    UI.invalidateDimCache()
+                    plugin:_rewrapAllWidgets()
+                    -- Topbar size is global chrome, not Homescreen-specific — refresh
+                    -- whichever screen(s) are actually live (Homescreen or a Custom
+                    -- Screen), not just the flat built-in-Homescreen instance.
+                    local ok_se, ScreenEngine = pcall(require, "engines/sui_screen_engine")
+                    if ok_se and ScreenEngine then ScreenEngine.refreshAllLiveImmediate(true) end
+                    -- Repaint the settings screen itself so this row's value_func
+                    -- picks up the new percentage now, not the next time it's opened.
+                    if ctx_menu and ctx_menu.refresh then ctx_menu.refresh() end
+                    askRestart(_("A restart is required to apply the new bar size across all layouts.\n\nRestart now?"))
                 end,
             },
             {
@@ -1148,14 +1083,7 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
                 callback     = function()
                     local on = SUISettings:nilOrTrue("simpleui_bar_enabled")
                     SUISettings:saveSetting("simpleui_bar_enabled", not on)
-                    UIManager:show(ConfirmBox():new{
-                        text = string.format(_("Navigation Bar will be %s after restart.\n\nRestart now?"), on and _("disabled") or _("enabled")),
-                        ok_text = _("Restart"), cancel_text = _("Later"),
-                        ok_callback = function()
-                            SUISettings:flush()
-                            UIManager:restartKOReader()
-                        end,
-                    })
+                    askRestart(string.format(_("Navigation Bar will be %s after restart.\n\nRestart now?"), on and _("disabled") or _("enabled")))
                 end,
                 separator = true,
             },
@@ -1171,48 +1099,29 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
                     layoutItem(_("Floating"),   "floating"),
                 },
             },
-            {
-                text_func = function()
-                    return _("Bar Size")
-                end,
-                value_func = function() return Config.getBarSizePct() .. "%" end,
-                keep_menu_open = true,
-                callback = function()
-                    local SpinWidget = require("ui/widget/spinwidget")
-                    UIManager:show(SpinWidget:new{
-                        title_text    = _("Navigation Bar Size"),
-                        info_text     = _("Height of the bottom navigation bar.\n100% is the default size."),
-                        value         = Config.getBarSizePct(),
-                        value_min     = Config.BAR_SIZE_MIN,
-                        value_max     = Config.BAR_SIZE_MAX,
-                        value_step    = Config.BAR_SIZE_STEP,
-                        unit          = "%",
-                        ok_text       = _("Apply"),
-                        cancel_text   = _("Cancel"),
-                        default_value = Config.BAR_SIZE_DEF,
-                        callback      = function(spin)
-                            Config.setBarSizePct(spin.value)
-                            UI.invalidateDimCache()
-                            plugin:_rewrapAllWidgets()
-                            -- Navbar size is global chrome, not Homescreen-specific — refresh
-                            -- whichever screen(s) are actually live (Homescreen or a Custom
-                            -- Screen), not just the flat built-in-Homescreen instance.
-                            local ok_se, ScreenEngine = pcall(require, "engines/sui_screen_engine")
-                            if ok_se and ScreenEngine then ScreenEngine.refreshAllLiveImmediate(true) end
-                            -- Repaint the settings screen itself so this row's value_func
-                            -- picks up the new percentage now, not the next time it's opened.
-                            if ctx_menu and ctx_menu.refresh then ctx_menu.refresh() end
-                            UIManager:show(ConfirmBox():new{
-                                text       = _("A restart is required to apply the new bar size across all layouts.\n\nRestart now?"),
-                                ok_text    = _("Restart"),
-                                cancel_text = _("Later"),
-                                ok_callback = function()
-                                    SUISettings:flush()
-                                    UIManager:restartKOReader()
-                                end,
-                            })
-                        end,
-                    })
+            Config.makeSpinItem{
+                text_func    = function() return _("Bar Size") end,
+                title        = _("Navigation Bar Size"),
+                info         = _("Height of the bottom navigation bar.\n100% is the default size."),
+                get          = Config.getBarSizePct,
+                value_min    = Config.BAR_SIZE_MIN,
+                value_max    = Config.BAR_SIZE_MAX,
+                value_step   = Config.BAR_SIZE_STEP,
+                default_value= Config.BAR_SIZE_DEF,
+                unit         = "%",
+                set          = function(value)
+                    Config.setBarSizePct(value)
+                    UI.invalidateDimCache()
+                    plugin:_rewrapAllWidgets()
+                    -- Navbar size is global chrome, not Homescreen-specific — refresh
+                    -- whichever screen(s) are actually live (Homescreen or a Custom
+                    -- Screen), not just the flat built-in-Homescreen instance.
+                    local ok_se, ScreenEngine = pcall(require, "engines/sui_screen_engine")
+                    if ok_se and ScreenEngine then ScreenEngine.refreshAllLiveImmediate(true) end
+                    -- Repaint the settings screen itself so this row's value_func
+                    -- picks up the new percentage now, not the next time it's opened.
+                    if ctx_menu and ctx_menu.refresh then ctx_menu.refresh() end
+                    askRestart(_("A restart is required to apply the new bar size across all layouts.\n\nRestart now?"))
                 end,
             },
             Config.makeScaleItem({
@@ -1799,16 +1708,6 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
                 end,
             }
         end
-        -- Offers a restart; changes that alter the Library layout need a rebuild.
-        local function askRestart(text)
-            SUISettings:flush()
-            UIManager:show(ConfirmBox():new{
-                text        = text,
-                ok_text     = _("Restart"),
-                cancel_text = _("Later"),
-                ok_callback = function() UIManager:restartKOReader() end,
-            })
-        end
         local function styleItem(label, key)
             return radioItem(label, key,
                 function() return titlebar().getStyle() end,
@@ -2202,17 +2101,26 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
             local qa_items = {}
             local function _moduleSettingsItems(_mod)
                 local list = type(_mod.getMenuItems) == "function" and (_mod.getMenuItems(ctx_menu) or {}) or {}
-                -- Top Margin + Column Width — same chrome as every other
+                -- Top Margin + Width and Position — same chrome as every other
                 -- module settings screen, see Config.appendModuleChromeItems.
                 Config.appendModuleChromeItems(list, {
-                    mod     = _mod,
-                    pfx     = ctx.pfx,
-                    refresh = ctx_menu.refresh,
+                    mod          = _mod,
+                    pfx          = ctx.pfx,
+                    refresh      = ctx_menu.refresh,
+                    layout_sheet = function()
+                        require("features/dialogs/sui_bento_sheet").show{
+                            mod_id     = _mod.id,
+                            pfx        = ctx.pfx,
+                            on_changed = function()
+                                if ctx_menu and ctx_menu.refresh then ctx_menu.refresh() end
+                            end,
+                        }
+                    end,
                 })
                 return list
             end
             for _loop_, mod in ipairs(Registry.list()) do
-                -- Every module gets a settings entry so Column width is reachable
+                -- Every module gets a settings entry so Width and Position is reachable
                 -- from the global menu as well as from long-press on the homescreen.
                 local _mod = mod
                 local text_fn = function()
@@ -2470,71 +2378,52 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
                             _applyFullLayoutRefresh()
                         end,
                     },
-                    {
-                        text_func = function()
-                            return _("Modules")
+                    Config.makeSpinItem{
+                        text_func    = function() return _("Modules") end,
+                        title        = _("Module Scale"),
+                        info         = function()
+                            return Config.isScaleLinked()
+                                and _("Scales all modules and labels together.\n100% is the default size.")
+                                or  _("Global scale for all modules.\nIndividual overrides in Module Settings take precedence.\n100% is the default size.")
                         end,
-                        value_func = function() return Config.getModuleScalePct() .. "%" end,
-                        keep_menu_open = true,
-                        callback = function()
-                            local SpinWidget = require("ui/widget/spinwidget")
-                            UIManager:show(SpinWidget:new{
-                                title_text    = _("Module Scale"),
-                                info_text     = Config.isScaleLinked()
-                                    and _("Scales all modules and labels together.\n100% is the default size.")
-                                    or  _("Global scale for all modules.\nIndividual overrides in Module Settings take precedence.\n100% is the default size."),
-                                value         = Config.getModuleScalePct(),
-                                value_min     = Config.SCALE_MIN,
-                                value_max     = Config.SCALE_MAX,
-                                value_step    = Config.SCALE_STEP,
-                                unit          = "%",
-                                ok_text       = _("Apply"),
-                                cancel_text   = _("Cancel"),
-                                default_value = Config.SCALE_DEF,
-                                callback = function(spin)
-                                    Config.setModuleScale(spin.value)
-                                    _applyFullLayoutRefresh()
-                                    if ctx and ctx.refresh then ctx.refresh() end
-                                end,
-                            })
+                        get          = Config.getModuleScalePct,
+                        value_min    = Config.SCALE_MIN,
+                        value_max    = Config.SCALE_MAX,
+                        value_step   = Config.SCALE_STEP,
+                        default_value= Config.SCALE_DEF,
+                        unit         = "%",
+                        set          = function(value)
+                            Config.setModuleScale(value)
+                            _applyFullLayoutRefresh()
+                            if ctx and ctx.refresh then ctx.refresh() end
                         end,
                     },
-                    {
-                        text_func      = function() return _("Labels") end,
-                        value_func     = function() return Config.getLabelScalePct() .. "%" end,
-                        keep_menu_open = true,
-                        callback = function()
-                            if Config.isScaleLinked() then
-                                UI.Notify.toast(_("Disable \"Lock Scale\" first to set a custom label scale."))
-                                return
-                            end
-                            local SpinWidget = require("ui/widget/spinwidget")
-                            local UIManager_ = require("ui/uimanager")
-                            UIManager_:show(SpinWidget:new{
-                                title_text    = _("Label Scale"),
-                                info_text     = _("Scales the section label text above each module.\n100% is the default size."),
-                                value         = Config.getLabelScalePct(),
-                                value_min     = Config.SCALE_MIN,
-                                value_max     = Config.SCALE_MAX,
-                                value_step    = Config.SCALE_STEP,
-                                unit          = "%",
-                                ok_text       = _("Apply"),
-                                cancel_text   = _("Cancel"),
-                                default_value = Config.SCALE_DEF,
-                                callback = function(spin)
-                                    Config.setLabelScale(spin.value)
-                                    _applyFullLayoutRefresh()
-                                    if ctx and ctx.refresh then ctx.refresh() end
-                                end,
-                            })
+                    Config.makeSpinItem{
+                        text_func    = function() return _("Labels") end,
+                        guard        = function()
+                            if not Config.isScaleLinked() then return true end
+                            UI.Notify.toast(_("Disable \"Lock Scale\" first to set a custom label scale."))
+                        end,
+                        title        = _("Label Scale"),
+                        info         = _("Scales the module label text above each module, on top of the size set in Style > Module Labels.\n100% is the default size."),
+                        get          = Config.getLabelScalePct,
+                        value_min    = Config.SCALE_MIN,
+                        value_max    = Config.SCALE_MAX,
+                        value_step   = Config.SCALE_STEP,
+                        default_value= Config.SCALE_DEF,
+                        unit         = "%",
+                        set          = function(value)
+                            Config.setLabelScale(value)
+                            _applyFullLayoutRefresh()
+                            if ctx and ctx.refresh then ctx.refresh() end
                         end,
                     },
                     {
                         text      = _("Reset to Default Scale"),
                         separator = true,
                         callback  = function()
-                            local ConfirmBox = require("ui/widget/confirmbox")
-                            UIManager:show(ConfirmBox:new{
+                            local Dialogs = require("features/dialogs/sui_dialogs")
+                            Dialogs.confirm{
                                 text    = _("Reset all scales to default (100%)? This cannot be undone."),
                                 ok_text = _("Reset"),
                                 ok_callback = function()
@@ -2544,7 +2433,7 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
                                     _applyFullLayoutRefresh()
                                     if ctx and ctx.refresh then ctx.refresh() end
                                 end,
-                            })
+                            }
                         end,
                     },
                 },
@@ -2734,8 +2623,7 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
                             _applyFullLayoutRefresh()
                         end,
                         on_save        = refreshHomescreen,
-                        lock_overlay   = ctx_menu and ctx_menu.lock_overlay,
-                        unlock_overlay = ctx_menu and ctx_menu.unlock_overlay,
+                        in_window      = ctx_menu and ctx_menu.is_sui,
                     }
                 end,
             },
@@ -2792,88 +2680,25 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
         item.sub_item_table_func = function()
             local items = Finished.appendRadioItems({}, refresh)
             items[#items].separator = true
-            items[#items + 1] = {
-                text_func      = function() return _("Intensity") end,
-                value_func     = function() return FC.getFadeAmountPct() .. "%" end,
-                enabled_func   = function() return Finished.isFaded() end,
-                keep_menu_open = true,
-                callback = function()
-                    local SpinWidget = require("ui/widget/spinwidget")
-                    UIManager:show(SpinWidget:new{
-                        title_text    = _("Fade Intensity"),
-                        info_text     = _("Fades finished book covers towards white.\n50% is the default."),
-                        value         = FC.getFadeAmountPct(),
-                        value_min     = FC.FADE_AMOUNT_MIN,
-                        value_max     = FC.FADE_AMOUNT_MAX,
-                        value_step    = FC.FADE_AMOUNT_STEP,
-                        unit          = "%",
-                        ok_text       = _("Apply"),
-                        cancel_text   = _("Cancel"),
-                        default_value = FC.FADE_AMOUNT_DEF,
-                        callback = function(spin)
-                            FC.setFadeAmountPct(spin.value)
-                            _refreshFC()
-                        end,
-                    })
+            items[#items + 1] = Config.makeSpinItem{
+                text_func    = function() return _("Intensity") end,
+                enabled_func = function() return Finished.isFaded() end,
+                title        = _("Fade Intensity"),
+                info         = _("Fades finished book covers towards white.\n50% is the default."),
+                get          = FC.getFadeAmountPct,
+                value_min    = FC.FADE_AMOUNT_MIN,
+                value_max    = FC.FADE_AMOUNT_MAX,
+                value_step   = FC.FADE_AMOUNT_STEP,
+                default_value= FC.FADE_AMOUNT_DEF,
+                unit         = "%",
+                set          = function(value)
+                    FC.setFadeAmountPct(value)
+                    _refreshFC()
                 end,
             }
             return items
         end
         return item
-    end
-
-    -- "Folder Name": visibility of the name label drawn inside the folder
-    -- cover, plus its layout, position, color, opacity and text size.
-    local function makeFolderNameItem(FC)
-        local function visible() return FC.getLabelMode() ~= "hidden" end
-        local function refresh()
-            FC.invalidateCache()
-            _refreshFC()
-        end
-
-        local getters = {
-            layout    = FC.getLabelLayout,
-            position  = FC.getLabelPosition,
-            color     = FC.getLabelColor,
-            opacity   = FC.getLabelOpacity,
-            scale_pct = FC.getLabelScalePct,
-        }
-        local setters = {
-            layout    = FC.setLabelLayout,
-            position  = FC.setLabelPosition,
-            color     = FC.setLabelColor,
-            opacity   = FC.setLabelOpacity,
-            scale_pct = FC.setLabelScale,
-        }
-
-        local items = {
-            Config.makeRadioSubmenuItem{
-                text    = _("Visibility"),
-                options = {
-                    { value = "overlay", label = _("Visible") },
-                    { value = "hidden",  label = _("Hidden") },
-                },
-                get     = FC.getLabelMode,
-                set     = FC.setLabelMode,
-                refresh = _refreshFC,
-            },
-        }
-        for _i, item in ipairs(LabelOptions.makeMenuItems{
-            get          = function(field) return getters[field]() end,
-            set          = function(field, value) setters[field](value) end,
-            refresh      = refresh,
-            enabled_func = visible,
-            size_title   = _("Folder Name Text Size"),
-            size_info    = _("Scale for the folder name overlay text.\n100% is the default size."),
-        }) do
-            items[#items + 1] = item
-        end
-
-        return {
-            text           = _("Folder Name"),
-            enabled_func   = function() return not FC.getShowTitleStrip() end,
-            sub_item_table = items,
-        }
     end
 
     -- "Group by Book Series": one checkbox per view whose lists can be grouped.
@@ -2915,10 +2740,199 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
         }
     end
 
+    -- "Library Captions": title (and author) strip below the library covers.
+    -- A restart applies it, since the strip patches the mosaic item at install.
+    local function makeLibraryCaptionsItem(FC, ctx_menu)
+        local SUIWallpaper = require("features/sui_wallpaper")
+
+        local function confirmRestart()
+            askRestart(_("Library captions changed.\n\nRestart now?"))
+        end
+
+        return {
+            text         = _("Library Captions"),
+            sub_item_table_func = function()
+                return {
+                    {
+                        text           = _("Show"),
+                        checked_func   = FC.getCaptionsShow,
+                        keep_menu_open = true,
+                        callback       = function()
+                            FC.setCaptionsShow(not FC.getCaptionsShow())
+                            confirmRestart()
+                        end,
+                    },
+                    Config.makeRadioSubmenuItem{
+                        text         = _("Content"),
+                        enabled_func = FC.getCaptionsShow,
+                        options      = {
+                            { value = "title",        label = _("Title") },
+                            { value = "title_author", label = _("Title and Author") },
+                        },
+                        get          = FC.getCaptionsContent,
+                        set          = FC.setCaptionsContent,
+                        refresh      = confirmRestart,
+                    },
+                    Config.makeSurfaceMenu{
+                        surface       = SUIWallpaper.COVER_STRIP,
+                        enabled_func  = FC.getCaptionsShow,
+                        with_strength = SUIWallpaper.styleGetWallpaperShowInFM,
+                        refresh       = function(touchmenu)
+                            _refreshFC()
+                            if ctx_menu and ctx_menu.refresh then
+                                ctx_menu.refresh()
+                            elseif touchmenu and touchmenu.updateItems then
+                                touchmenu:updateItems()
+                            end
+                        end,
+                    },
+                }
+            end,
+        }
+    end
+
+    -- "Cover Shadow": one checkbox per surface that draws shadowed covers.
+    local function makeCoverShadowItem()
+        return {
+            text = _("Cover Shadow"),
+            sub_item_table_func = function()
+                local SUIStyle = require("features/sui_style")
+                -- One checkbox per surface; `refresh` redraws that surface.
+                local function scopeItem(label, scope, refresh)
+                    return {
+                        text           = label,
+                        checked_func   = function() return SUIStyle.coverShadowEnabled(scope) end,
+                        keep_menu_open = true,
+                        callback       = function()
+                            SUIStyle.setCoverShadowEnabled(scope, not SUIStyle.coverShadowEnabled(scope))
+                            refresh()
+                        end,
+                    }
+                end
+                return {
+                    scopeItem(_("Library"), SUIStyle.SHADOW_LIBRARY, function()
+                        local ok_fc, FC = pcall(require, "features/library/sui_foldercovers")
+                        if ok_fc and FC then FC.invalidateCache() end
+                        _refreshFC()
+                    end),
+                    scopeItem(_("Modules"), SUIStyle.SHADOW_MODULES, _applyFullLayoutRefresh),
+                }
+            end,
+        }
+    end
+
+    -- Style → Covers: the look of covers and their badges, shared by the
+    -- library and the home screen modules.
+    local function makeCoversMenuItems(ctx_menu)
+        local ok_fc, FC = pcall(require, "features/library/sui_foldercovers")
+        if not ok_fc or not FC then return {} end
+        local CE = require("features/sui_cover_elements")
+
+        -- A changed badge default redraws the library and the home screen.
+        local function refreshBadges()
+            FC.invalidateCache()
+            _refreshFC()
+            refreshHomescreen()
+        end
+
+        local function refreshFolderCovers()
+            FC.invalidateCache()
+            _refreshFC()
+        end
+
+        -- The stack style also shapes the Collections module, so the home
+        -- screen is redrawn along with the library.
+        local function refreshFolderStack()
+            refreshFolderCovers()
+            _applyFullLayoutRefresh()
+        end
+
+        -- Folders: library settings vs module settings. Library folder-name
+        -- options are superseded by captions when those are on.
+        local folders = {
+            text         = _("Folders"),
+            enabled_func = function() return FC.isEnabled() end,
+            sub_item_table_func = function()
+                local all = CE.makeFolderCoversItems{
+                    refresh_cover   = refreshFolderCovers,
+                    refresh_stack   = refreshFolderStack,
+                    refresh_name    = refreshFolderCovers,
+                    name_value_func = function()
+                        if FC.getCaptionsShow() then return _("Shown in captions") end
+                        return CE.isShown("name") and _("On") or _("Off")
+                    end,
+                }
+                -- all = { Cover Type, Book Stack, Folder Name }
+                local cover_type, book_stack, folder_name = all[1], all[2], all[3]
+
+                if folder_name then
+                    folder_name.enabled_func = function() return not FC.getCaptionsShow() end
+                    local prev_cb = folder_name.callback
+                    folder_name.callback = function()
+                        if FC.getCaptionsShow() then
+                            local UIManager = require("ui/uimanager")
+                            local InfoMessage = require("ui/widget/infomessage")
+                            UIManager:show(InfoMessage:new{
+                                text = _("Library captions are enabled. Folder names are shown in the caption strip under each cover instead of on the cover."),
+                            })
+                            return
+                        end
+                        if prev_cb then prev_cb() end
+                    end
+                end
+
+                return {
+                    {
+                        text                = _("Library"),
+                        sub_item_table_func = function()
+                            return { cover_type, book_stack, folder_name }
+                        end,
+                    },
+                    {
+                        text                = _("Modules"),
+                        -- Only the shared stack *style* applies to modules.
+                        -- Show/Hide of the stack is library-only (CE.isShown
+                        -- "stack"); modules hide their pile via each module's
+                        -- own settings (GroupCell hide_pile).
+                        sub_item_table_func = function()
+                            local SUIStyle = require("features/sui_style")
+                            return {
+                                Config.makeRadioSubmenuItem{
+                                    text    = _("Book Stack Style"),
+                                    options = {
+                                        { value = SUIStyle.FOLDER_STACK_DEFAULT, label = _("Default") },
+                                        { value = SUIStyle.FOLDER_STACK_CLASSIC, label = _("Classic") },
+                                    },
+                                    get     = function() return SUIStyle.getFolderStackStyle() end,
+                                    set     = function(v) SUIStyle.setFolderStackStyle(v) end,
+                                    refresh = refreshFolderStack,
+                                },
+                            }
+                        end,
+                    },
+                }
+            end,
+        }
+
+        local captions = makeLibraryCaptionsItem(FC, ctx_menu)
+        captions.enabled_func = function() return FC.isEnabled() end
+
+        return {
+            {
+                text                = _("Library Badges"),
+                sub_item_table_func = function() return CE.makeBadgesItems{ refresh = refreshBadges } end,
+            },
+            folders,
+            makeFinishedBooksItem(FC),
+            makeCoverShadowItem(),
+            captions,
+        }
+    end
+
     local function makeLibraryMenuItems(ctx_menu)
         local ok_fc, FC = pcall(require, "features/library/sui_foldercovers")
         if not ok_fc or not FC then return {} end
-        local SUIWallpaper = require("features/sui_wallpaper")
+
         return {
             -- ── Enable Library Custom Covers ────────────────────────────
             {
@@ -3003,476 +3017,6 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
                 text         = _("Cover Settings"),
                 enabled_func = function() return FC.isEnabled() end,
                 sub_item_table = {
-                    -- ── Folder Cover Type ──────────────────────────────────────
-                    {
-                        text         = _("Folder Cover Type"),
-                        sub_item_table = {
-                            {
-                                text           = _("Single Cover"),
-                                radio          = true,
-                                checked_func   = function() return FC.getFolderStyle() == "single" end,
-                                keep_menu_open = true,
-                                callback       = function()
-                                    FC.setFolderStyle("single")
-                                    FC.invalidateCache()
-                                    _refreshFC()
-                                end,
-                            },
-                            {
-                                text           = _("4-Cover Grid (Mosaic View Only)"),
-                                radio          = true,
-                                checked_func   = function() return FC.getFolderStyle() == "quad" end,
-                                keep_menu_open = true,
-                                callback       = function()
-                                    FC.setFolderStyle("quad")
-                                    FC.invalidateCache()
-                                    _refreshFC()
-                                end,
-                            },
-                            {
-                                text           = _("Auto (Single ↔ 4-Cover Grid)"),
-                                radio          = true,
-                                checked_func   = function() return FC.getFolderStyle() == "auto" end,
-                                keep_menu_open = true,
-                                callback       = function()
-                                    FC.setFolderStyle("auto")
-                                    FC.invalidateCache()
-                                    _refreshFC()
-                                end,
-                            },
-                        },
-                    },
-                    -- ── Overlays ───────────────────────────────────────────────
-                    {
-                        text         = _("Overlays"),
-                        sub_item_table = {
-                            -- ── Badges ────────────────────────────────────────
-                            {
-                                text         = _("Badges"),
-                                sub_item_table = {
-                                    -- ── Size ──────────────────────────────────────────────
-                                    Config.makeBadgeSizeItem{
-                                        text_func = function() return _("Size") end,
-                                        separator = true,
-                                        info      = _("Scale for the library badges (progress, pages, etc.).\n100% is the default size."),
-                                        get       = FC.getBadgeScalePct,
-                                        set       = FC.setBadgeScale,
-                                        refresh   = function()
-                                            FC.invalidateCache()
-                                            _refreshFC()
-                                        end,
-                                    },
-
-                                    -- ── Number of Books in Folder ─────────────────────────
-                                    {
-                                        text_func  = function() return _("Number of Books in Folder") end,
-                                        value_func = function()
-                                            if FC.getBadgeHidden() then return _("Hidden") end
-                                            return FC.getBadgePosition() == "top" and _("Top") or _("Bottom")
-                                        end,
-                                        sub_item_table = {
-                                            {
-                                                text_func  = function() return _("Position") end,
-                                                value_func = function()
-                                                    if FC.getBadgeHidden() then return _("Hidden") end
-                                                    return FC.getBadgePosition() == "top" and _("Top") or _("Bottom")
-                                                end,
-                                                sub_item_table = {
-                                                    {
-                                                        text           = _("Top"),
-                                                        radio          = true,
-                                                        checked_func   = function() return not FC.getBadgeHidden() and FC.getBadgePosition() == "top" end,
-                                                        keep_menu_open = true,
-                                                        callback       = function()
-                                                            FC.setBadgeHidden(false)
-                                                            FC.setBadgePosition("top")
-                                                            FC.invalidateCache(); _refreshFC()
-                                                        end,
-                                                    },
-                                                    {
-                                                        text           = _("Bottom"),
-                                                        radio          = true,
-                                                        checked_func   = function() return not FC.getBadgeHidden() and FC.getBadgePosition() == "bottom" end,
-                                                        keep_menu_open = true,
-                                                        callback       = function()
-                                                            FC.setBadgeHidden(false)
-                                                            FC.setBadgePosition("bottom")
-                                                            FC.invalidateCache(); _refreshFC()
-                                                        end,
-                                                    },
-                                                    {
-                                                        text           = _("Hidden"),
-                                                        radio          = true,
-                                                        checked_func   = function() return FC.getBadgeHidden() end,
-                                                        keep_menu_open = true,
-                                                        callback       = function()
-                                                            FC.setBadgeHidden(true)
-                                                            FC.invalidateCache(); _refreshFC()
-                                                        end,
-                                                    },
-                                                },
-                                            },
-                                            {
-                                                text_func    = function() return _("Color") end,
-                                                value_func   = function()
-                                                    return FC.getBadgeColorFolder() == "dark" and _("Dark") or _("Light")
-                                                end,
-                                                enabled_func = function() return not FC.getBadgeHidden() end,
-                                                sub_item_table = {
-                                                    {
-                                                        text           = _("Dark"),
-                                                        radio          = true,
-                                                        checked_func   = function() return FC.getBadgeColorFolder() == "dark" end,
-                                                        keep_menu_open = true,
-                                                        callback       = function() FC.setBadgeColorFolder("dark"); FC.invalidateCache(); _refreshFC() end,
-                                                    },
-                                                    {
-                                                        text           = _("Light"),
-                                                        radio          = true,
-                                                        checked_func   = function() return FC.getBadgeColorFolder() == "light" end,
-                                                        keep_menu_open = true,
-                                                        callback       = function() FC.setBadgeColorFolder("light"); FC.invalidateCache(); _refreshFC() end,
-                                                    },
-                                                },
-                                            },
-                                        },
-                                    },
-                                    -- ── Number of Pages ───────────────────────────────────
-                                    {
-                                        text_func  = function() return _("Number of Pages") end,
-                                        value_func = function()
-                                            return FC.getOverlayPages() and _("Visible") or _("Hidden")
-                                        end,
-                                        sub_item_table = {
-                                            {
-                                                text_func  = function() return _("Visibility") end,
-                                                value_func = function()
-                                                    return FC.getOverlayPages() and _("Visible") or _("Hidden")
-                                                end,
-                                                sub_item_table = {
-                                                    {
-                                                        text           = _("Visible"),
-                                                        radio          = true,
-                                                        checked_func   = function() return FC.getOverlayPages() end,
-                                                        keep_menu_open = true,
-                                                        callback       = function() FC.setOverlayPages(true); FC.invalidateCache(); _refreshFC() end,
-                                                    },
-                                                    {
-                                                        text           = _("Hidden"),
-                                                        radio          = true,
-                                                        checked_func   = function() return not FC.getOverlayPages() end,
-                                                        keep_menu_open = true,
-                                                        callback       = function() FC.setOverlayPages(false); FC.invalidateCache(); _refreshFC() end,
-                                                    },
-                                                },
-                                            },
-                                            {
-                                                text_func    = function() return _("Color") end,
-                                                value_func   = function()
-                                                    return FC.getBadgeColorPages() == "dark" and _("Dark") or _("Light")
-                                                end,
-                                                enabled_func = function() return FC.getOverlayPages() end,
-                                                sub_item_table = {
-                                                    {
-                                                        text           = _("Dark"),
-                                                        radio          = true,
-                                                        checked_func   = function() return FC.getBadgeColorPages() == "dark" end,
-                                                        keep_menu_open = true,
-                                                        callback       = function() FC.setBadgeColorPages("dark"); FC.invalidateCache(); _refreshFC() end,
-                                                    },
-                                                    {
-                                                        text           = _("Light"),
-                                                        radio          = true,
-                                                        checked_func   = function() return FC.getBadgeColorPages() == "light" end,
-                                                        keep_menu_open = true,
-                                                        callback       = function() FC.setBadgeColorPages("light"); FC.invalidateCache(); _refreshFC() end,
-                                                    },
-                                                },
-                                            },
-                                        },
-                                    },
-                                    -- ── Series Index ──────────────────────────────────────
-                                    {
-                                        text_func  = function() return _("Series Index") end,
-                                        value_func = function()
-                                            return FC.getOverlaySeries() and _("Visible") or _("Hidden")
-                                        end,
-                                        sub_item_table = {
-                                            {
-                                                text_func  = function() return _("Visibility") end,
-                                                value_func = function()
-                                                    return FC.getOverlaySeries() and _("Visible") or _("Hidden")
-                                                end,
-                                                sub_item_table = {
-                                                    {
-                                                        text           = _("Visible"),
-                                                        radio          = true,
-                                                        checked_func   = function() return FC.getOverlaySeries() end,
-                                                        keep_menu_open = true,
-                                                        callback       = function() FC.setOverlaySeries(true); FC.invalidateCache(); _refreshFC() end,
-                                                    },
-                                                    {
-                                                        text           = _("Hidden"),
-                                                        radio          = true,
-                                                        checked_func   = function() return not FC.getOverlaySeries() end,
-                                                        keep_menu_open = true,
-                                                        callback       = function() FC.setOverlaySeries(false); FC.invalidateCache(); _refreshFC() end,
-                                                    },
-                                                },
-                                            },
-                                            {
-                                                text_func    = function() return _("Color") end,
-                                                value_func   = function()
-                                                    return FC.getBadgeColorSeries() == "dark" and _("Dark") or _("Light")
-                                                end,
-                                                enabled_func = function() return FC.getOverlaySeries() end,
-                                                sub_item_table = {
-                                                    {
-                                                        text           = _("Dark"),
-                                                        radio          = true,
-                                                        checked_func   = function() return FC.getBadgeColorSeries() == "dark" end,
-                                                        keep_menu_open = true,
-                                                        callback       = function() FC.setBadgeColorSeries("dark"); FC.invalidateCache(); _refreshFC() end,
-                                                    },
-                                                    {
-                                                        text           = _("Light"),
-                                                        radio          = true,
-                                                        checked_func   = function() return FC.getBadgeColorSeries() == "light" end,
-                                                        keep_menu_open = true,
-                                                        callback       = function() FC.setBadgeColorSeries("light"); FC.invalidateCache(); _refreshFC() end,
-                                                    },
-                                                },
-                                            },
-                                        },
-                                    },
-                                    -- ── Progress ──────────────────────────────────────────
-                                    {
-                                        text_func  = function() return _("Progress") end,
-                                        value_func = function()
-                                            local m = FC.getProgressMode()
-                                            if m == "banner" then return _("Banner")
-                                            elseif m == "native" then return _("Native")
-                                            else return _("None") end
-                                        end,
-                                        sub_item_table = {
-                                            {
-                                                text_func  = function() return _("Type") end,
-                                                value_func = function()
-                                                    local m = FC.getProgressMode()
-                                                    if m == "banner" then return _("Banner")
-                                                    elseif m == "native" then return _("Native")
-                                                    else return _("None") end
-                                                end,
-                                                sub_item_table = {
-                                                    {
-                                                        text           = _("Banner"),
-                                                        radio          = true,
-                                                        checked_func   = function() return FC.getProgressMode() == "banner" end,
-                                                        keep_menu_open = true,
-                                                        callback       = function() FC.setProgressMode("banner"); FC.invalidateCache(); _refreshFC() end,
-                                                    },
-                                                    {
-                                                        text           = _("Native"),
-                                                        radio          = true,
-                                                        checked_func   = function() return FC.getProgressMode() == "native" end,
-                                                        keep_menu_open = true,
-                                                        callback       = function() FC.setProgressMode("native"); FC.invalidateCache(); _refreshFC() end,
-                                                    },
-                                                    {
-                                                        text           = _("None"),
-                                                        radio          = true,
-                                                        checked_func   = function() return FC.getProgressMode() == "none" end,
-                                                        keep_menu_open = true,
-                                                        callback       = function() FC.setProgressMode("none"); FC.invalidateCache(); _refreshFC() end,
-                                                    },
-                                                },
-                                            },
-                                            {
-                                                text_func    = function() return _("Color") end,
-                                                value_func   = function()
-                                                    return FC.getBadgeColorProgress() == "dark" and _("Dark") or _("Light")
-                                                end,
-                                                enabled_func = function() return FC.getProgressMode() ~= "none" end,
-                                                sub_item_table = {
-                                                    {
-                                                        text           = _("Dark"),
-                                                        radio          = true,
-                                                        checked_func   = function() return FC.getBadgeColorProgress() == "dark" end,
-                                                        keep_menu_open = true,
-                                                        callback       = function() FC.setBadgeColorProgress("dark"); FC.invalidateCache(); _refreshFC() end,
-                                                    },
-                                                    {
-                                                        text           = _("Light"),
-                                                        radio          = true,
-                                                        checked_func   = function() return FC.getBadgeColorProgress() == "light" end,
-                                                        keep_menu_open = true,
-                                                        callback       = function() FC.setBadgeColorProgress("light"); FC.invalidateCache(); _refreshFC() end,
-                                                    },
-                                                },
-                                            },
-                                        },
-                                    },
-                                    -- ── New Book ──────────────────────────────────────────
-                                    {
-                                        text_func  = function() return _("New Book") end,
-                                        value_func = function()
-                                            local m = FC.getNewMode()
-                                            if m == "badge" then return _("Badge")
-                                            elseif m == "ribbon" then return _("Ribbon")
-                                            else return _("None") end
-                                        end,
-                                        sub_item_table = {
-                                            {
-                                                text_func  = function() return _("Type") end,
-                                                value_func = function()
-                                                    local m = FC.getNewMode()
-                                                    if m == "badge" then return _("Badge")
-                                                    elseif m == "ribbon" then return _("Ribbon")
-                                                    else return _("None") end
-                                                end,
-                                                sub_item_table = {
-                                                    {
-                                                        text           = _("Badge"),
-                                                        radio          = true,
-                                                        checked_func   = function() return FC.getNewMode() == "badge" end,
-                                                        keep_menu_open = true,
-                                                        callback       = function() FC.setNewMode("badge"); FC.invalidateCache(); _refreshFC() end,
-                                                    },
-                                                    {
-                                                        text           = _("Ribbon"),
-                                                        radio          = true,
-                                                        checked_func   = function() return FC.getNewMode() == "ribbon" end,
-                                                        keep_menu_open = true,
-                                                        callback       = function() FC.setNewMode("ribbon"); FC.invalidateCache(); _refreshFC() end,
-                                                    },
-                                                    {
-                                                        text           = _("None"),
-                                                        radio          = true,
-                                                        checked_func   = function() return FC.getNewMode() == "none" end,
-                                                        keep_menu_open = true,
-                                                        callback       = function() FC.setNewMode("none"); FC.invalidateCache(); _refreshFC() end,
-                                                    },
-                                                },
-                                            },
-                                            {
-                                                text_func    = function() return _("Color") end,
-                                                value_func   = function()
-                                                    return FC.getBadgeColorNew() == "dark" and _("Dark") or _("Light")
-                                                end,
-                                                enabled_func = function() return FC.getNewMode() ~= "none" end,
-                                                sub_item_table = {
-                                                    {
-                                                        text           = _("Dark"),
-                                                        radio          = true,
-                                                        checked_func   = function() return FC.getBadgeColorNew() == "dark" end,
-                                                        keep_menu_open = true,
-                                                        callback       = function() FC.setBadgeColorNew("dark"); FC.invalidateCache(); _refreshFC() end,
-                                                    },
-                                                    {
-                                                        text           = _("Light"),
-                                                        radio          = true,
-                                                        checked_func   = function() return FC.getBadgeColorNew() == "light" end,
-                                                        keep_menu_open = true,
-                                                        callback       = function() FC.setBadgeColorNew("light"); FC.invalidateCache(); _refreshFC() end,
-                                                    },
-                                                },
-                                            },
-                                        },
-                                    },
-                                },
-                            },
-                            makeFinishedBooksItem(FC),
-                            makeFolderNameItem(FC),
-                            -- ── Title and Author Below Covers ─────────────────────────────────
-                            {
-                                text         = _("Title and Author Below Covers"),
-                                sub_item_table_func = function() return appendItem({
-                                    {
-                                        text           = _("Off"),
-                                        radio          = true,
-                                        checked_func   = function()
-                                            return not FC.getShowTitleStrip() and not FC.getShowAuthorStrip()
-                                        end,
-                                        keep_menu_open = true,
-                                        callback       = function()
-                                            if FC.getShowTitleStrip() or FC.getShowAuthorStrip() then
-                                                FC.setShowTitleStrip(false)
-                                                FC.setShowAuthorStrip(false)
-                                                local CB = ctx_menu and ctx_menu.ConfirmBox or ConfirmBox()
-                                                local UIM = ctx_menu and ctx_menu.UIManager or UIManager
-                                                UIM:show(CB:new{
-                                                    text        = _("Title strip disabled.\n\nRestart now?"),
-                                                    ok_text     = _("Restart"), cancel_text = _("Later"),
-                                                    ok_callback = function()
-                                                        SUISettings:flush()
-                                                        UIM:restartKOReader()
-                                                    end,
-                                                })
-                                            end
-                                        end,
-                                    },
-                                    {
-                                        text           = _("Title only"),
-                                        radio          = true,
-                                        checked_func   = function()
-                                            return FC.getShowTitleStrip() and not FC.getShowAuthorStrip()
-                                        end,
-                                        keep_menu_open = true,
-                                        callback       = function()
-                                            FC.setShowTitleStrip(true)
-                                            FC.setShowAuthorStrip(false)
-                                            local CB = ctx_menu and ctx_menu.ConfirmBox or ConfirmBox()
-                                            local UIM = ctx_menu and ctx_menu.UIManager or UIManager
-                                            UIM:show(CB:new{
-                                                text        = _("Title strip enabled.\n\nRestart now?"),
-                                                ok_text     = _("Restart"), cancel_text = _("Later"),
-                                                ok_callback = function()
-                                                    SUISettings:flush()
-                                                    UIM:restartKOReader()
-                                                end,
-                                            })
-                                        end,
-                                    },
-                                    {
-                                        text           = _("Title and Author"),
-                                        radio          = true,
-                                        checked_func   = function()
-                                            return FC.getShowTitleStrip() and FC.getShowAuthorStrip()
-                                        end,
-                                        keep_menu_open = true,
-                                        callback       = function()
-                                            FC.setShowTitleStrip(true)
-                                            FC.setShowAuthorStrip(true)
-                                            local CB = ctx_menu and ctx_menu.ConfirmBox or ConfirmBox()
-                                            local UIM = ctx_menu and ctx_menu.UIManager or UIManager
-                                            UIM:show(CB:new{
-                                                text        = _("Title and author strip enabled.\n\nRestart now?"),
-                                                ok_text     = _("Restart"), cancel_text = _("Later"),
-                                                ok_callback = function()
-                                                    SUISettings:flush()
-                                                    UIM:restartKOReader()
-                                                end,
-                                            })
-                                        end,
-                                    },
-                                }, Config.makeSurfaceMenu{
-                                    surface      = SUIWallpaper.COVER_STRIP,
-                                    enabled_func = function()
-                                        return FC.getShowTitleStrip() or FC.getShowAuthorStrip()
-                                    end,
-                                    with_strength = SUIWallpaper.styleGetWallpaperShowInFM,
-                                    refresh      = function(touchmenu)
-                                        _refreshFC()
-                                        if ctx_menu and ctx_menu.refresh then
-                                            ctx_menu.refresh()
-                                        elseif touchmenu and touchmenu.updateItems then
-                                            touchmenu:updateItems()
-                                        end
-                                    end,
-                                }) end,
-                            },
-                        },
-                    },
                     -- ── Uniformize Covers (2:3) ────────────────────────────────
                     {
                         text           = _("Uniformize Covers (2:3)"),
@@ -3488,48 +3032,6 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
                         checked_func   = function() return FC.getHideUnderline() end,
                         keep_menu_open = true,
                         callback       = function() FC.setHideUnderline(not FC.getHideUnderline()); _refreshFC() end,
-                    },
-                    {
-                        text = _("Folder Book Stack"),
-                        sub_item_table_func = function()
-                            local SUIStyle = require("features/sui_style")
-                            -- The style also shapes the Collections module, so
-                            -- redraw the home screen along with the library.
-                            local function styleItem(label, style)
-                                return {
-                                    text           = label,
-                                    radio          = true,
-                                    checked_func   = function() return SUIStyle.getFolderStackStyle() == style end,
-                                    keep_menu_open = true,
-                                    callback       = function()
-                                        SUIStyle.setFolderStackStyle(style)
-                                        FC.invalidateCache()
-                                        _refreshFC()
-                                        _applyFullLayoutRefresh()
-                                    end,
-                                }
-                            end
-                            return {
-                                {
-                                    text           = _("Hide"),
-                                    checked_func   = function() return FC.getHidePile() end,
-                                    keep_menu_open = true,
-                                    callback       = function()
-                                        FC.setHidePile(not FC.getHidePile())
-                                        FC.invalidateCache()
-                                        _refreshFC()
-                                    end,
-                                },
-                                {
-                                    text         = _("Style"),
-                                    enabled_func = function() return not FC.getHidePile() end,
-                                    sub_item_table = {
-                                        styleItem(_("Default"), SUIStyle.FOLDER_STACK_DEFAULT),
-                                        styleItem(_("Classic"), SUIStyle.FOLDER_STACK_CLASSIC),
-                                    },
-                                },
-                            }
-                        end,
                     },
                     {
                         text           = _("Placeholder Cover for Bookless Folders"),
@@ -3616,7 +3118,8 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
 
                     local fc = fm.file_chooser
                     if mosaic_item and fc and type(mosaic_item.sub_item_table) == "table" then
-                        -- Entries keep their native dialogs. Each row gets a
+                        -- Entries keep their native dialogs, drawn as sheets
+                        -- above this window. Each row gets a
                         -- static label and shows the current size as its value
                         -- (see the row title/value convention in
                         -- engines/sui_window.lua). Defaults mirror the native ones.
@@ -3641,6 +3144,10 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
                             entry.value_func     = row.value
                             entry.mandatory_func = row.value
                             entry.separator      = nil
+                            local native_callback = entry.callback
+                            entry.callback = function(...)
+                                return NativeWidgets().showOverWindows(native_callback, ...)
+                            end
                             filtered[#filtered + 1] = entry
                         end
                         table.insert(items, {
@@ -3657,8 +3164,198 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
     end
     plugin.makeLibraryMenuItems = makeLibraryMenuItems
 
-    plugin.makeStyleMenuItems = function(ctx_menu)
+    -- Redraws what is painted in the palette colours after one of them changed:
+    -- every bar and the Home Screen when a surface takes the colour as its tone
+    -- (`surfaces`), else the navigation bars and the Home Screen; the Library
+    -- too when `library` is true.
+    local function refreshPalette(surfaces, library)
+        UI.invalidateDimCache()
+        if surfaces then
+            _applyFullLayoutRefresh({ keep_wallpaper = true })
+        else
+            plugin:_rebuildAllNavbars()
+            refreshHomescreen()
+        end
+        require("screens/sui_titlebar").refreshAccent()
+        if library then _refreshFC() end
+    end
+
+    -- Diameter of the disc ending a colour row, relative to the body font size.
+    local COLOR_DISC_SCALE = 1.4
+
+    -- Row that opens the colour picker for one palette colour. `spec`:
+    --   text, window  title of the row and picker, and name of the picker window
+    --   clear_text    label of the picker button that clears the colour
+    --   get_hex       the stored "#RRGGBB", or nil while none is set
+    --   unset_text    function returning what the row shows while none is set
+    --   apply         function(hex | nil) storing the choice and redrawing what uses it
+    local function makeColorItem(ctx_menu, spec)
+        local function openPicker()
+            require("features/sui_accent_picker").show{
+                title      = spec.text,
+                name       = spec.window,
+                hex        = spec.get_hex(),
+                clear_text = spec.clear_text,
+                on_apply   = function(hex)
+                    spec.apply(hex)
+                    if ctx_menu and ctx_menu.refresh then ctx_menu.refresh() end
+                end,
+            }
+        end
         return {
+            text           = spec.text,
+            keep_menu_open = true,
+            callback       = openPicker,
+            mandatory_func = function() return spec.get_hex() or spec.unset_text() end,
+            -- In a window the row ends with a disc showing the colour, or with
+            -- text while none is set.
+            sui_build      = ctx_menu and ctx_menu.is_sui and function(ctx, _item)
+                local SUIStyle = require("features/sui_style")
+                local hex      = spec.get_hex()
+                local size     = math.floor(ctx.SZ(SUIStyle.FS_BODY) * COLOR_DISC_SCALE)
+                return require("engines/sui_window").ListRow{
+                    title        = _item.text,
+                    inner_w      = ctx.inner_w,
+                    right_widget = hex and SUIStyle.buildColorChip(size, size, Accent.toColor(hex)) or nil,
+                    right_value  = not hex and spec.unset_text() or nil,
+                    on_tap       = openPicker,
+                }
+            end or nil,
+        }
+    end
+
+    -- Style > Colors: the accent of the active controls and the secondary
+    -- colour of the surfaces.
+    local function makeColorItems(ctx_menu)
+        local SUIStyle = require("features/sui_style")
+        return {
+            makeColorItem(ctx_menu, {
+                text         = _("Accent Color"),
+                window       = "sui_win_accent",
+                clear_text   = _("Clear"),
+                get_hex      = Accent.getHex,
+                unset_text   = function() return _("Not set") end,
+                apply        = function(hex)
+                    local first = hex ~= nil and Accent.getHex() == nil
+                    Accent.setHex(hex)
+                    -- Setting the first accent moves the gray surfaces to the secondary.
+                    local adopted = first and Accent.isEnabled() and Backdrop.adoptSecondary()
+                    -- A secondary that follows the accent changes with it. Library
+                    -- badges, folder names and captions are rebuilt with the new colour.
+                    local follows = not Accent.isSecondaryCustom()
+                    refreshPalette(
+                        adopted
+                            or Backdrop.usesTone(Backdrop.TONE.ACCENT)
+                            or follows and Backdrop.usesTone(Backdrop.TONE.SECONDARY),
+                        true)
+                end,
+            }),
+            makeColorItem(ctx_menu, {
+                text         = _("Secondary Color"),
+                window       = "sui_win_secondary",
+                clear_text   = _("Follow accent"),
+                get_hex      = function() return Accent.isSecondaryCustom() and Accent.getSecondaryHex() or nil end,
+                unset_text   = function()
+                    return Accent.getHex() and _("Follows accent") or _("Not set")
+                end,
+                apply        = function(hex)
+                    Accent.setSecondaryHex(hex)
+                    if SUIStyle.usesColor("secondary") then
+                        refreshPalette(Backdrop.usesTone(Backdrop.TONE.SECONDARY), true)
+                    end
+                end,
+            }),
+        }
+    end
+
+    plugin.makeStyleMenuItems = function(ctx_menu)
+        -- Name of the UI font in use, or "Default".
+        local function uiFontValue()
+            if not SUISettings:isTrue("simpleui_ui_font_enabled") then return _("Default") end
+            return SUISettings:get("simpleui_ui_font_name") or "Noto Sans"
+        end
+
+        -- Style > Module Labels: the heading above each homescreen module.
+        -- The "Style" row picks Classic or All caps; below it sit the Font,
+        -- Size and Style of the selected style, plus Letter Spacing for All
+        -- caps. Color (Default, Accent, Secondary) applies to both styles. Each style keeps its own values. Settings-window section
+        -- headers use a fixed all-caps look independent of this choice.
+        local function makeSectionLabelItems()
+            local LabelStyle = require("features/sui_label_style")
+            local SUIStyle   = require("features/sui_style")
+            local function refreshLabels()
+                _applyFullLayoutRefresh()
+                if ctx_menu and ctx_menu.refresh then ctx_menu.refresh() end
+            end
+            local function isCaps() return LabelStyle.isCaps() end
+            local function isClassic() return not LabelStyle.isCaps() end
+
+            local rows = {
+                Config.makeRadioSubmenuItem{
+                    text      = _("Style"),
+                    options   = {
+                        { value = "classic", label = _("Classic") },
+                        { value = "caps",    label = _("All caps") },
+                    },
+                    get       = function() return LabelStyle.isCaps() and "caps" or "classic" end,
+                    set       = function(v) LabelStyle.setCaps(v == "caps") end,
+                    refresh   = refreshLabels,
+                    separator = true,
+                },
+            }
+
+            -- Rows of one style, shown only while that style is selected.
+            local function addStyleRows(elem, active)
+                local text_style = Config.makeTextStyleItem{
+                    mod_id  = LabelStyle.MOD_ID,
+                    elem    = elem,
+                    title   = _("Module Labels"),
+                    info    = _("Size of the module labels.\n100% is the default size."),
+                    refresh = refreshLabels,
+                    _lc     = _,
+                }
+                for _i, entry in ipairs(text_style.sub_item_table) do
+                    entry.enabled_func = active
+                    rows[#rows + 1] = entry
+                end
+            end
+            -- Offered only while a palette colour is on screen.
+            local palette = SUIStyle.paletteOptions(_)
+            if #palette > 0 then
+                local options = { { value = "none", label = _("Default") } }
+                for _i, option in ipairs(palette) do options[#options + 1] = option end
+                rows[#rows + 1] = Config.makeRadioSubmenuItem{
+                    text      = _("Color"),
+                    options   = options,
+                    get       = function()
+                        local choice = LabelStyle.getColor()
+                        return choice and SUIStyle.paletteChoiceAvailable(choice) and choice or "none"
+                    end,
+                    set       = function(v) LabelStyle.setColor(v ~= "none" and v or nil) end,
+                    refresh   = refreshLabels,
+                    separator = true,
+                }
+            end
+            addStyleRows(LabelStyle.ELEM_CLASSIC, isClassic)
+            addStyleRows(LabelStyle.ELEM_CAPS, isCaps)
+            rows[#rows + 1] = Config.makeSpinItem{
+                text_func     = function() return _("Letter Spacing") end,
+                enabled_func  = isCaps,
+                title         = _("Letter Spacing"),
+                info          = _("Space between the characters of a module label, as a percentage of its text size."),
+                get           = LabelStyle.getTrackingPct,
+                value_min     = LabelStyle.TRACK_MIN,
+                value_max     = LabelStyle.TRACK_MAX,
+                value_step    = LabelStyle.TRACK_STEP,
+                default_value = LabelStyle.TRACK_DEF,
+                unit          = "%",
+                set           = function(v) LabelStyle.setTrackingPct(v) end,
+                refresh       = refreshLabels,
+            }
+            return rows
+        end
+
+        local items = {
             -- ── Icons (sub-folder) ─────────────────────────────────────
             {
                 text = _("Icons"),
@@ -3900,6 +3597,25 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
                             local IP  = ok_ip and P and P.icons or nil
                             local QA2 = ok_qa and QA2 or nil
 
+                            -- Asks for a new name for the icon preset `name`; the
+                            -- active-preset pointer follows the rename.
+                            local function renameIconPreset(name, on_done)
+                                if not IP then return end
+                                P.promptName{
+                                    store     = IP,
+                                    title     = string.format(_("Rename \"%s\""), name),
+                                    value     = name,
+                                    ok_text   = _("Rename"),
+                                    on_submit = function(new_name)
+                                        IP.rename(name, new_name)
+                                        if SUISettings:get("simpleui_icon_active_preset") == name then
+                                            SUISettings:set("simpleui_icon_active_preset", new_name)
+                                        end
+                                        on_done()
+                                    end,
+                                }
+                            end
+
                             -- Helper: reapply all icon changes after a preset is applied.
                             local function _reapplyAll()
                                 -- Titlebar (system icons).
@@ -4007,52 +3723,21 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
                                 text     = _("Save as new preset"),
                                 callback = function()
                                     if not IP then return end
-                                    local dialog
-                                    dialog = InputDialog():new{
-                                        title      = _("Save icon preset"),
-                                        input      = "",
-                                        input_hint = _("Preset name"),
-                                        buttons    = {{
-                                            {
-                                                text     = _("Cancel"),
-                                                id       = "close",
-                                                callback = function() UIManager:close(dialog) end,
-                                            },
-                                            {
-                                                text             = _("Save"),
-                                                is_enter_default = true,
-                                                callback         = function()
-                                                    local name = dialog:getInputText()
-                                                    name = name and util.trim(name) or ""
-                                                    if name == "" then
-                                                        UI.Notify.toast(_("Please enter a name for the preset."), 2)
-                                                        return
-                                                    end
-                                                    local function _doSave()
-                                                        IP.save(name)
-                                                        SUISettings:set("simpleui_icon_active_preset", name)
-                                                        UIManager:close(dialog)
-                                                        UI.Notify.toast(string.format(_("Preset \"%s\" saved."), name), 2)
-                                                        UIManager:nextTick(function()
-                                                            if ctx_menu and ctx_menu.refresh then ctx_menu.refresh() end
-                                                        end)
-                                                    end
-                                                    if IP.exists(name) then
-                                                        UIManager:show(ConfirmBox():new{
-                                                            text        = string.format(
-                                                                _("A preset named \"%s\" already exists.\nOverwrite it?"), name),
-                                                            ok_text     = _("Overwrite"),
-                                                            cancel_text = _("Cancel"),
-                                                            ok_callback = _doSave,
-                                                        })
-                                                    else
-                                                        _doSave()
-                                                    end
-                                                end,
-                                            },
-                                        }},
+                                    P.promptName{
+                                        store     = IP,
+                                        title     = _("Save icon preset"),
+                                        hint      = _("Preset name"),
+                                        ok_text   = _("Save"),
+                                        overwrite = true,
+                                        on_submit = function(name)
+                                            IP.save(name)
+                                            SUISettings:set("simpleui_icon_active_preset", name)
+                                            UI.Notify.toast(string.format(_("Preset \"%s\" saved."), name), 2)
+                                            UIManager:nextTick(function()
+                                                if ctx_menu and ctx_menu.refresh then ctx_menu.refresh() end
+                                            end)
+                                        end,
                                     }
-                                    UIManager:show(dialog)
                                 end,
                             }
 
@@ -4068,7 +3753,7 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
                                                 text = _name,
                                                 sub_item_table = {
                                                     { text = _("Update with current settings"), callback = function()
-                                                        UIManager:show(ConfirmBox():new{
+                                                        Dialogs().confirm{
                                                             text = string.format(_("Overwrite preset \"%s\" with the current icon settings?"), _name),
                                                             ok_text     = _("Overwrite"),
                                                             cancel_text = _("Cancel"),
@@ -4080,38 +3765,15 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
                                                                     UIManager:nextTick(function() if ctx_menu and ctx_menu.refresh then ctx_menu.refresh() end end)
                                                                 end
                                                             end,
-                                                        })
+                                                        }
                                                     end },
                                                     { text = _("Rename"), callback = function()
-                                                        local dialog2
-                                                        dialog2 = InputDialog():new{
-                                                            title   = string.format(_("Rename \"%s\""), _name),
-                                                            input   = _name,
-                                                            buttons = {{
-                                                                { text = _("Cancel"), id = "close", callback = function() UIManager:close(dialog2) end },
-                                                                { text = _("Rename"), is_enter_default = true, callback = function()
-                                                                    local new_name = dialog2:getInputText()
-                                                                    new_name = new_name and util.trim(new_name) or ""
-                                                                    if new_name == "" or new_name == _name then UIManager:close(dialog2); return end
-                                                                    if IP and IP.exists(new_name) then
-                                                                        UI.Notify.toast(string.format(_("A preset named \"%s\" already exists."), new_name), 2)
-                                                                        return
-                                                                    end
-                                                                    if IP then
-                                                                        IP.rename(_name, new_name)
-                                                                        local active = SUISettings:get("simpleui_icon_active_preset")
-                                                                        if active == _name then SUISettings:set("simpleui_icon_active_preset", new_name) end
-                                                                    end
-                                                                    UIManager:close(dialog2)
-                                                                    UIManager:nextTick(function() if ctx_menu and ctx_menu.refresh then ctx_menu.refresh() end end)
-                                                                end },
-                                                            }}
-                                                        }
-                                                        UIManager:show(dialog2)
-                                                        dialog2:onShowKeyboard()
+                                                        renameIconPreset(_name, function()
+                                                            UIManager:nextTick(function() if ctx_menu and ctx_menu.refresh then ctx_menu.refresh() end end)
+                                                        end)
                                                     end },
                                                     { text = _("Delete"), callback = function()
-                                                        UIManager:show(ConfirmBox():new{
+                                                        Dialogs().confirm{
                                                             text        = string.format(_("Delete preset \"%s\"?"), _name),
                                                             ok_text     = _("Delete"),
                                                             cancel_text = _("Cancel"),
@@ -4123,7 +3785,7 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
                                                                 end
                                                                 UIManager:nextTick(function() if ctx_menu and ctx_menu.refresh then ctx_menu.refresh() end end)
                                                             end,
-                                                        })
+                                                        }
                                                     end },
                                                 }
                                             }
@@ -4152,7 +3814,7 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
                                                                             title     = _name,
                                                                             inner_w   = ctx2.inner_w,
                                                                             on_delete = function()
-                                                                                UIManager:show(ConfirmBox():new{
+                                                                                Dialogs().confirm{
                                                                                     text        = string.format(_("Delete preset \"%s\"?"), _name),
                                                                                     ok_text     = _("Delete"),
                                                                                     cancel_text = _("Cancel"),
@@ -4165,39 +3827,16 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
                                                                                         ctx2.repaint()
                                                                                         UIManager:nextTick(function() if ctx_menu and ctx_menu.refresh then ctx_menu.refresh() end end)
                                                                                     end,
-                                                                                })
+                                                                                }
                                                                             end,
                                                                             on_edit = function()
-                                                                                local dialog2
-                                                                                dialog2 = InputDialog():new{
-                                                                                    title   = string.format(_("Rename \"%s\""), _name),
-                                                                                    input   = _name,
-                                                                                    buttons = {{
-                                                                                        { text = _("Cancel"), id = "close", callback = function() UIManager:close(dialog2) end },
-                                                                                        { text = _("Rename"), is_enter_default = true, callback = function()
-                                                                                            local new_name = dialog2:getInputText()
-                                                                                            new_name = new_name and util.trim(new_name) or ""
-                                                                                            if new_name == "" or new_name == _name then UIManager:close(dialog2); return end
-                                                                                            if IP and IP.exists(new_name) then
-                                                                                                UI.Notify.toast(string.format(_("A preset named \"%s\" already exists."), new_name), 2)
-                                                                                                return
-                                                                                            end
-                                                                                            if IP then
-                                                                                                IP.rename(_name, new_name)
-                                                                                                local active = SUISettings:get("simpleui_icon_active_preset")
-                                                                                                if active == _name then SUISettings:set("simpleui_icon_active_preset", new_name) end
-                                                                                            end
-                                                                                            UIManager:close(dialog2)
-                                                                                            ctx2.repaint()
-                                                                                            UIManager:nextTick(function() if ctx_menu and ctx_menu.refresh then ctx_menu.refresh() end end)
-                                                                                        end },
-                                                                                    }}
-                                                                                }
-                                                                                UIManager:show(dialog2)
-                                                                                dialog2:onShowKeyboard()
+                                                                                renameIconPreset(_name, function()
+                                                                                    ctx2.repaint()
+                                                                                    UIManager:nextTick(function() if ctx_menu and ctx_menu.refresh then ctx_menu.refresh() end end)
+                                                                                end)
                                                                             end,
                                                                             on_update = function()
-                                                                                UIManager:show(ConfirmBox():new{
+                                                                                Dialogs().confirm{
                                                                                     text = string.format(_("Overwrite preset \"%s\" with the current icon settings?"), _name),
                                                                                     ok_text     = _("Overwrite"),
                                                                                     cancel_text = _("Cancel"),
@@ -4210,7 +3849,7 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
                                                                                             UIManager:nextTick(function() if ctx_menu and ctx_menu.refresh then ctx_menu.refresh() end end)
                                                                                         end
                                                                                     end,
-                                                                                })
+                                                                                }
                                                                             end,
                                                                         }
                                                                     end
@@ -4310,46 +3949,16 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
                     },
                 }, -- end Icons sub_item_table
             },   -- end Icons submenu
-            -- ── Cover Shadow ──────────────────────────────────────────────
+            -- ── Covers ────────────────────────────────────────────────────
             {
-                text = _("Cover Shadow"),
-                sub_item_table_func = function()
-                    local SUIStyle = require("features/sui_style")
-                    -- One checkbox per surface; `refresh` redraws that surface.
-                    local function scopeItem(label, scope, refresh)
-                        return {
-                            text           = label,
-                            checked_func   = function() return SUIStyle.coverShadowEnabled(scope) end,
-                            keep_menu_open = true,
-                            callback       = function()
-                                SUIStyle.setCoverShadowEnabled(scope, not SUIStyle.coverShadowEnabled(scope))
-                                refresh()
-                            end,
-                        }
-                    end
-                    return {
-                        scopeItem(_("Library"), SUIStyle.SHADOW_LIBRARY, function()
-                            local ok_fc, FC = pcall(require, "features/library/sui_foldercovers")
-                            if ok_fc and FC then FC.invalidateCache() end
-                            _refreshFC()
-                        end),
-                        scopeItem(_("Modules"), SUIStyle.SHADOW_MODULES, _applyFullLayoutRefresh),
-                    }
-                end,
+                text                = _("Covers"),
+                sub_item_table_func = function() return makeCoversMenuItems(ctx_menu) end,
             },
             -- ── UI Font ───────────────────────────────────────────────────
             {
                 text = _("UI Font"),
-                text_func = function()
-                    local ok_ss, SUIStyle = pcall(require, "features/sui_style")
-                    if not ok_ss or not SUIStyle then return _("UI Font") end
-                    local enabled = SUISettings:isTrue("simpleui_ui_font_enabled")
-                    local name    = SUISettings:get("simpleui_ui_font_name") or "Noto Sans"
-                    if not enabled then
-                        return _("UI Font  (default)")
-                    end
-                    return string.format(_("UI Font  [%s]"), name)
-                end,
+                value_func     = uiFontValue,
+                mandatory_func = uiFontValue,
                 sub_item_table_func = function()
                     local ok_ss, SUIStyle = pcall(require, "features/sui_style")
                     if not ok_ss or not SUIStyle then return {} end
@@ -4357,6 +3966,14 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
                     if not ok_fi or type(items) ~= "table" then return {} end
                     return items
                 end,
+            },
+            -- ── Module Labels ─────────────────────────────────────────────
+            {
+                text                = _("Module Labels"),
+                value_func          = function()
+                    return require("features/sui_label_style").isCaps() and _("All caps") or _("Classic")
+                end,
+                sub_item_table_func = makeSectionLabelItems,
             },
             -- ── Global Text Size ──────────────────────────────────────────
             -- Global scale applied to every KOReader UI text size, via a
@@ -4367,38 +3984,19 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
             -- system). Like the UI Font picker above, a restart is needed
             -- to fully apply it everywhere (the scale is captured once, at
             -- plugin-init patch time).
-            {
-                text_func = function()
-                    return _("Global Text Size")
-                end,
-                value_func = function() return Config.getFontScalePct() .. "%" end,
-                keep_menu_open = true,
-                callback = function()
-                    local SpinWidget = require("ui/widget/spinwidget")
-                    UIManager:show(SpinWidget:new{
-                        title_text    = _("Global Text Size"),
-                        info_text     = _("Global scale applied to all of KOReader's interface text — menus, dialogs, titles, and Simple UI. It does not change the book's reading font size, which has its own setting.\n100% is the default size. Useful when a chosen UI font (see UI Font above) renders smaller or larger than usual."),
-                        value         = Config.getFontScalePct(),
-                        value_min     = Config.FONT_SCALE_MIN,
-                        value_max     = Config.FONT_SCALE_MAX,
-                        value_step    = Config.FONT_SCALE_STEP,
-                        unit          = "%",
-                        ok_text       = _("Apply"),
-                        cancel_text   = _("Cancel"),
-                        default_value = Config.FONT_SCALE_DEF,
-                        callback      = function(spin)
-                            Config.setFontScalePct(spin.value)
-                            UIManager:show(ConfirmBox():new{
-                                text       = _("A restart is required to apply the new text size everywhere.\n\nRestart now?"),
-                                ok_text    = _("Restart"),
-                                cancel_text = _("Later"),
-                                ok_callback = function()
-                                    SUISettings:flush()
-                                    UIManager:restartKOReader()
-                                end,
-                            })
-                        end,
-                    })
+            Config.makeSpinItem{
+                text_func    = function() return _("Global Text Size") end,
+                title        = _("Global Text Size"),
+                info         = _("Global scale applied to all of KOReader's interface text — menus, dialogs, titles, and Simple UI. It does not change the book's reading font size, which has its own setting.\n100% is the default size. Useful when a chosen UI font (see UI Font above) renders smaller or larger than usual."),
+                get          = Config.getFontScalePct,
+                value_min    = Config.FONT_SCALE_MIN,
+                value_max    = Config.FONT_SCALE_MAX,
+                value_step   = Config.FONT_SCALE_STEP,
+                default_value= Config.FONT_SCALE_DEF,
+                unit         = "%",
+                set          = function(value)
+                    Config.setFontScalePct(value)
+                    askRestart(_("A restart is required to apply the new text size everywhere.\n\nRestart now?"))
                 end,
             },
             {
@@ -4429,6 +4027,13 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
                 },
             },
         }
+        if Accent.isSupported() then
+            items[#items + 1] = {
+                text                = _("Colors"),
+                sub_item_table_func = function() return makeColorItems(ctx_menu) end,
+            }
+        end
+        return items
     end
 
     local function makeAboutMenuItems(ctx_menu)
@@ -4484,9 +4089,8 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
                 text      = _("Factory Reset"),
                 separator = true,
                 callback  = function()
-                    local ConfirmBoxWidget = ctx_menu and ctx_menu.ConfirmBox or ConfirmBox()
                     local UIM = ctx_menu and ctx_menu.UIManager or UIManager
-                    UIM:show(ConfirmBoxWidget:new{
+                    Dialogs().confirm{
                         text        = _("This will delete all Simple UI settings and restart KOReader.\nAre you sure?"),
                         ok_text     = _("Delete Settings"),
                         cancel_text = _("Cancel"),
@@ -4503,7 +4107,7 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
                             Config.setStartWithHomescreen(false)
                             UIM:restartKOReader()
                         end,
-                    })
+                    }
                 end,
             },
         }
@@ -4583,17 +4187,7 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
                     -- because "homescreen_simpleui" is not a value the base KOReader
                     -- understands — leaving it set would cause a blank screen on next boot.
                     if on then Config.setStartWithHomescreen(false) end
-                    -- Flush immediately so a hard reboot / crash cannot leave the
-                    -- setting unsaved, which would cause a white-screen boot loop
-                    -- the next time KOReader starts with the plugin installed.
-                    SUISettings:flush()
-                    UIManager:show(ConfirmBox():new{
-                        text        = string.format(_("Simple UI will be %s after restart.\n\nRestart now?"), on and _("disabled") or _("enabled")),
-                        ok_text     = _("Restart"), cancel_text = _("Later"),
-                        ok_callback = function()
-                            UIManager:restartKOReader()
-                        end,
-                    })
+                    askRestart(string.format(_("Simple UI will be %s after restart.\n\nRestart now?"), on and _("disabled") or _("enabled")))
                 end,
                 separator = true,
             },

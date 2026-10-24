@@ -13,6 +13,7 @@
 --        sui_wallpapers/**   custom wallpaper images
 --        sui_quotes/**       custom quote pools
 --        sui_icons/**        custom icons + installed icon packs
+--        sui_critters/**      custom critters and their phrases
 --      Binary content is base64-encoded into the .sui file.
 --
 -- FILE FORMAT (KOReader LuaSettings file, same container as presets):
@@ -45,7 +46,6 @@
 --   Backup.runQuickExport()           — one-tap export for backup_export QA
 
 local logger = require("logger")
-local util   = require("util")
 local _      = require("infra/sui_i18n").translate
 
 local SUISettings = require("infra/sui_store")
@@ -85,6 +85,11 @@ local EXCLUDED_EXACT = {
     ["simpleui_backup_scope"]             = true,
     ["simpleui_last_restore"]             = true,
     ["simpleui_library_defaults_applied"] = true,
+}
+
+-- Runtime state that must never travel, matched by prefix.
+local EXCLUDED_PREFIXES = {
+    "simpleui_critter_deck_",
 }
 
 for _i = 2, 9 do
@@ -150,6 +155,12 @@ Backup.CATEGORIES = {
         desc      = _("Icon files and installed packs from sui_icons/"),
         asset_dir = "sui_icons",
     },
+    {
+        id        = "critters",
+        label     = _("Custom critters"),
+        desc      = _("Critter images and phrases from sui_critters/"),
+        asset_dir = "sui_critters",
+    },
 }
 
 -- Exact-match set for a list of keys.
@@ -167,7 +178,7 @@ local CLASSIFY_RULES = {
     },
     { "goals",
       prefixes = {
-          "simpleui_streak_", "simpleui_reading_goals_", "simpleui_tbr_sort_state",
+          "simpleui_streak_", "simpleui_critter_best_streak", "simpleui_reading_goals_", "simpleui_tbr_sort_state",
           "simpleui_tbr_auto_remove_finished",
       },
       exact    = _keySet(require("infra/sui_goals").KEYS, {
@@ -182,11 +193,11 @@ local CLASSIFY_RULES = {
       exact    = { simpleui_toggle_home_library = true },
     },
     -- Homescreen-scoped keys must classify before generic bar/qa prefixes.
-    -- Column width (bento grid) lives in simpleui_hs_bento_width_* / simpleui_cs_*_bento_width_*.
+    -- Bento grid settings (column width, auto-adjust) live in simpleui_hs_bento_* / simpleui_cs_*_bento_*.
     { "home_screen",
       prefixes = {
           "simpleui_hs_", "simpleui_layout", "simpleui_cs_", "simpleui_custom_screens",
-          "simpleui_hide_label_", "simpleui_homescreen_preset", "simpleui_coll_",
+          "simpleui_hide_label_", "simpleui_label_outside_", "simpleui_homescreen_preset", "simpleui_coll_",
           "simpleui_collections_", "simpleui_quote_", "navbar_homescreen_",
       },
     },
@@ -233,6 +244,9 @@ end
 function Backup.classifyKey(key)
     if type(key) ~= "string" then return nil end
     if EXCLUDED_EXACT[key] then return nil end
+    for _i, pfx in ipairs(EXCLUDED_PREFIXES) do
+        if key:sub(1, #pfx) == pfx then return nil end
+    end
     if CORE_ALWAYS[key] then return "core" end
     if _isInstanceListKey(key) then return "home_screen" end
     -- Only ever classify keys the plugin owns (repo convention).
@@ -288,7 +302,7 @@ function Backup.getBackupsDir()
 end
 
 --- Map an absolute path inside the simpleui/ tree to a "@dir_rel/rel" token.
-local TOKEN_DIRS = { "sui_wallpapers", "sui_quotes", "sui_icons" }
+local TOKEN_DIRS = { "sui_wallpapers", "sui_quotes", "sui_icons", "sui_critters" }
 
 local function _tokenizePath(value)
     if type(value) ~= "string" then return value end
@@ -718,6 +732,8 @@ local function _invalidateCaches()
     if WP and WP.freeCache then pcall(WP.freeCache) end
     local CC_ok, CC = pcall(require, "infra/sui_cover_cache")
     if CC_ok and CC and CC.clear then pcall(function() CC:clear() end) end
+    local MA = package.loaded["modules/critter/assets"]
+    if MA and MA.rescan then pcall(MA.rescan) end
 end
 
 --- Map an asset's top-level folder ("sui_wallpapers", …) to its category id.
@@ -725,6 +741,7 @@ local ASSET_DIR_TO_CAT = {
     sui_wallpapers = "wallpaper",
     sui_quotes     = "quotes",
     sui_icons      = "icons",
+    sui_critters    = "critters",
 }
 
 -- ---------------------------------------------------------------------------
@@ -988,8 +1005,7 @@ end
 
 --- Confirm staged import (with full summary), restore, prompt restart.
 local function _confirmRestore(ctx_menu)
-    local UIManager   = require("ui/uimanager")
-    local ConfirmBox = ctx_menu and ctx_menu.ConfirmBox or require("ui/widget/confirmbox")
+    local Dialogs = require("features/dialogs/sui_dialogs")
 
     local pend = _pending_import
     if not pend then return end
@@ -1006,7 +1022,7 @@ local function _confirmRestore(ctx_menu)
     end
 
     local summary = Backup.describe(pend.parsed, pend.filter)
-    UIManager:show(ConfirmBox:new{
+    Dialogs.confirm{
         text        = summary .. "\n\n"
             .. _("Restore this backup? Existing settings for these categories will be replaced. Saved presets are merged — yours are kept."),
         ok_text     = _("Restore"),
@@ -1021,16 +1037,12 @@ local function _confirmRestore(ctx_menu)
             if ctx_menu and ctx_menu.refresh then
                 ctx_menu.refresh()
             end
-            UIManager:show(ConfirmBox:new{
-                text        = _("Backup restored.\nRestart KOReader now to finish applying all changes?"),
-                ok_text     = _("Restart now"),
-                cancel_text = _("Later"),
-                ok_callback = function()
-                    UIManager:restartKOReader()
-                end,
-            })
+            Dialogs.askRestart{
+                text    = _("Backup restored.\nRestart KOReader now to finish applying all changes?"),
+                ok_text = _("Restart now"),
+            }
         end,
-    })
+    }
 end
 
 -- ---------------------------------------------------------------------------
@@ -1065,9 +1077,6 @@ local function _makeToggleItems(entries)
 end
 
 function Backup.makeMenuItems(ctx_menu)
-    local UIManager   = require("ui/uimanager")
-    local InputDialog = require("ui/widget/inputdialog")
-
     local items = {}
 
     -- Info row: last backup.
@@ -1102,40 +1111,26 @@ function Backup.makeMenuItems(ctx_menu)
                 return
             end
             local suggested = Backup.suggestedFilename()
-            local dialog
-            dialog = InputDialog:new{
-                title      = _("Save backup as"),
-                input      = suggested,
-                input_hint = suggested,
-                buttons    = {{
-                    {
-                        text     = _("Cancel"),
-                        id       = "close",
-                        callback = function() UIManager:close(dialog) end,
-                    },
-                    {
-                        text             = _("Export"),
-                        is_enter_default = true,
-                        callback         = function()
-                            local name = dialog:getInputText()
-                            name = util.trim(name or "")
-                            if name == "" then name = suggested end
-                            if not name:match("%.sui$") then name = name .. ".sui" end
-                            UIManager:close(dialog)
-                            local filepath = dir .. "/" .. name
-                            UI.Notify.toast(_("Creating backup…"), 1)
-                            local ok, result = pcall(Backup.export, filepath)
-                            if ok and result then
-                                UI.Notify.toast(_("Backup created:") .. "\n" .. result
-                                        .. "\n\n" .. _("Copy this file somewhere safe (e.g. over USB)."), 8)
-                            else
-                                UI.Notify.toast(_("Backup failed.") .. ((type(result) == "string") and ("\n" .. result) or ""), 5)
-                            end
-                        end,
-                    },
-                }},
+            require("features/dialogs/sui_dialogs").prompt{
+                title       = _("Save backup as"),
+                value       = suggested,
+                hint        = suggested,
+                ok_text     = _("Export"),
+                allow_empty = true,
+                on_submit   = function(name)
+                    if name == "" then name = suggested end
+                    if not name:match("%.sui$") then name = name .. ".sui" end
+                    local filepath = dir .. "/" .. name
+                    UI.Notify.toast(_("Creating backup…"), 1)
+                    local ok, result = pcall(Backup.export, filepath)
+                    if ok and result then
+                        UI.Notify.toast(_("Backup created:") .. "\n" .. result
+                                .. "\n\n" .. _("Copy this file somewhere safe (e.g. over USB)."), 8)
+                    else
+                        UI.Notify.toast(_("Backup failed.") .. ((type(result) == "string") and ("\n" .. result) or ""), 5)
+                    end
+                end,
             }
-            UIManager:show(dialog)
         end,
     }
 

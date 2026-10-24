@@ -23,10 +23,6 @@ local CenterContainer = require("ui/widget/container/centercontainer")
 
 local GestureRange   = require("ui/gesturerange")
 
--- ConfirmBox is only needed when the user taps a highlight to open its book.
--- Lazy-loaded at that point to avoid the cost at module-load time.
--- local ConfirmBox = require("ui/widget/confirmbox")  ← moved to usage site
-
 local InputContainer   = require("ui/widget/container/inputcontainer")
 
 local RenderText       = require("ui/rendertext")
@@ -47,7 +43,6 @@ local logger         = require("logger")
 
 local Config       = require("infra/sui_config")
 
-local UIManager       = require("ui/uimanager")
 
 local UI           = require("infra/sui_core")
 local SUISettings  = require("infra/sui_store")
@@ -59,6 +54,7 @@ local PAD          = UI.PAD
 local PAD2         = UI.PAD2
 
 local CLR_TEXT_SUB = UI.CLR_TEXT_SUB
+local Chrome       = require("features/sui_module_chrome")
 
 
 
@@ -1145,6 +1141,7 @@ M.text_elems  = { "quote", "author" }
 
 -- The attribution is bold until the user picks another variant.
 Config.declareTextVariants(M.id, { author = "bold" })
+Config.declareTextColors(M.id, { "author" }, { author = "accent" })
 
 M.getCountLabel = nil
 
@@ -1190,8 +1187,9 @@ function M.build(w, ctx)
 
     local vspan_gap  = VerticalSpan:new{ width = quote_gap }
 
-    local _clr_quote       = SUIStyle.COLOR.text_primary
-    local _clr_attr        = CLR_TEXT_SUB
+    local ink              = (ctx and ctx.ink) or Chrome.PLAIN_INK
+    local _clr_quote       = ink.blk
+    local _clr_attr        = SUIStyle.textColor(styles.author, ctx and ctx.palette, ink.sub)
 
     local source    = getSource(ctx and ctx.pfx)
     local alignment = getAlignment(ctx and ctx.pfx)
@@ -1298,15 +1296,15 @@ function M.build(w, ctx)
                 local page  = self._page
                 local open  = self._open
                 local BD        = require("ui/bidi")
-                local ConfirmBox = require("ui/widget/confirmbox")
-                UIManager:show(ConfirmBox:new{
+                local Dialogs = require("features/dialogs/sui_dialogs")
+                Dialogs.confirm{
                     text        = _("Open this file?") .. "\n\n" .. BD.filename(fp:match("([^/]+)$")),
                     ok_text     = _("Open"),
                     cancel_text = _("Cancel"),
                     ok_callback = function()
                         open(fp, pos0, page)
                     end,
-                })
+                }
             end
             return true
         end

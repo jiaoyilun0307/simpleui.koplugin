@@ -248,7 +248,7 @@ simpleui.koplugin/
 │   ├── module_collections.lua — Collections module
 │   ├── module_tbr.lua        — To Be Read module
 │   ├── module_reading_goals.lua — Reading Goals module
-│   ├── module_reading_stats.lua — Reading Stats module
+│   ├── reading_stats/ — Reading Stats module: module_reading_stats.lua, catalog.lua, width_sheet.lua
 │   ├── module_quick_actions.lua — Quick Actions module
 │   ├── module_quote.lua      — Quote of the Day module
 │   ├── module_clock.lua      — Clock module

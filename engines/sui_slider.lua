@@ -10,12 +10,15 @@
 --       min        = number,
 --       max        = number,
 --       value      = number,
+--       step       = number,    -- optional; a tap or drag picks values min + k * step
+--       format     = function(value) -> string,   -- optional; text shown above the knob
 --       face       = face,      -- font of the value shown above the knob
 --       bold       = bool,      -- emboldens a face without a bold file
 --       on_change  = function(value, dragging) end,  -- a tap, drag or flick picked a new value
 --       on_release = function() end,                 -- a drag ended
 --   }
 --   slider:setValue(v)   -- clamps and rounds; does not fire on_change
+--   slider:moveTo(v)     -- as setValue, then repaints the slider on screen
 --   slider:getValue()
 --
 -- The slider handles its own tap, drag and flick gestures. While a drag is in
@@ -40,19 +43,37 @@
 --       height   = px,                  -- height of the tap area; the symbol is sized from it
 --       inset    = px,                  -- tap area added around the content, on the sides facing the slider
 --       edge     = "left" | "right",    -- row end the content is flush with; omitted between two widgets
+--       radius   = px,                  -- corner radius of the focus frame
 --       callback = function() end,
+--       hold_callback = function() end,  -- optional; a long press
 --   }
+--   control:activate()   -- runs the callback after the press feedback
+--
+-- A control takes part in a focus manager's layout: it shows a frame around
+-- its symbol while it has the focus (the Focus and Unfocus events), and a
+-- Press on it is a tap at the centre of its tap area. A host with its own
+-- focus ring sets `control.focused` when it builds the control.
+--
+-- A slider row is a minus control, the slider and a plus control side by side:
+--
+--   local controls = SUISlider.stepControls({ minus = fn, plus = fn,
+--                        minus_hold = fn, plus_hold = fn }, scale)  -- scale(dp) -> px, optional
+--   local bar_w = SUISlider.barWidth(width, controls)
+--   local row   = SUISlider.row(controls, slider)
 
 local Device         = require("device")
 local Geom           = require("ui/geometry")
 local GestureRange   = require("ui/gesturerange")
-local InputContainer = require("ui/widget/container/inputcontainer")
+local HorizontalGroup = require("ui/widget/horizontalgroup")
+local HorizontalSpan   = require("ui/widget/horizontalspan")
+local InputContainer   = require("ui/widget/container/inputcontainer")
 local Math           = require("optmath")
 local TextWidget     = require("ui/widget/textwidget")
 local UIManager      = require("ui/uimanager")
 local Widget         = require("ui/widget/widget")
 local AAPaint        = require("infra/sui_aa_paint")
 local SUIStyle       = require("features/sui_style")
+local UI             = require("infra/sui_core")
 local Screen         = Device.screen
 
 local KNOB_PCT  = 0.7    -- knob diameter, relative to the slider height
@@ -91,6 +112,7 @@ local SUISlider = InputContainer:extend{
     min    = 0,
     max    = 100,
     value  = 0,
+    format = tostring,
 }
 
 function SUISlider:init()
@@ -118,7 +140,10 @@ end
 -- the bar; the knob travels in the row below it.
 function SUISlider:_initValueLabel()
     -- The longest value fixes the room reserved and the margin to repaint.
-    self.label = TextWidget:new{ text = tostring(self.max), face = self.face, bold = self.bold }
+    local longest = self.format(self.max)
+    local shortest = self.format(self.min)
+    if #shortest > #longest then longest = shortest end
+    self.label = TextWidget:new{ text = longest, face = self.face, bold = self.bold }
     local size = self.label:getSize()
     self.label_w = size.w
     self.bar_top = size.h + math.max(1, Screen:scaleBySize(2))
@@ -134,6 +159,16 @@ end
 
 function SUISlider:setValue(value)
     self._value = self:_clamp(value)
+end
+
+-- Sets the value and repaints the strip between the previous and the new knob
+-- position. Does not fire on_change.
+function SUISlider:moveTo(value)
+    value = self:_clamp(value)
+    if value == self._value then return end
+    local prev_knob_x = self.dimen.x + self:_knobOffset()
+    self._value = value
+    self:_repaint(prev_knob_x, "ui")
 end
 
 function SUISlider:getSize()
@@ -152,11 +187,15 @@ function SUISlider:_knobOffset()
     return self.knob_r + math.floor(frac * (self.width - 2 * self.knob_r) + 0.5)
 end
 
--- Value under the screen position `abs_x`.
+-- Value under the screen position `abs_x`, on the step grid when there is one.
 function SUISlider:_valueAt(abs_x)
     local span = self.width - 2 * self.knob_r
     local frac = span > 0 and (abs_x - self.dimen.x - self.knob_r) / span or 0
-    return self:_clamp(self.min + math.max(0, math.min(1, frac)) * (self.max - self.min))
+    local value = self.min + math.max(0, math.min(1, frac)) * (self.max - self.min)
+    if self.step and self.step > 1 then
+        value = self.min + Math.round((value - self.min) / self.step) * self.step
+    end
+    return self:_clamp(value)
 end
 
 -- ---------------------------------------------------------------------------
@@ -166,13 +205,13 @@ end
 -- Hollow knob centred on (cx, cy): a ring around the surface, which hides the
 -- track beneath it.
 function SUISlider:_paintKnob(bb, cx, cy)
-    fillCircle(bb, cx, cy, self.knob_r, SUIStyle.COLOR.text_primary)
+    fillCircle(bb, cx, cy, self.knob_r, SUIStyle.accent())
     fillCircle(bb, cx, cy, self.knob_r - self.ring, SUIStyle.COLOR.surface)
 end
 
 -- Value above the knob at `knob_x`, kept within the slider's width.
 function SUISlider:_paintValue(bb, x, y, knob_x)
-    local text = tostring(self._value)
+    local text = self.format(self._value)
     if self.label.text ~= text then self.label:setText(text) end
     local w = self.label:getSize().w
     self.label:paintTo(bb, math.max(x, math.min(x + self.width - w, knob_x - math.floor(w / 2))), y)
@@ -185,7 +224,7 @@ function SUISlider:paintTo(bb, x, y)
 
     bb:paintRect(x, y, self.width, self.dimen.h, SUIStyle.COLOR.surface)
     fillPill(bb, x, cy, self.width, self.track_h, SUIStyle.COLOR.track)
-    fillPill(bb, x, cy, knob_x - x, self.fill_h, SUIStyle.COLOR.text_primary)
+    fillPill(bb, x, cy, knob_x - x, self.fill_h, SUIStyle.accent())
     self:_paintKnob(bb, knob_x, cy)
     self:_paintValue(bb, x, y, knob_x)
 end
@@ -312,8 +351,10 @@ local function symbolContent(symbol, height)
 end
 
 local Control = InputContainer:extend{
-    height = 0,
-    inset  = 0,
+    height  = 0,
+    inset   = 0,
+    radius  = 0,
+    focused = false,
 }
 
 function Control:init()
@@ -321,9 +362,17 @@ function Control:init()
     self.content_x = self.edge == "left" and 0 or self.inset
     local trailing = self.edge == "right" and 0 or self.inset
     self.dimen = Geom:new{ w = self.content_x + self.content.w + trailing, h = self.height }
+    -- Press feedback: a square centred on the symbol, whatever the tap area.
+    local side = 2 * self.content.w + 1
+    self.flash = { dimen = Geom:new{ w = side, h = side } }
     self.ges_events.TapControl = {
         GestureRange:new{ ges = "tap", range = function() return self.dimen end },
     }
+    if self.hold_callback then
+        self.ges_events.HoldControl = {
+            GestureRange:new{ ges = "hold", range = function() return self.dimen end },
+        }
+    end
 end
 
 function Control:getSize()
@@ -332,15 +381,114 @@ end
 
 function Control:paintTo(bb, x, y)
     self.dimen.x, self.dimen.y = x, y
+    local reach = self.content.w
+    self.flash.dimen.x = x + self.content_x + math.floor(reach / 2) - reach
+    self.flash.dimen.y = y + math.floor(self.height / 2) - reach
     self.content.paint(bb, x + self.content_x, y)
+    if self.focused then
+        local box = self.flash.dimen
+        AAPaint.strokeRoundedRect(bb, box.x, box.y, box.w, box.h, self.radius,
+            SUIStyle.BORDER_SZ * 2, SUIStyle.COLOR.text_primary)
+    end
+end
+
+function Control:onFocus()
+    self.focused = true
+    return true
+end
+
+function Control:onUnfocus()
+    self.focused = false
+    return true
+end
+
+-- Inverts the area around the symbol for one refresh, then runs the callback.
+function Control:activate()
+    UI.runWithTapFeedback(self.flash, self.callback)
 end
 
 function Control:onTapControl()
-    self.callback()
+    self:activate()
+    return true
+end
+
+function Control:onHoldControl()
+    UI.runWithTapFeedback(self.flash, self.hold_callback)
     return true
 end
 
 SUISlider.Control = Control
+
+-- ---------------------------------------------------------------------------
+-- Row
+-- Drawn symbols flush with the ends of the row, around the slider. The tap
+-- areas of the controls fill the spaces between the visible items, which are
+-- all twice ROW_SPACE_DP.
+-- ---------------------------------------------------------------------------
+
+local ROW_HEIGHT_DP = 36  -- height of the slider row
+local ROW_SPACE_DP  = 10  -- tap area a control adds beside its content, and gap before the slider
+local FOCUS_RADIUS_DP = 6 -- corner radius of the frame around a focused control
+
+--- The minus and plus controls of a slider row, with the `gap` kept between
+--- them and the slider, the `height` of the row and `value_on_bar`, as the
+--- slider carries its value above it. `actions` holds `minus`
+--- and `plus`, and optionally `minus_hold` and `plus_hold` for a long press.
+--- `scale(dp)` converts the base metrics to pixels (default: Screen:scaleBySize).
+function SUISlider.stepControls(actions, scale)
+    scale = scale or function(dp) return Screen:scaleBySize(dp) end
+    local space  = scale(ROW_SPACE_DP)
+    local height = scale(ROW_HEIGHT_DP)
+    local radius = scale(FOCUS_RADIUS_DP)
+    local function control(symbol, edge, callback, hold_callback)
+        return Control:new{
+            symbol        = symbol,
+            edge          = edge,
+            height        = height,
+            inset         = space,
+            radius        = radius,
+            callback      = callback,
+            hold_callback = hold_callback,
+        }
+    end
+    return {
+        minus   = control("minus", "left", actions.minus, actions.minus_hold),
+        plus    = control("plus", "right", actions.plus, actions.plus_hold),
+        gap          = space,
+        top_gap      = 0,
+        height       = height,
+        value_on_bar = true,
+    }
+end
+
+--- Width left for the slider in a row `width` wide with `controls`: the
+--- minus and plus controls and, when present, a `top` control.
+function SUISlider.barWidth(width, controls)
+    local bar_w = width - 2 * controls.gap
+        - controls.minus:getSize().w - controls.plus:getSize().w
+    if controls.top then bar_w = bar_w - controls.top_gap - controls.top:getSize().w end
+    return bar_w
+end
+
+--- The row: minus, `bar`, plus and, when present, the top control. A bar that
+--- carries its value above it (`controls.value_on_bar`) is taller than the
+--- controls, which sit on its bottom line.
+function SUISlider.row(controls, bar)
+    local function span(w) return HorizontalSpan:new{ width = w } end
+    local row = HorizontalGroup:new{
+        align = controls.value_on_bar and "bottom" or "center",
+        controls.minus,
+        span(controls.gap),
+        bar,
+        span(controls.gap),
+        controls.plus,
+    }
+    if controls.top then
+        table.insert(row, span(controls.top_gap))
+        table.insert(row, controls.top)
+    end
+    return row
+end
 
 -- ---------------------------------------------------------------------------
 -- Caption

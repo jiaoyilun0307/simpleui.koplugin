@@ -19,8 +19,6 @@
 --   ManualBooks.makeEntryItems(on_done)          the items of that menu
 --   ManualBooks.makeMenuItem(refresh)            settings entry opening that menu
 
-local UIManager = require("ui/uimanager")
-local UI        = require("infra/sui_core")
 local _         = require("infra/sui_i18n").translate
 
 local MIN_YEAR  = 1900
@@ -32,12 +30,15 @@ local function _provider()
     return require("modules/module_stats_provider")
 end
 
+local function _dialogs()
+    return require("features/dialogs/sui_dialogs")
+end
+
 local function _blankToNil(text)
-    text = require("util").trim(text or "")
     return text ~= "" and text or nil
 end
 
--- Turns the form fields {title, author, started, finished} into book fields.
+-- Turns the trimmed form texts {title, author, started, finished} into book fields.
 -- Returns nil and the message to show when the input is not acceptable.
 local function _readForm(fields)
     local title    = _blankToNil(fields[1])
@@ -70,95 +71,88 @@ local function _readForm(fields)
 end
 
 function ManualBooks.showBookDialog(book, on_done)
-    local MultiInputDialog = require("ui/widget/multiinputdialog")
     local dialog
 
     local function finish(apply)
-        UIManager:close(dialog)
         apply()
         if on_done then on_done() end
     end
 
-    local buttons = {
-        { text = _("Cancel"), callback = function() UIManager:close(dialog) end },
-        {
-            text             = _("Save"),
-            is_enter_default = true,
-            callback         = function()
-                local values, err = _readForm(dialog:getFields())
-                if not values then
-                    UI.Notify.toast(err)
-                    return
-                end
-                finish(function() _provider().saveManualBook(book and book.key, values) end)
-            end,
-        },
-    }
+    local actions
     if book then
-        table.insert(buttons, 1, {
-            text     = _("Delete"),
-            callback = function()
-                UIManager:show(require("ui/widget/confirmbox"):new{
-                    text        = _("Delete this book?"),
-                    ok_text     = _("Delete"),
-                    cancel_text = _("Cancel"),
-                    ok_callback = function()
-                        finish(function() _provider().removeManualBook(book.key) end)
-                    end,
-                })
-            end,
-        })
+        actions = {
+            {
+                text     = _("Delete"),
+                sui_icon = "delete",
+                callback = function()
+                    _dialogs().confirm{
+                        text        = _("Delete this book?"),
+                        ok_text     = _("Delete"),
+                        cancel_text = _("Cancel"),
+                        ok_callback = function()
+                            dialog:close()
+                            finish(function() _provider().removeManualBook(book.key) end)
+                        end,
+                    }
+                end,
+            },
+        }
     end
 
     local date_hint = _("YYYY-MM-DD or YYYY")
     local current   = book or {}
-    dialog = MultiInputDialog:new{
-        title   = book and _("Edit Book") or _("Add Book"),
-        fields  = {
-            { description = _("Title"),    text = current.title },
-            { description = _("Author"),   text = current.authors },
-            { description = _("Started"),  text = current.date_started,  hint = date_hint },
-            { description = _("Finished"), text = current.date_finished, hint = date_hint },
+    dialog = _dialogs().form{
+        title     = book and _("Edit Book") or _("Add Book"),
+        ok_text   = _("Save"),
+        fields    = {
+            { label = _("Title"),    value = current.title },
+            { label = _("Author"),   value = current.authors },
+            { label = _("Started"),  value = current.date_started,  hint = date_hint },
+            { label = _("Finished"), value = current.date_finished, hint = date_hint },
         },
-        buttons = { buttons },
+        actions   = actions,
+        validate  = function(texts)
+            local _values, err = _readForm(texts)
+            return err
+        end,
+        on_submit = function(texts)
+            local values = _readForm(texts)
+            finish(function() _provider().saveManualBook(book and book.key, values) end)
+        end,
     }
-    UIManager:show(dialog)
-    dialog:onShowKeyboard()
 end
 
 function ManualBooks.showCountDialog(year, on_done)
     local SP = _provider()
-    UIManager:show(require("ui/widget/spinwidget"):new{
-        title_text  = string.format(_("Manual Yearly Count — %d"), year),
-        info_text   = string.format(_("Extra books read in %d, on top of the automatic count:"), year),
-        value       = SP.getManualCount(year),
-        value_min   = 0,
-        value_max   = MAX_COUNT,
-        ok_text     = _("Save"),
-        cancel_text = _("Cancel"),
-        callback    = function(spin)
-            SP.setManualCount(year, math.floor(spin.value))
+    _dialogs().spin{
+        title     = string.format(_("Manual Yearly Count — %d"), year),
+        info      = string.format(_("Extra books read in %d, on top of the automatic count:"), year),
+        value     = SP.getManualCount(year),
+        min       = 0,
+        max       = MAX_COUNT,
+        hold_step = 10,
+        ok_text   = _("Save"),
+        on_apply  = function(value)
+            SP.setManualCount(year, math.floor(value))
             if on_done then on_done() end
         end,
-    })
+    }
 end
 
 function ManualBooks.showYearCountDialog(on_done)
     local this_year = tonumber(os.date("%Y"))
-    UIManager:show(require("ui/widget/spinwidget"):new{
-        title_text  = _("Manual Yearly Count"),
-        info_text   = _("Year:"),
-        value       = this_year,
-        value_min   = MIN_YEAR,
-        value_max   = this_year,
-        ok_text     = _("Next"),
-        cancel_text = _("Cancel"),
-        -- The year dialog opens on the current year, which is a valid choice.
-        ok_always_enabled = true,
-        callback    = function(spin)
-            ManualBooks.showCountDialog(math.floor(spin.value), on_done)
+    _dialogs().spin{
+        title     = _("Manual Yearly Count"),
+        info      = _("Year:"),
+        value     = this_year,
+        min       = MIN_YEAR,
+        max       = this_year,
+        hold_step = 10,
+        ok_text   = _("Next"),
+        on_apply  = function(value)
+            ManualBooks.showCountDialog(math.floor(value), on_done)
         end,
-    })
+    }
 end
 
 function ManualBooks.menuTitle()

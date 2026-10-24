@@ -36,7 +36,7 @@ local UIManager       = require("ui/uimanager")
 local CoverFinder    = require("features/library/sui_cover_finder")
 local Finished       = require("features/library/sui_finished_books")
 local CoverWidgets   = require("features/library/sui_cover_widgets")
-local LabelOptions   = require("features/library/sui_label_options")
+local CE             = require("features/sui_cover_elements")
 local GroupCell      = require("engines/sui_group_cell")
 local RasterCache    = require("infra/sui_raster_cache")
 local Text           = require("infra/sui_text")
@@ -51,38 +51,16 @@ local SUIWallpaper   = require("features/sui_wallpaper")
 
 local SK = {
     enabled           = "simpleui_fc_enabled",
-    show_name         = "simpleui_fc_show_name",
     hide_underline    = "simpleui_fc_hide_underline",
-    label_style       = "simpleui_fc_label_style",  -- former solid/transparent choice; seeds label_opacity
-    label_opacity     = "simpleui_fc_label_opacity",
-    label_layout      = "simpleui_fc_label_layout",
-    label_position    = "simpleui_fc_label_position",
-    label_color       = "simpleui_fc_label_color",
-    badge_position    = "simpleui_fc_badge_position",
-    badge_hidden      = "simpleui_fc_badge_hidden",
     cover_mode        = "simpleui_fc_cover_mode",
-    label_mode        = "simpleui_fc_label_mode",
-    overlay_pages     = "simpleui_fc_overlay_pages",
-    overlay_series    = "simpleui_fc_overlay_series",
-    overlay_progress  = "simpleui_fc_overlay_progress",
-    progress_mode     = "simpleui_fc_progress_mode",
-    overlay_new       = "simpleui_fc_overlay_new",
     series_grouping   = "simpleui_fc_series_grouping",
     subfolder_cover   = "simpleui_fc_subfolder_cover",
     recursive_cover   = "simpleui_fc_recursive_cover",
-    label_scale       = "simpleui_fc_label_scale",
-    folder_style      = "simpleui_fc_folder_style",
-    hide_pile         = "simpleui_fc_hide_spine",
-    show_title_strip  = "simpleui_fc_show_title_strip",
-    show_author_strip = "simpleui_fc_show_author_strip",
-    badge_color_pages    = "simpleui_fc_badge_color_pages",
-    badge_color_series   = "simpleui_fc_badge_color_series",
-    badge_color_progress = "simpleui_fc_badge_color_progress",
-    badge_color_new      = "simpleui_fc_badge_color_new",
-    new_mode             = "simpleui_fc_new_mode",
-    badge_color_folder   = "simpleui_fc_badge_color_folder",
-    badge_scale          = "simpleui_fc_badge_scale",
-    fade_amount          = "simpleui_fc_fade_amount",
+    captions_show     = "simpleui_fc_captions_show",
+    captions_content  = "simpleui_fc_captions_content",
+    legacy_title_strip  = "simpleui_fc_show_title_strip",
+    legacy_author_strip = "simpleui_fc_show_author_strip",
+    fade_amount       = "simpleui_fc_fade_amount",
 }
 
 -- ---------------------------------------------------------------------------
@@ -123,95 +101,12 @@ end
 function M.isEnabled()   return SUISettings:isTrue(SK.enabled)  end
 function M.setEnabled(v) SUISettings:saveSetting(SK.enabled, v) end
 
-function M.getShowName()       return _getFlag(SK.show_name)      end
-function M.setShowName(v)      _setFlag(SK.show_name, v)          end
 function M.getHideUnderline()  return _getFlag(SK.hide_underline) end
 function M.setHideUnderline(v) _setFlag(SK.hide_underline, v)     end
-
--- Folder-name label background opacity, 0–100 (text stays solid). Until set,
--- it follows the former solid/transparent choice.
-function M.getLabelOpacity()
-    local default = SUISettings:readSetting(SK.label_style) == "solid"
-        and 100 or Backdrop.SURFACE_DEFAULT.folder_label.strength
-    return Backdrop.readBackdropStrength(SK.label_opacity, default)
-end
-function M.setLabelOpacity(v) Backdrop.saveBackdropStrength(SK.label_opacity, v) end
-
--- "floating" (default) = inset box clear of the cover edges; "band" = strap
--- across the full cover width.
-function M.getLabelLayout()   return LabelOptions.normalize("layout", SUISettings:readSetting(SK.label_layout)) end
-function M.setLabelLayout(v)  SUISettings:saveSetting(SK.label_layout, v)                     end
-
--- "bottom" (default) | "center" | "top"
-function M.getLabelPosition()  return LabelOptions.normalize("position", SUISettings:readSetting(SK.label_position)) end
-function M.setLabelPosition(v) SUISettings:saveSetting(SK.label_position, v)                 end
-
--- "light" (default, white background / black text) | "gray" (gray background / black text)
--- | "dark" (black background / white text)
-function M.getLabelColor()  return LabelOptions.normalize("color", SUISettings:readSetting(SK.label_color)) end
-function M.setLabelColor(v) SUISettings:saveSetting(SK.label_color, v)                end
-
--- "top" (default) | "bottom"
-function M.getBadgePosition()  return SUISettings:readSetting(SK.badge_position) or "top"   end
-function M.setBadgePosition(v) SUISettings:saveSetting(SK.badge_position, v)                 end
-
-function M.getBadgeHidden()  return SUISettings:isTrue(SK.badge_hidden)  end
-function M.setBadgeHidden(v) SUISettings:saveSetting(SK.badge_hidden, v) end
 
 -- "default" = scale-to-fit; "2_3" = force 2:3 aspect ratio.
 function M.getCoverMode()  return SUISettings:readSetting(SK.cover_mode) or "default" end
 function M.setCoverMode(v) SUISettings:saveSetting(SK.cover_mode, v)                  end
-
--- "overlay" (default) = folder name on cover; "hidden" = no label.
-function M.getLabelMode()  return SUISettings:readSetting(SK.label_mode) or "overlay" end
-function M.setLabelMode(v) SUISettings:saveSetting(SK.label_mode, v)                  end
-
--- Pages badge: default on; hidden for completed books.
-function M.getOverlayPages()  return SUISettings:readSetting(SK.overlay_pages) ~= false end
-function M.setOverlayPages(v) _setFlag(SK.overlay_pages, v)                              end
-
--- Series index badge: default off.
-function M.getOverlaySeries()  return SUISettings:isTrue(SK.overlay_series) end
-function M.setOverlaySeries(v) _setFlag(SK.overlay_series, v)               end
-
--- Progress pentagon badge: default on.
--- "banner" = pentagon overlay; "native" = KOReader native marks; "none" = no marks.
--- Setting this also keeps the legacy overlay_progress flag in sync and manages
--- the native collection mark (collection_show_mark in G_reader_settings):
---   banner → disabled here, redrawn at bottom-right by paintTo.
---   native/none → restored so KOReader draws the star at top-right normally.
-function M.getOverlayProgress()  return SUISettings:readSetting(SK.overlay_progress) ~= false end
-function M.setOverlayProgress(v) _setFlag(SK.overlay_progress, v)                              end
-
-function M.getProgressMode() return SUISettings:readSetting(SK.progress_mode) or "banner" end
-function M.setProgressMode(v)
-    SUISettings:saveSetting(SK.progress_mode, v)
-    _setFlag(SK.overlay_progress, v == "banner")
-    if v == "banner" then
-        G_reader_settings:saveSetting("collection_show_mark", false)
-    elseif v == "native" or v == "none" then
-        G_reader_settings:saveSetting("collection_show_mark", true)
-    end
-end
-
--- "New" badge for unread books (percent_finished nil, status not complete/abandoned).
--- Mode: "badge" (rounded rectangle, default), "ribbon" (diagonal corner ribbon), "none".
--- For backwards-compatibility the legacy bool SK.overlay_new is preserved as the source
--- of truth for "enabled/disabled"; SK.new_mode stores the style when enabled.
-function M.getNewMode()
-    local stored = SUISettings:readSetting(SK.new_mode)
-    if stored == "ribbon" or stored == "badge" or stored == "none" then return stored end
-    -- Migrate from legacy bool: if the old key was explicitly false → "none".
-    if SUISettings:readSetting(SK.overlay_new) == false then return "none" end
-    return "ribbon"
-end
-function M.setNewMode(v)
-    SUISettings:saveSetting(SK.new_mode, v)
-    _setFlag(SK.overlay_new, v ~= "none")
-end
--- Kept for external callers (module_new_books etc.) that only need on/off.
-function M.getOverlayNew()  return M.getNewMode() ~= "none" end
-function M.setOverlayNew(v) M.setNewMode(v and "badge" or "none") end
 
 -- Virtual series folders in the mosaic, enabled per browse mode (see
 -- sui_library_browse.MODES): "normal" is the filesystem view.
@@ -227,35 +122,35 @@ function M.setSubfolderCover(v) _setFlag(SK.subfolder_cover, v)               en
 function M.getRecursiveCover()  return SUISettings:isTrue(SK.recursive_cover) end
 function M.setRecursiveCover(v) _setFlag(SK.recursive_cover, v)               end
 
--- "single" (default) | "quad" (2×2 grid) | "auto" (single <4 books, quad ≥4).
-function M.getFolderStyle()  return SUISettings:readSetting(SK.folder_style) or "single" end
-function M.setFolderStyle(v) SUISettings:saveSetting(SK.folder_style, v)                 end
+-- Library captions: the title (and author) strip below mosaic covers.
+-- "title_author" is the default content. A restart applies a change, since
+-- the strip patches the mosaic item at install.
+local CAPTIONS_CONTENT = { "title", "title_author" }
+function M.getCaptionsShow()    return SUISettings:isTrue(SK.captions_show) end
+function M.setCaptionsShow(v)   SUISettings:saveSetting(SK.captions_show, v) end
+function M.getCaptionsContent()
+    return Config.readChoice(SK.captions_content, CAPTIONS_CONTENT, "title_author")
+end
+function M.setCaptionsContent(v) SUISettings:saveSetting(SK.captions_content, v) end
 
--- Hide the book pile behind folder covers.
-function M.getHidePile()  return SUISettings:isTrue(SK.hide_pile)  end
-function M.setHidePile(v) SUISettings:saveSetting(SK.hide_pile, v) end
-
--- Title/author strip below mosaic covers. Requires restart to take effect.
-function M.getShowTitleStrip()   return SUISettings:isTrue(SK.show_title_strip)   end
-function M.setShowTitleStrip(v)  SUISettings:saveSetting(SK.show_title_strip, v)  end
-function M.getShowAuthorStrip()  return SUISettings:isTrue(SK.show_author_strip)  end
-function M.setShowAuthorStrip(v) SUISettings:saveSetting(SK.show_author_strip, v) end
-
--- Per-badge color: "dark" = black bg / white text; "light" = white bg / black text.
-function M.getBadgeColorPages()     return SUISettings:readSetting(SK.badge_color_pages)    or "light" end
-function M.setBadgeColorPages(v)    SUISettings:saveSetting(SK.badge_color_pages, v)                   end
-function M.getBadgeColorSeries()    return SUISettings:readSetting(SK.badge_color_series)   or "light" end
-function M.setBadgeColorSeries(v)   SUISettings:saveSetting(SK.badge_color_series, v)                  end
-function M.getBadgeColorProgress()  return SUISettings:readSetting(SK.badge_color_progress) or "dark"  end
-function M.setBadgeColorProgress(v) SUISettings:saveSetting(SK.badge_color_progress, v)                end
-function M.getBadgeColorNew()       return SUISettings:readSetting(SK.badge_color_new)      or "dark"  end
-function M.setBadgeColorNew(v)      SUISettings:saveSetting(SK.badge_color_new, v)                     end
-function M.getBadgeColorFolder()    return SUISettings:readSetting(SK.badge_color_folder)   or "dark"  end
-function M.setBadgeColorFolder(v)   SUISettings:saveSetting(SK.badge_color_folder, v)                  end
+-- Moves the two strip flags of earlier versions to the captions keys.
+function M.migrateLegacyCaptions()
+    local title, author = SUISettings:get(SK.legacy_title_strip), SUISettings:get(SK.legacy_author_strip)
+    if title ~= nil or author ~= nil then
+        local shown = title == true or author == true
+        if SUISettings:get(SK.captions_show) == nil then SUISettings:setNoFlush(SK.captions_show, shown) end
+        if shown and SUISettings:get(SK.captions_content) == nil then
+            SUISettings:setNoFlush(SK.captions_content, author == true and "title_author" or "title")
+        end
+    end
+    SUISettings:delNoFlush(SK.legacy_title_strip)
+    SUISettings:delNoFlush(SK.legacy_author_strip)
+    logger.info("simpleui: migration v13 — library captions settings moved to the captions keys")
+end
 
 -- Fade intensity of finished book covers in mosaic view (the "fade" mode of
 -- sui_finished_books.lua): integer percentage 10–90, default 50.
--- Stored and exposed as an integer % so SpinWidget needs no unit conversion.
+-- Stored and exposed as an integer % so the spin dialog needs no unit conversion.
 local _FADE_AMOUNT_MIN = 10
 local _FADE_AMOUNT_MAX = 90
 local _FADE_AMOUNT_DEF = 50
@@ -275,50 +170,6 @@ function M.setFadeAmountPct(v)
 end
 -- lightenRect expects a 0.0–1.0 float.
 function M.getFadeAmount() return M.getFadeAmountPct() / 100 end
-
--- Folder label text scale: integer %, clamped to [50, 200], default 100.
-function M.getLabelScalePct()
-    return LabelOptions.normalize("scale_pct", SUISettings:readSetting(SK.label_scale))
-end
-function M.getLabelScale()    return M.getLabelScalePct() / 100 end
-function M.setLabelScale(pct) SUISettings:saveSetting(SK.label_scale, LabelOptions.normalize("scale_pct", pct)) end
-
--- Folder covers badge scale
-function M.getBadgeScalePct() return Config.getScalePctByKey(SK.badge_scale) end
-function M.getBadgeScale()    return M.getBadgeScalePct() / 100 * SUIStyle.BADGE_SIZE_ADJUST end
-function M.setBadgeScale(pct) Config.setScaleByKey(pct, SK.badge_scale) end
-
--- Menu items for the progress badge sub-menu (banner / native / none).
--- Triggers a full redraw on change so the mosaic updates immediately.
-function M.getProgressModeMenuItems()
-    local function _set(mode)
-        M.setProgressMode(mode)
-        local ok_ui, UIManager = pcall(require, "ui/uimanager")
-        if ok_ui and UIManager then
-            local ok_fm, fm_mod = pcall(require, "apps/filemanager/filemanager")
-            if ok_fm and fm_mod and fm_mod.instance then
-                fm_mod.instance.file_chooser:updateItems()
-            end
-        end
-    end
-    return {
-        {
-            text_func    = function() return _("Banner") end,
-            checked_func = function() return M.getProgressMode() == "banner" end,
-            callback     = function() _set("banner") end,
-        },
-        {
-            text_func    = function() return _("Native") end,
-            checked_func = function() return M.getProgressMode() == "native" end,
-            callback     = function() _set("native") end,
-        },
-        {
-            text_func    = function() return _("None") end,
-            checked_func = function() return M.getProgressMode() == "none" end,
-            callback     = function() _set("none") end,
-        },
-    }
-end
 
 -- ---------------------------------------------------------------------------
 -- 4. Constants
@@ -606,7 +457,7 @@ end
 -- "auto" counts books and returns "quad" (>=4) or "single" (<4).
 -- The optional `entry` is used to identify virtual folder types.
 local function _resolveStyle(menu, dir_path, entry)
-    local style = M.getFolderStyle()
+    local style = CE.getFolderType()
     if style ~= "auto" then return style end
     if not menu or not dir_path then return "single" end
 
@@ -1077,7 +928,7 @@ local function _installStripPatch(MosaicMenuItem, BookInfoManager, _STRIP_H,
                         self.width - 2 * BACKDROP_MARGIN_X, _STRIP_H, look, BACKDROP_RADIUS)
                     UI_core.paintWithAlphaMask(self, bb,
                         x, strip_y, self.width, _STRIP_H,
-                        Blitbuffer_s.COLOR_BLACK,
+                        look.foreground or Blitbuffer_s.COLOR_BLACK,
                         _stripPaintFn)
                 else
                     bb:blitFrom(self._simpleui_strip_bb,
@@ -1205,8 +1056,8 @@ function M.install()
     MosaicMenuItem._simpleui_fc_orig_paintTo = orig_paintTo
 
     -- ── Title/Author strip height (fixed for this session; requires restart) ──
-    local _show_title_strip  = M.getShowTitleStrip()
-    local _show_author_strip = M.getShowAuthorStrip()
+    local _show_title_strip  = M.getCaptionsShow()
+    local _show_author_strip = _show_title_strip and M.getCaptionsContent() == "title_author"
     local _STRIP_H = 0
 
     if _show_title_strip or _show_author_strip then
@@ -1233,24 +1084,24 @@ function M.install()
 
     -- Display settings every folder-cover builder consumes, read in one place.
     local function _readDisplay()
+        local name = CE.getNameOptions()
         local display = {
-            label_mode    = M.getLabelMode(),
-            show_name     = M.getShowName(),
-            label_opacity = M.getLabelOpacity(),
-            label_layout  = M.getLabelLayout(),
-            label_pos     = M.getLabelPosition(),
-            label_color   = M.getLabelColor(),
-            label_scale   = M.getLabelScale(),
+            show_name     = CE.isShown("name"),
+            label_opacity = name.opacity,
+            label_layout  = name.layout,
+            label_pos     = name.position,
+            label_color   = name.color,
+            label_scale   = name.scale_pct / 100,
             badge = {
-                hidden   = M.getBadgeHidden(),
-                scale    = M.getBadgeScale(),
-                dark     = M.getBadgeColorFolder() == "dark",
-                position = M.getBadgePosition(),
+                hidden   = not CE.isShown("count"),
+                scale    = CE.getScale(),
+                color    = CE.getColor("count"),
+                position = CE.getVariant("count"),
             },
         }
         -- When the strip is active it already shows the folder name below
         -- the cover — suppress the overlay label to avoid redundancy.
-        if _STRIP_H > 0 then display.label_mode = "hidden" end
+        if _STRIP_H > 0 then display.show_name = false end
         return display
     end
 
@@ -1286,7 +1137,7 @@ function M.install()
 
     function MosaicMenuItem:update(...)
         -- Settings paintTo() needs are read here, once per update, not per paint.
-        self._fc_progress_mode = M.getProgressMode()
+        self._fc_progress_mode = CE.progressMode()
         -- Invalidate the strip cache on every cover reload.
         self._simpleui_strip_data = nil
         if self._simpleui_strip_bb then
@@ -1357,8 +1208,8 @@ function M.install()
 
             self._fc_underline_color  = M.getHideUnderline()
                 and SUIStyle.COLOR.surface or SUIStyle.COLOR.text_primary
-            self._fc_overlay_pages    = M.getOverlayPages()
-            self._fc_overlay_series   = M.getOverlaySeries()
+            self._fc_overlay_pages    = CE.isShown("pages")
+            self._fc_overlay_series   = CE.isShown("series")
             self._fc_overlay_progress = self._fc_progress_mode == "banner"
             -- _fc_overlay_new is set per-book below by the new-mode block.
 
@@ -1374,25 +1225,23 @@ function M.install()
             self._fc_series_widget = nil
             self._fc_new_widget    = nil
 
-            local badge_scale = M.getBadgeScale()
+            local badge_scale = CE.getScale()
             self._fc_badge_scale = badge_scale
             self._fc_fade = self.status == "complete" and Finished.isFaded()
                 and M.getFadeAmount() or nil
 
             if self._fc_overlay_pages and self.status ~= "complete" and self._fc_pages then
                 local cell_min = math.min(self.width or 40, self.height or 40)
-                local dark = M.getBadgeColorPages() == "dark"
                 self._fc_pages_widget = CoverWidgets.buildRectBadgeWidget(
-                    self._fc_pages .. _(" p."), false, cell_min, dark, false, badge_scale)
+                    self._fc_pages .. _(" p."), false, cell_min, CE.getColor("pages"), false, badge_scale)
             end
 
             if self._fc_overlay_series then
                 local bookinfo = BookInfoManager:getBookInfo(self.filepath, false)
                 if bookinfo and bookinfo.series and bookinfo.series_index then
                     local cell_min = math.min(self.width or 40, self.height or 40)
-                    local dark = M.getBadgeColorSeries() == "dark"
                     self._fc_series_widget = CoverWidgets.buildRectBadgeWidget(
-                        "#" .. bookinfo.series_index, false, cell_min, dark, false, badge_scale)
+                        "#" .. bookinfo.series_index, false, cell_min, CE.getColor("series"), false, badge_scale)
                 end
             end
 
@@ -1406,28 +1255,27 @@ function M.install()
                 if has_progress then
                 local eff_size = math.max(8, math.floor(
                     math.min(self.width or 40, self.height or 40) * 0.14 * badge_scale))
-                    local dark = M.getBadgeColorProgress() == "dark"
                     local prog_desc = CoverWidgets.buildProgressBadgeDesc(
                         eff_size, self.status, self.percent_finished,
-                        SUIStyle.BADGE_BORDER_SZ, dark)
+                        SUIStyle.BADGE_BORDER_SZ, CE.getColor("progress"))
                     if prog_desc then self._fc_progress_bb = prog_desc end
                 end
             end
 
             -- "New" badge: unread books (percent_finished nil).
-            -- The mode is read once per update and stored on the item so paintTo
-            -- doesn't need to call M.getNewMode() on every frame.
-            local _new_mode = M.getNewMode()
+            -- The type is read once per update and stored on the item so paintTo
+            -- doesn't need to read it on every frame.
+            local _new_mode = CE.isShown("new") and CE.getVariant("new")
             self._fc_new_mode = _new_mode
-            if _new_mode ~= "none" then
+            if _new_mode then
                 local is_unread = (self.percent_finished == nil)
                     and (self.status ~= "complete") and (self.status ~= "abandoned")
                 if is_unread then
-                    self._fc_new_dark = M.getBadgeColorNew() == "dark"
+                    self._fc_new_color = CE.getColor("new")
                     if _new_mode == "badge" then
                         local cell_min = math.min(self.width or 40, self.height or 40)
                         self._fc_new_widget = CoverWidgets.buildRectBadgeWidget(
-                            _("New"), true, cell_min, self._fc_new_dark, true, badge_scale)
+                            _("New"), true, cell_min, self._fc_new_color, true, badge_scale)
                     end
                     -- ribbon mode: no widget pre-built; painted directly in paintTo.
                     self._fc_overlay_new = true
@@ -1504,7 +1352,7 @@ function M.install()
         -- `display` is optional; when omitted it is read from the settings so
         -- the rest of the pipeline never receives a nil table.
         display = display or _readDisplay()
-        local border, backing, max_img_w, max_img_h = CoverWidgets.computeCellGeometry(self, M.getHidePile())
+        local border, backing, max_img_w, max_img_h = CoverWidgets.computeCellGeometry(self, not CE.isShown("stack"))
 
         local img_options = {}
         if img.file then img_options.file  = img.file end
@@ -1545,7 +1393,7 @@ function M.install()
         if ready > 0 then
             if quad then
                 local border, backing, max_img_w, max_img_h =
-                    CoverWidgets.computeCellGeometry(self, M.getHidePile())
+                    CoverWidgets.computeCellGeometry(self, not CE.isShown("stack"))
                 local widget = CoverWidgets.buildQuadCover(
                     self, plan.covers, border, backing, max_img_w, max_img_h, display)
                 if widget then CoverWidgets.installWidget(self, widget, plan.complete) end
@@ -1571,87 +1419,20 @@ function M.install()
     end
 
     -- Placeholder cover for bookless folders (subfolders only or empty).
+    -- Same framed title/author layout as books without a cover, with a fixed
+    -- title so empty folders remain recognisable in the mosaic.
     function MosaicMenuItem:_setEmptyFolderCover(display)
         display = display or _readDisplay()
         self._foldercover_processed = true
-        local border, backing, max_img_w, max_img_h = CoverWidgets.computeCellGeometry(self, M.getHidePile())
+        local border, backing, max_img_w, max_img_h = CoverWidgets.computeCellGeometry(self, not CE.isShown("stack"))
 
-        local ratio = 2 / 3
-        local img_w, img_h
-        if max_img_w / max_img_h > ratio then
-            img_h = max_img_h; img_w = math.floor(max_img_h * ratio)
-        else
-            img_w = max_img_w; img_h = math.floor(max_img_w / ratio)
-        end
-
-        local icon_size   = math.floor(math.min(img_w, img_h) * 0.5)
-        local icon_widget = nil
-
-        local actual_icon_path = _ICON_PATH
-        pcall(function()
-            local SUIStyle = require("features/sui_style")
-            local custom = SUIStyle.getIcon("sui_fc_empty")
-            if custom then actual_icon_path = custom end
-        end)
-
-        local nerd_char = Config.nerdIconChar(actual_icon_path)
-
-        if nerd_char then
-            local ok_tw, tw = pcall(function()
-                return CenterContainer:new{
-                    dimen = Geom:new{ w = img_w, h = img_h },
-                    TextWidget:new{
-                        text    = nerd_char,
-                        face    = SUIStyle.glyphFace(icon_size),
-                        fgcolor = SUIStyle.COLOR.text_primary,
-                        padding = 0,
-                    },
-                }
-            end)
-            if ok_tw then icon_widget = tw end
-        else
-            local actual_icon_exists = lfs.attributes(actual_icon_path, "mode") == "file"
-            if actual_icon_exists then
-                local ok_iw, iw = pcall(function()
-                    return CenterContainer:new{
-                        dimen = Geom:new{ w = img_w, h = img_h },
-                        ImageWidget:new{
-                            file    = actual_icon_path,
-                            width   = icon_size,
-                            height  = icon_size,
-                            alpha   = true,
-                            is_icon = true,
-                        },
-                    }
-                end)
-                if ok_iw then icon_widget = iw end
-            end
-        end
-
-        -- Fallback: if neither the nerd-font glyph nor the icon file resolved
-        -- (custom "sui_fc_empty" icon missing/moved, or the pcall above
-        -- failed for any other reason), icon_widget would still be nil here.
-        -- FrameContainer:getSize() unconditionally calls self[1]:getSize()
-        -- (it does NOT short-circuit on self.dimen), so a nil child crashes
-        -- the whole mosaic page as soon as it's measured. A blank spacer
-        -- keeps bg_canvas paintable with just its white background.
-        if not icon_widget then
-            icon_widget = CenterContainer:new{
-                dimen = Geom:new{ w = img_w, h = img_h },
-                VerticalSpan:new{ width = 1 },
-            }
-        end
-
-        local bg_canvas = FrameContainer:new{
-            padding    = 0,
-            bordersize = 0,
-            background = SUIStyle.COLOR.surface,
-            dimen      = Geom:new{ w = img_w, h = img_h },
-            icon_widget,
-        }
+        local Placeholder = require("engines/sui_cover_placeholder")
+        local img_w, img_h = Placeholder.fitSize(max_img_w, max_img_h)
+        local title = _("Empty folder")
+        local cover = Placeholder.build(img_w, img_h, title, nil)
 
         local size    = Geom:new{ w = img_w, h = img_h }
-        local content = FrameContainer:new{ padding = 0, bordersize = border, bg_canvas }
+        local content = FrameContainer:new{ padding = 0, bordersize = border, cover }
         CoverWidgets.installWidget(self, CoverWidgets.assembleCoverWidget(self, content, size, border, backing, display))
     end
 
@@ -1865,7 +1646,7 @@ function M.install()
                     end
                     CoverWidgets.paintCornerRibbon(bb,
                         cover_left, cover_right, fy, fh,
-                        span, band_thick, _("New"), font_sz, self._fc_new_dark)
+                        span, band_thick, _("New"), font_sz, self._fc_new_color)
                     -- Repaint cover border over ribbon so it isn't obscured.
                 local brd = SUIStyle.BADGE_BORDER_SZ
                     if brd > 0 then

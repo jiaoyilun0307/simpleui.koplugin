@@ -18,6 +18,7 @@ local logger         = require("logger")
 local SUISettings = require("infra/sui_store")
 local Memory      = require("infra/sui_memory")
 local SUIStyle    = require("features/sui_style")
+local Accent      = require("infra/sui_accent")
 
 -- Lazy references to sibling modules — resolved on first use to avoid
 -- circular-require issues at load time, but stored as upvalues so that
@@ -499,10 +500,9 @@ function M.wrapWithNavbar(inner_widget, active_action_id, tabs, force_no_arrows)
     local topbar_idx       = topbar_on and #overlap_items or nil
     local navbar_container = OverlapGroup():new(overlap_items)
     -- The plain surface behind the bars and content stays unless a bar is
-    -- fully transparent, so the wallpaper shows through.
+    -- fully transparent over a loaded wallpaper, so the wallpaper shows through.
     local WP = require("features/sui_wallpaper")
-    local bars_opaque = WP.resolveBar("navbar").strength > 0 and WP.resolveBar("statusbar").strength > 0
-    local wrapper_bg = bars_opaque and SUIStyle.COLOR.surface or nil
+    local wrapper_bg = not WP.barsRevealWallpaper() and SUIStyle.COLOR.surface or nil
 
     return navbar_container,
            FrameContainer():new{
@@ -736,11 +736,97 @@ function M.paintWithAlphaMask(widget, target_bb, x, y, w, h, fgcolor, custom_pai
     if not ok then error(err, 0) end
 end
 
+-- ---------------------------------------------------------------------------
+-- Ink of native controls
+-- Native texts and icons are drawn in fixed black. paintInk draws them in a
+-- surface's text colours for one paint pass. The colours are read by the
+-- caller at paint time and nothing is stored, so there is nothing to undo
+-- when the surface stops having a foreground.
+-- ---------------------------------------------------------------------------
+
+local _ink_fg, _ink_dim
+local _ink_paint = {}  -- widget -> paintTo it had before the pass
+
+-- Paints an icon-like widget (icon button, button) through its alpha mask
+-- recoloured to `fg`, so the colour never depends on night mode. `paint` is
+-- the widget's own paintTo.
+function M.paintInkIcon(widget, bb, x, y, fg, paint)
+    local size = widget:getSize()
+    local w, h = size.w, size.h
+    if w <= 0 or h <= 0 or x >= bb:getWidth() or x + w <= 0
+            or y >= bb:getHeight() or y + h <= 0 then
+        return paint(widget, bb, x, y)
+    end
+    M.paintWithAlphaMask(widget, bb, x, y, w, h, fg, paint)
+    -- The masked paint ran at 0, 0: record the real position again.
+    local dimen = widget.dimen
+    if dimen then dimen.x, dimen.y = x, y end
+end
+
+-- Stand-in paintTo of the icons of a paintInk pass; a disabled one takes the
+-- dim ink.
+local function _paintInkIcon(widget, bb, x, y)
+    M.paintInkIcon(widget, bb, x, y, widget.enabled == false and _ink_dim or _ink_fg,
+        _ink_paint[widget])
+end
+
+-- Calls paint(widget, bb, x, y) with the given native parts drawn in ink:
+-- `fg` for primary content, `dim` for disabled content.
+--   texts  TextWidgets; one whose colour is not the native black or gray (for
+--          instance a button flashing on tap) keeps it
+--   icons  IconButtons and Buttons holding an icon
+function M.paintInk(fg, dim, texts, icons, paint, widget, bb, x, y)
+    local BLACK, GRAY = Blitbuffer.COLOR_BLACK, Blitbuffer.COLOR_DARK_GRAY
+    local saved_fg, saved_dim = _ink_fg, _ink_dim
+    _ink_fg, _ink_dim = fg, dim
+
+    local restore = {}
+    for _, tw in ipairs(texts) do
+        local native = tw.fgcolor
+        if native == BLACK or native == GRAY then
+            restore[#restore + 1] = { tw, native }
+            tw.fgcolor = native == BLACK and fg or dim
+        end
+    end
+    local own = {}
+    for i, btn in ipairs(icons) do
+        own[i] = { btn, rawget(btn, "paintTo") }
+        _ink_paint[btn] = btn.paintTo
+        btn.paintTo = _paintInkIcon
+    end
+
+    local ok, err = pcall(paint, widget, bb, x, y)
+
+    for _, entry in ipairs(own) do
+        entry[1].paintTo = entry[2]
+        _ink_paint[entry[1]] = nil
+    end
+    for _, entry in ipairs(restore) do entry[1].fgcolor = entry[2] end
+    _ink_fg, _ink_dim = saved_fg, saved_dim
+    if not ok then error(err, 0) end
+end
+
 -- Shared lazy loader used by makeAlphaMaskWidget and its callers below.
 local _WidgetContainer
 local function _WC()
     _WidgetContainer = _WidgetContainer or require("ui/widget/container/widgetcontainer")
     return _WidgetContainer
+end
+
+-- A single UTF-8 character.
+local SINGLE_CHAR = "^[\1-\127\194-\244][\128-\191]*$"
+
+-- Pixels by which the ink of the symbol glyph `inner` shows past the left and
+-- right edges of its box; 0, 0 for any other widget.
+local function _glyphBleed(inner)
+    local face, text = inner and inner.face, inner and inner.text
+    if not (face and face.orig_font == SUIStyle.FACE_ICONS
+            and type(text) == "string" and text:match(SINGLE_CHAR)) then
+        return 0, 0
+    end
+    local ink = SUIStyle.glyphInk(face, text)
+    if not ink then return 0, 0 end
+    return math.max(0, -ink.left), math.max(0, ink.left + ink.width - inner:getWidth())
 end
 
 -- ---------------------------------------------------------------------------
@@ -757,6 +843,9 @@ end
 -- `dimen` defaults to `inner:getSize()`. Pass it explicitly when the wrapper
 -- needs to report a size independent of the inner widget (e.g. a fixed
 -- icon-cell size).
+--
+-- An inner symbol glyph is painted whole: the mask also covers the sides where
+-- its ink exceeds its advance box. The size the wrapper reports does not change.
 -- ---------------------------------------------------------------------------
 function M.makeAlphaMaskWidget(inner, fgcolor, dimen)
     local widget = _WC():new{}
@@ -768,12 +857,29 @@ function M.makeAlphaMaskWidget(inner, fgcolor, dimen)
         return self.dimen
     end
 
+    -- Bleed of the current glyph, measured again only when its text changes.
+    local bleed_text, bleed_left, bleed_right = nil, 0, 0
+    local function bleed()
+        local text = widget._inner and widget._inner.text
+        if text ~= bleed_text then
+            bleed_text = text
+            bleed_left, bleed_right = _glyphBleed(widget._inner)
+        end
+        return bleed_left, bleed_right
+    end
+
     function widget:paintTo(bb, x, y)
         self.dimen.x, self.dimen.y = x, y
         local w = self.dimen.w
         local h = self.dimen.h
         if w <= 0 or h <= 0 then return end
-        M.paintWithAlphaMask(self._inner, bb, x, y, w, h, self._fg)
+        local left, right = bleed()
+        if left + right == 0 then
+            M.paintWithAlphaMask(self._inner, bb, x, y, w, h, self._fg)
+            return
+        end
+        M.paintWithAlphaMask(self._inner, bb, x - left, y, w + left + right, h, self._fg,
+            function(inner, mask, mx, my) inner:paintTo(mask, mx + left, my) end)
     end
 
     function widget:onCloseWidget()
@@ -880,6 +986,30 @@ end
 --   refreshBoxes    — refreshes the recorded boxes of the changed widgets.
 -- ---------------------------------------------------------------------------
 
+-- Runs `fn` after acknowledging a tap the way KOReader's own buttons do: the
+-- `target` widget (anything with a painted `dimen`) is shown inverted for one
+-- e-ink refresh, then restored before `fn` runs, so `fn` is free to close or
+-- repaint the window. `target` is optional; the flash_ui setting turns the
+-- acknowledgement off.
+function M.runWithTapFeedback(target, fn)
+    if not target or G_reader_settings:isFalse("flash_ui") then return fn() end
+
+    local UIManager = require("ui/uimanager")
+    local region = target.dimen:copy()
+    target.invert = true
+    UIManager:widgetInvert(target, region.x, region.y)
+    UIManager:setDirty(nil, "fast", region)
+    UIManager:forceRePaint()
+    UIManager:yieldToEPDC()
+
+    target.invert = false
+    UIManager:widgetInvert(target, region.x, region.y)
+    UIManager:setDirty(nil, "fast", region)
+
+    fn()
+    UIManager:forceRePaint()
+end
+
 -- Makes `widget` keep its on-screen box (x, y, w, h) in `widget.dimen`,
 -- updated on every paint.
 function M.trackDimen(widget)
@@ -892,6 +1022,54 @@ function M.trackDimen(widget)
         paint(self, bb, x, y)
     end
     return widget
+end
+
+local FOCUS_RING_DP = 3 -- thickness of the D-pad focus frame
+
+-- Overlays a frame of `color` (default: primary text) on `widget`, which is
+-- w x h. For widgets rebuilt whenever the focus moves.
+function M.wrapFocusRing(widget, w, h, color)
+    local bw = Screen:scaleBySize(FOCUS_RING_DP)
+    color = color or SUIStyle.COLOR.text_primary
+    local function line(lw, lh, ox, oy)
+        return LineWidget():new{ dimen = Geom():new{ w = lw, h = lh }, background = color, overlap_offset = { ox, oy } }
+    end
+    return OverlapGroup():new{
+        dimen = Geom():new{ w = w, h = h },
+        widget,
+        line(w, bw, 0, 0),
+        line(w, bw, 0, h - bw),
+        line(bw, h, 0, 0),
+        line(bw, h, w - bw, 0),
+    }
+end
+
+-- Turns the tap container `widget` into a D-pad focus stop: Focus and Unfocus
+-- events (sent by a FocusManager or by the screen engine) show and hide a
+-- frame drawn over it, and `on_select` becomes its onTapSelect action. The
+-- frame follows the painted `dimen`, so no rebuild is needed to move focus.
+function M.makeFocusable(widget, on_select)
+    local paint = widget.paintTo
+    function widget:paintTo(bb, x, y)
+        paint(self, bb, x, y)
+        if self._kb_focused then
+            local box = self.dimen
+            bb:paintBorder(box.x, box.y, box.w, box.h, Screen:scaleBySize(FOCUS_RING_DP), SUIStyle.COLOR.text_primary)
+        end
+    end
+    function widget:onFocus()   self._kb_focused = true;  return true end
+    function widget:onUnfocus() self._kb_focused = false; return true end
+    widget.onTapSelect = on_select
+    return widget
+end
+
+-- Registers the focus stops of a grid in the D-pad navigation of the screen,
+-- one row of stops per grid row. `row_stops[r]` lists the stops of row `r`;
+-- rows left unfilled are emptied so they keep their place in the navigation
+-- order. Does nothing without ctx.kbStops.
+function M.setFocusRows(ctx, id, grid_rows, row_stops)
+    if not ctx.kbStops then return end
+    for r = 1, grid_rows do ctx.kbStops(id .. ":r" .. r, row_stops[r] or {}) end
 end
 
 -- Sets new texts on mounted text widgets (makeColoredText results or
@@ -1009,19 +1187,52 @@ function M.wrapDimmable(inner, dim, fgcolor)
 end
 
 -- ---------------------------------------------------------------------------
+-- Solid bar — LineWidget and Blitbuffer:paintRect reduce every colour to a
+-- gray level, so a bar that may take the accent colour is painted through
+-- AAPaint.fillRect (RGB32).
+-- ---------------------------------------------------------------------------
+local _SolidBar
+function M.solidBar(w, h, color)
+    if not _SolidBar then
+        local Widget  = require("ui/widget/widget")
+        local AAPaint = require("infra/sui_aa_paint")
+        _SolidBar = Widget:extend{ color = nil }
+        function _SolidBar:paintTo(bb, x, y)
+            self.dimen.x, self.dimen.y = x, y
+            AAPaint.fillRect(bb, x, y, self.dimen.w, self.dimen.h, self.color, 255)
+        end
+    end
+    return _SolidBar:new{ dimen = Geom():new{ w = w, h = h }, color = color }
+end
+
+-- Glyph or text drawn in the accent colour when one is set (check boxes, ticks,
+-- chevrons, titles, ...), else a plain TextWidget in `fallback`. `opts` are
+-- TextWidget fields without fgcolor.
+function M.makeAccentText(opts, fallback)
+    local accent = Accent.color()
+    local fields = {}
+    for k, v in pairs(opts) do fields[k] = v end
+    if accent then
+        fields.fgcolor = accent
+        return M.makeColoredText(fields)
+    end
+    fields.fgcolor = fallback
+    return _TW():new(fields)
+end
+
+-- ---------------------------------------------------------------------------
 -- Shared Progress Bar
 -- ---------------------------------------------------------------------------
 function M.progressBar(w, pct, bar_h, fg_color, bg_color)
     bar_h = bar_h or Screen:scaleBySize(4)
-    
-    local ok, SUIStyle = pcall(require, "features/sui_style")
+
     local style = SUISettings:get("simpleui_style_progress_bar_type") or "flat"
 
     local bg = bg_color or SUIStyle.COLOR.track
-    local fg = fg_color or SUIStyle.COLOR.gray
+    local fg = fg_color or SUIStyle.accent(SUIStyle.COLOR.gray)
     
     if style == "framed" then
-        local border = ok and SUIStyle.BADGE_BORDER_SZ or 1
+        local border = SUIStyle.BADGE_BORDER_SZ
         local border_color = SUIStyle.COLOR.text_primary
         local inner_w = math.max(0, w - 2 * border)
         local inner_h = math.max(0, bar_h - 2 * border)
@@ -1039,7 +1250,12 @@ function M.progressBar(w, pct, bar_h, fg_color, bg_color)
             return bg_frame
         end
 
-        local fg_bar = LineWidget():new{ dimen = Geom():new{ w = fw, h = inner_h }, background = fg }
+        -- The frame interior is the plain surface: a fill that does not stand
+        -- out from it (light ink over a tinted card) is drawn dark instead.
+        if not Accent.contrastsWith(SUIStyle.COLOR.surface, 100, fg) then
+            fg = SUIStyle.COLOR.text_primary
+        end
+        local fg_bar = M.solidBar(fw, inner_h, fg)
         fg_bar.overlap_offset = { border, border }
 
         return OverlapGroup():new{
@@ -1055,7 +1271,7 @@ function M.progressBar(w, pct, bar_h, fg_color, bg_color)
         return OverlapGroup():new{
             dimen = Geom():new{ w = w, h = bar_h },
             LineWidget():new{ dimen = Geom():new{ w = w,  h = bar_h }, background = bg },
-            LineWidget():new{ dimen = Geom():new{ w = fw, h = bar_h }, background = fg },
+            M.solidBar(fw, bar_h, fg),
         }
     end
 end
@@ -1135,25 +1351,27 @@ function M.BarInjection.allIds()
 end
 
 -- ---------------------------------------------------------------------------
--- Notify — shared InfoMessage helpers.
+-- Notify — shared notices.
 --
 -- Central place for the two notice behaviours used across Simple UI:
 --
 --   toast   — auto-dismiss feedback (errors, validation, success).
 --             Default timeout is 3 seconds; pass a longer value when the
 --             message needs more reading time (e.g. backup paths, errors).
+--             Only one toast is visible at a time: a new one replaces it.
 --   sticky  — stays until closed or timeout=0 tick; optional forceRePaint
 --             so the message is visible on e-ink before blocking work.
---   close   — safe dismiss for a sticky held by the caller.
+--             Independent of toasts.
+--   close   — safe dismiss for a notice held by the caller.
 --
 -- Callers keep translated strings at the call site. This module only owns
--- the show/close/repaint mechanics so timeouts and e-ink flush stay consistent.
+-- the show/close/repaint mechanics so timeouts and e-ink flush stay consistent;
+-- the look is the one of engines/sui_toast.lua.
 --
 -- Convention: this is the only entry point for one-off notices anywhere in
--- Simple UI. Call sites should not require("ui/widget/infomessage") and
--- show it directly — go through Notify.toast/sticky instead, even for a
--- single, simple message, so timeout defaults and e-ink repaint behaviour
--- stay uniform across the plugin.
+-- Simple UI. Call sites do not build native message widgets directly: they go
+-- through Notify.toast/sticky, even for a single, simple message, so timeout
+-- defaults, look and e-ink repaint behaviour stay uniform across the plugin.
 --
 -- Higher-level helpers built on Notify:
 --   applyPresetWithNotice  — sticky "Applying preset…" around a work fn
@@ -1166,54 +1384,43 @@ local function _uim()
     return require("ui/uimanager")
 end
 
-local function _infoMessage()
-    return require("ui/widget/infomessage")
+local function _Toast()
+    return require("engines/sui_toast")
 end
 
---- Auto-dismiss toast.
+-- The toast on screen, if any. Weak, so a closed toast is not kept alive.
+local visible = setmetatable({}, { __mode = "v" })
+
+--- Auto-dismiss toast, replacing the one on screen.
 -- @param text string  Already-translated message.
 -- @param timeout number|nil  Seconds visible (default 3).
--- @return widget  The InfoMessage instance (rarely needed).
+-- @return widget  The toast (rarely needed).
 function M.Notify.toast(text, timeout)
-    local notice = _infoMessage():new{
+    M.Notify.close(visible.toast)
+    local toast = _Toast():new{
         text    = text,
         timeout = timeout or 3,
     }
-    _uim():show(notice)
-    return notice
+    visible.toast = toast
+    _uim():show(toast)
+    return toast
 end
 
---- Sticky notice (timeout 0 by default). Optional compact width and repaint.
+--- Sticky notice (timeout 0 by default). Optional repaint.
 --
 -- opts:
---   timeout  number   dismiss delay; 0 / 0.0 means next-tick auto-close
---                     (InfoMessage default sticky behaviour). Default 0.
+--   timeout  number   dismiss delay; 0 / 0.0 means next-tick auto-close.
+--                     Default 0.
 --   repaint  boolean  call forceRePaint after show so e-ink shows the
 --                     notice before the caller blocks. Default true.
---   compact  boolean  shrink width to the text plus padding (power-style).
---   width    number   explicit width; ignored when compact is true.
--- @return widget  The InfoMessage (hold this to close later via Notify.close).
+-- @return widget  The notice (hold this to close it later via Notify.close).
 function M.Notify.sticky(text, opts)
     opts = opts or {}
     local UIManager = _uim()
-    local params = {
+    local notice = _Toast():new{
         text    = text,
         timeout = opts.timeout ~= nil and opts.timeout or 0,
     }
-
-    if opts.compact then
-        local Font       = require("ui/font")
-        local Size       = require("ui/size")
-        local RenderText = require("ui/rendertext")
-        local face       = Font:getFace("infofont")
-        local text_w     = RenderText:sizeUtf8Text(
-            0, Screen:getWidth(), face, text, true, 0, true).x
-        params.width = math.ceil(text_w + Size.padding.large * 4)
-    elseif opts.width then
-        params.width = opts.width
-    end
-
-    local notice = _infoMessage():new(params)
     UIManager:show(notice)
     if opts.repaint ~= false then
         UIManager:forceRePaint()

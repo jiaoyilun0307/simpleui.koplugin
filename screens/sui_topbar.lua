@@ -23,6 +23,7 @@ local Config      = require("infra/sui_config")
 local SUISettings = require("infra/sui_store")
 local Backdrop    = require("infra/sui_backdrop")
 local SUIStyle    = require("features/sui_style")
+local Accent      = require("infra/sui_accent")
 
 local M = {}
 
@@ -34,10 +35,6 @@ local function _getBarSurface()
     local ok, WP = pcall(require, "features/sui_wallpaper")
     if ok and WP then return WP.resolveBar("statusbar") end
     return Backdrop.resolveDefault("statusbar")
-end
-
-local function _getBarFg()
-    return SUIStyle.COLOR.text_primary
 end
 
 -- ---------------------------------------------------------------------------
@@ -266,13 +263,13 @@ function M.getTopbarInfo()
             info.battery     = cap
             info.charging    = powerd:isCharging() == true
             local chd        = powerd:isCharged()
-            info.battery_sym = powerd:getBatterySymbol(chd, info.charging, cap) or ""
+            info.battery_sym = SUIStyle.batteryIcon(cap, info.charging, chd)
             if Device:hasAuxBattery() and powerd:isAuxBatteryConnected() then
                 local aux_cap = powerd:getAuxCapacity()
                 if type(aux_cap) == "number" then
                     info.aux_battery     = aux_cap
-                    info.aux_battery_sym = powerd:getBatterySymbol(
-                        powerd:isAuxCharged(), powerd:isAuxCharging(), aux_cap) or ""
+                    info.aux_battery_sym = SUIStyle.batteryIcon(
+                        aux_cap, powerd:isAuxCharging(), powerd:isAuxCharged())
                 end
             end
         end)
@@ -394,28 +391,24 @@ local function resolveBar()
         end,
         wifi = function()
             if info.wifi then
-                return "\u{ECA8}", nil, true   -- wifi on icon
+                return SUIStyle.icon("wifi"), nil, true
             elseif hwHasWifi() then
                 if Config.getWifiHideWhenOff() then
                     return nil, nil             -- hide when off
                 end
-                return "\u{ECA9}", nil, true   -- wifi off icon
+                return SUIStyle.icon("wifi_off"), nil, true
             end
             return nil, nil
         end,
         bluetooth = function()
             if not info.has_bluetooth then return nil, nil end
-            -- Nerd Font: FA bluetooth (on). Off uses the outline-style companion glyph.
-            if info.bluetooth then
-                return "\u{F293}", nil, true
-            end
-            return "\u{F294}", nil, true
+            return SUIStyle.icon(info.bluetooth and "bluetooth" or "bluetooth_off"), nil, true
         end,
         brightness = function()
             if info.brightness then
-                return "\xe2\x98\x80", " " .. info.brightness, false
+                return SUIStyle.icon("brightness"), " " .. info.brightness, true
             elseif info.brightness_off then
-                return "\xe2\x98\x80", " Off", false
+                return SUIStyle.icon("brightness"), " Off", true
             end
             return nil, nil
         end,
@@ -425,15 +418,15 @@ local function resolveBar()
             if info.aux_battery then
                 label = label .. " +" .. (info.aux_battery_sym or "") .. info.aux_battery .. "%"
             end
-            return (info.battery_sym or ""), label, false
+            return info.battery_sym, label, true
         end,
         disk = function()
             if not info.disk then return nil, nil end
-            return "\u{F0A0}", " " .. info.disk, true
+            return SUIStyle.icon("disk"), " " .. info.disk, true
         end,
         ram = function()
             if not info.ram then return nil, nil end
-            return "\u{EA5A}", " " .. info.ram .. "M", true
+            return SUIStyle.icon("ram"), " " .. info.ram .. "M", true
         end,
         custom_text = function()
             local t = Config.getTopbarCustomText()
@@ -484,7 +477,8 @@ local function resolveBar()
 
     local surface = bar.surface
     local shapes = { _layout_gen,
-                     table.concat({ surface.tone, surface.strength, surface.border_sz }, ":"),
+                     table.concat({ surface.tone, surface.strength, surface.border_sz,
+                                    SUIStyle.isPaletteChoice(surface.tone) and Accent.stamp() or "" }, ":"),
                      bar.show_swipe and "swipe" or "noswipe" }
     for _, zone in ipairs({ "left", "right", "center" }) do
         local parts = {}
@@ -510,7 +504,7 @@ function M.buildTopbarWidget(bar)
     local total_h   = M.TOPBAR_H() + pad_top + pad_bot
     local face      = Font:getFace(SUIStyle.FACE_REGULAR, M.TOPBAR_FS())
     local icon_face = Font:getFace(SUIStyle.FACE_ICONS, M.TOPBAR_FS())
-    local fg        = _getBarFg()
+    local fg        = Backdrop.contentColors(bar.surface)
 
     -- Label widgets in the order of bar.labels, kept for in-place updates.
     local label_widgets = {}
@@ -627,8 +621,6 @@ local function _showTopbarSettingsWindow(plugin)
             items          = plugin._makeTopbarMenu(ctx_menu),
             inner_w        = ctx.inner_w,
             repaint        = function() ctx.repaint() end,
-            lock_overlay   = ctx.lockOverlay,
-            unlock_overlay = ctx.unlockOverlay,
             push_stack     = function(id, params)
                 if type(id) == "string" then ctx.push(id, params) else ctx.push("nested_menu", params) end
             end,

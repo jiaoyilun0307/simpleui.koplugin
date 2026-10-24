@@ -35,8 +35,8 @@
 
 local SUISettings = require("infra/sui_store")
 local logger      = require("logger")
-local util = require("util")
 local _           = require("infra/sui_i18n").translate
+local deepCopy    = require("util").tableDeepCopy
 
 -- ============================================================================
 -- § 1  HOMESCREEN PRESETS
@@ -48,6 +48,7 @@ local HS_PREFIXES = {
     "simpleui_hs_",
     "simpleui_style_",
     "simpleui_hide_label_",  -- per-module instance "hide label" toggle
+    "simpleui_label_outside_", -- per-module label placement (outside the background)
     "simpleui_coll_",        -- Collections module: list, badges, cover style, sort, etc.
 }
 
@@ -89,9 +90,7 @@ local function _hsMatchesKey(key)
     if HS_EXACT[key] or _isInstanceListKey(key) then return true end
     for _i, pfx in ipairs(HS_PREFIXES) do
         if key:sub(1, #pfx) == pfx then
-            if key == HS_PRESET_KEY then return false end
-            if key == HS_PRESET_KEY or key == "simpleui_hs_active_preset" then return false end
-            return true
+            return key ~= HS_PRESET_KEY and key ~= "simpleui_hs_active_preset"
         end
     end
     return false
@@ -141,6 +140,15 @@ local function _listImportFiles(suffix)
         table.sort(files, function(a, b) return a.name:lower() < b.name:lower() end)
     end
     return files
+end
+
+-- Removes every setting a homescreen preset covers. The caller flushes.
+local function _clearHsKeys()
+    local keys = {}
+    for k in SUISettings:iterateKeys() do
+        if _hsMatchesKey(k) then keys[#keys + 1] = k end
+    end
+    for _i, k in ipairs(keys) do SUISettings:delNoFlush(k) end
 end
 
 local function _countKeys(t)
@@ -239,11 +247,11 @@ local BUILTIN_PRESETS = {
         settings = {
             simpleui_hs_clock_scale       = 70,
             simpleui_hs_clock_align       = "left",
-            simpleui_hs_bento_width_clock = 40,
+            simpleui_hs_bento_width_clock = 33,
 
             simpleui_hs_quote_scale             = 80,
             simpleui_hs_simpleui_quote_align    = "right",  -- see note on the double prefix above
-            simpleui_hs_bento_width_quote       = 60,
+            simpleui_hs_bento_width_quote       = 67,
 
             -- "currently" is deliberately left unconfigured here — it renders
             -- with whatever sui_config.lua's applyFirstRunDefaults() (or the
@@ -252,7 +260,7 @@ local BUILTIN_PRESETS = {
             -- simpleui_reading_goal is deliberately left unconfigured here —
             -- it uses the module's own default annual goal (12 books/year).
             simpleui_reading_goals_layout              = "rings",
-            simpleui_hs_bento_width_reading_goals      = 35,
+            simpleui_hs_bento_width_reading_goals      = 33,
             simpleui_hide_label_reading_goals          = true,
             simpleui_hs_reading_goals_ring_content     = "outside",  -- "Detail Below Ring"
             simpleui_hs_reading_goals_scale            = 90,
@@ -261,7 +269,7 @@ local BUILTIN_PRESETS = {
             -- Scale is left unconfigured so the module renders at its default
             -- text size. Only "Today — Time" and "Streak" are shown.
             simpleui_hs_reading_stats_type        = "list",
-            simpleui_hs_bento_width_reading_stats = 65,
+            simpleui_hs_bento_width_reading_stats = 67,
             simpleui_hs_reading_stats_items       = { "today_time", "streak" },
         }
     }
@@ -272,6 +280,114 @@ local function isBuiltinName(name)
         if bp.name == name then return true end
     end
     return false
+end
+
+-- Rows of the preset picker, shared by the welcome card and the settings
+-- window: the built-in presets as titled rows with their module list, then the
+-- user's presets. Once both groups exist each one gets a heading; rows are
+-- separated by a line, except after the last one.
+--   inner_w     number
+--   user        bool                   include the user's presets
+--   is_checked  function(id) -> bool   id: built-in id or user preset name
+--   on_builtin  function(bp)           a built-in preset was tapped
+--   on_user     function(name)         a user preset was tapped
+function SUIPresets.buildListRows(opts)
+    local SUIWindow = require("engines/sui_window")
+    local names  = opts.user and SUIPresets.listNames() or {}
+    local headed = #BUILTIN_PRESETS > 0 and #names > 0
+    local rows   = {}
+
+    local function addHeading(text)
+        rows[#rows + 1] = SUIWindow.SectionLabel{ text = text, inner_w = opts.inner_w }
+    end
+
+    if headed then addHeading(_("System Presets")) end
+    for i, bp in ipairs(BUILTIN_PRESETS) do
+        rows[#rows + 1] = SUIWindow.ListRow{
+            title     = bp.name,
+            subtitle  = bp.desc,
+            inner_w   = opts.inner_w,
+            radio     = true,
+            checked   = opts.is_checked(bp.id),
+            separator = headed or i < #BUILTIN_PRESETS,
+            on_tap    = function() opts.on_builtin(bp) end,
+        }
+    end
+    if headed then addHeading(_("My Presets")) end
+    for i, name in ipairs(names) do
+        rows[#rows + 1] = SUIWindow.ListRow{
+            title     = name,
+            inner_w   = opts.inner_w,
+            radio     = true,
+            checked   = opts.is_checked(name),
+            separator = i < #names,
+            on_tap    = function() opts.on_user(name) end,
+        }
+    end
+    return rows
+end
+
+-- Asks for the name of a preset of `opts.store` (any preset store: it needs
+-- exists()). `on_submit(name)` runs once the name is accepted, after the sheet
+-- closed; submitting the unchanged `value` does nothing.
+--   store      table     the preset store the name is checked against
+--   title, hint, value, ok_text   as in Dialogs.prompt
+--   reserved   function  name -> true when the name may not be used
+--   overwrite  bool      an existing name is allowed once the user confirms
+--                        replacing that preset, on a page of the same sheet;
+--                        otherwise it is refused
+local function promptName(opts)
+    local Dialogs = require("features/dialogs/sui_dialogs")
+    local store   = opts.store
+    Dialogs.prompt{
+        title       = opts.title,
+        value       = opts.value,
+        hint        = opts.hint,
+        ok_text     = opts.ok_text,
+        empty_error = _("Please enter a name for the preset."),
+        validate    = function(name)
+            if name == opts.value then return nil end
+            if opts.reserved and opts.reserved(name) then
+                return _("This name is reserved by a built-in preset.")
+            end
+            if not opts.overwrite and store.exists(name) then
+                return string.format(_("A preset named \"%s\" already exists."), name)
+            end
+        end,
+        confirm     = opts.overwrite and function(texts)
+            local name = texts[1]
+            if name ~= opts.value and store.exists(name) then
+                return {
+                    title   = _("Overwrite preset"),
+                    text    = string.format(
+                        _("A preset named \"%s\" already exists.\nOverwrite it?"), name),
+                    ok_text = _("Overwrite"),
+                }
+            end
+        end or nil,
+        on_submit   = function(name)
+            if name ~= opts.value then opts.on_submit(name) end
+        end,
+    }
+end
+
+-- Renames the homescreen preset `name` after asking for the new name;
+-- `on_done` runs once the rename is applied. The active-preset pointer follows.
+local function promptRenameHS(name, on_done)
+    promptName{
+        store    = SUIPresets,
+        title    = string.format(_("Rename \"%s\""), name),
+        value    = name,
+        ok_text  = _("Rename"),
+        reserved = isBuiltinName,
+        on_submit = function(new_name)
+            SUIPresets.rename(name, new_name)
+            if SUISettings:get("simpleui_hs_active_preset") == name then
+                SUISettings:set("simpleui_hs_active_preset", new_name)
+            end
+            on_done()
+        end,
+    }
 end
 
 function SUIPresets.getAll()
@@ -286,15 +402,7 @@ function SUIPresets.save(name)
     end
     local snapshot = {}
     for k, v in SUISettings:iterateKeys() do
-        if _hsMatchesKey(k) then
-            if type(v) == "table" then
-                local copy = {}
-                for ki, vi in pairs(v) do copy[ki] = vi end
-                snapshot[k] = copy
-            else
-                snapshot[k] = v
-            end
-        end
+        if _hsMatchesKey(k) then snapshot[k] = deepCopy(v) end
     end
     local presets = SUIPresets.getAll()
     presets[name] = snapshot
@@ -311,14 +419,14 @@ function SUIPresets.apply(name)
         logger.warn("simpleui/presets: apply() — preset '", name, "' not found")
         return false
     end
-    local to_delete = {}
-    for k in SUISettings:iterateKeys() do
-        if _hsMatchesKey(k) then to_delete[#to_delete + 1] = k end
-    end
-    for _i, k in ipairs(to_delete) do SUISettings:del(k) end
+    _clearHsKeys()
+    -- Copies, so editing the live settings never alters the stored preset.
     for k, v in pairs(snapshot) do
-        if _hsMatchesKey(k) then SUISettings:set(k, v) end
+        if _hsMatchesKey(k) then SUISettings:setNoFlush(k, deepCopy(v)) end
     end
+    -- The saved instance lists may differ from the ones the registry loaded.
+    require("modules/moduleregistry").invalidate()
+    SUISettings:flush()
     logger.dbg("simpleui/presets: applied preset '", name, "'")
     return true
 end
@@ -338,21 +446,18 @@ function SUIPresets.applyBuiltin(id)
     -- it only fills what was just cleared. Any module-owned key with no
     -- entry there simply reads back as nil, and per-module getters already
     -- fall back to their own local default in that case.
-    local to_delete = {}
-    for k in SUISettings:iterateKeys() do
-        if _hsMatchesKey(k) then to_delete[#to_delete + 1] = k end
-    end
-    for _i, k in ipairs(to_delete) do SUISettings:del(k) end
+    _clearHsKeys()
     require("infra/sui_config").applyFirstRunDefaults()
 
-    SUISettings:set("simpleui_layout", bp.layout)
+    -- Copies, so editing the live settings never alters the built-in preset.
+    SUISettings:setNoFlush("simpleui_layout", deepCopy(bp.layout))
 
     -- Preset settings (including instance lists and per-instance keys) are
     -- written before the registry is consulted so instanciable modules are
     -- materialised for the enable/order pass.
     if bp.settings then
         for k, v in pairs(bp.settings) do
-            SUISettings:set(k, v)
+            SUISettings:setNoFlush(k, deepCopy(v))
         end
     end
 
@@ -669,6 +774,8 @@ SUIPresets.listImportFiles = function() return _listImportFiles("_sui_hs.lua") e
 --                            sui_layout_editor passes ctx.repaint)
 --   on_save   function()  — called after save / update / rename / delete
 --                           (useful for a SUIWindow to repaint its list)
+--   in_window bool       — the menu is shown inside a SUIWindow: the preset
+--                           pickers and manager use SUIWindow rows
 --
 -- Usage from a SUIWindow screen builder:
 --
@@ -693,25 +800,11 @@ function SUIPresets.makeMenuItems(opts)
     opts = opts or {}
     local on_apply       = opts.on_apply       or function() end
     local on_save        = opts.on_save        or function() end
-    local lock_overlay   = opts.lock_overlay   or function() end
-    local unlock_overlay = opts.unlock_overlay or function() end
 
     local UIManager   = require("ui/uimanager")
     local UI          = require("infra/sui_core")
-    local function ConfirmBox()   return require("ui/widget/confirmbox")   end
-    local function InputDialog()  return require("ui/widget/inputdialog")  end
+    local function Dialogs() return require("features/dialogs/sui_dialogs") end
     local T = require("ffi/util").template
-
-    -- Helpers: wrap UIManager:show/close with overlay lock so that the
-    -- SUIWindow onTapOutside doesn't fire while a dialog is visible.
-    local function showDialog(d)
-        lock_overlay()
-        UIManager:show(d)
-    end
-    local function closeDialog(d)
-        UIManager:close(d)
-        unlock_overlay()
-    end
 
     -- Applies a homescreen preset with visible feedback for the blocking
     -- window: shows an "Applying preset…" notice, flushed to the e-ink
@@ -783,7 +876,7 @@ function SUIPresets.makeMenuItems(opts)
         dim            = #names == 0 and #BUILTIN_PRESETS == 0,
         sub_item_table = select_items,
         separator      = true,
-        sui_build      = opts.lock_overlay and function(ctx, _item)
+        sui_build      = opts.in_window and function(ctx, _item)
             local SUIWindow = require("engines/sui_window")
             return SUIWindow.ListRow{
                 title        = _("Select Preset"),
@@ -797,64 +890,30 @@ function SUIPresets.makeMenuItems(opts)
                                 {
                                     text = "Items List",
                                     sui_build = function(ctx2)
-                                        local SUIWindow2 = require("engines/sui_window")
-                                        local rows = {}
-                                        
-                                        local current_names = SUIPresets.listNames()
-
-                                        for _, bp in ipairs(BUILTIN_PRESETS) do
-                                            rows[#rows + 1] = SUIWindow2.ListRow{
-                                                title    = bp.name,
-                                                subtitle = bp.desc,
-                                                inner_w  = ctx2.inner_w,
-                                                radio    = true,
-                                                checked  = (SUISettings:get("simpleui_hs_active_preset") == bp.id),
-                                                on_tap   = function()
-                                                    _applyPresetWithNotice(function()
-                                                        SUIPresets.applyBuiltin(bp.id)
-                                                        SUISettings:set("simpleui_hs_active_preset", bp.id)
-                                                        return true
-                                                    end, ctx2.repaint)
-                                                end,
-                                            }
-                                        end
-            
-                                        if #BUILTIN_PRESETS > 0 and #current_names > 0 then
-                                            rows[#rows].separator = true
-                                            if SUIWindow2.SectionLabel then
-                                                rows[#rows + 1] = SUIWindow2.SectionLabel{
-                                                    text    = _("My Presets"):upper(),
-                                                    inner_w = ctx2.inner_w,
-                                                }
-                                            else
-                                                rows[#rows + 1] = SUIWindow2.ListRow{
-                                                    title   = _("My Presets"):upper(),
-                                                    inner_w = ctx2.inner_w,
-                                                    enabled = false,
-                                                }
-                                            end
-                                        end
-                                        
-                                        for _i, name in ipairs(current_names) do
-                                            local _name = name
-                                            rows[#rows + 1] = SUIWindow2.ListRow{
-                                                title   = _name,
-                                                inner_w = ctx2.inner_w,
-                                                radio   = true,
-                                                checked = (SUISettings:get("simpleui_hs_active_preset") == _name),
-                                                on_tap  = function()
-                                                    local ok = _applyPresetWithNotice(function()
-                                                        if not SUIPresets.apply(_name) then return false end
-                                                        SUISettings:set("simpleui_hs_active_preset", _name)
-                                                        return true
-                                                    end, ctx2.repaint)
-                                                    if not ok then
-                                                        UI.Notify.toast(string.format(_("Preset \"%s\" not found."), _name), 2)
-                                                    end
-                                                end,
-                                            }
-                                        end
-                                        return rows
+                                        return SUIPresets.buildListRows{
+                                            inner_w    = ctx2.inner_w,
+                                            user       = true,
+                                            is_checked = function(id)
+                                                return SUISettings:get("simpleui_hs_active_preset") == id
+                                            end,
+                                            on_builtin = function(bp)
+                                                _applyPresetWithNotice(function()
+                                                    SUIPresets.applyBuiltin(bp.id)
+                                                    SUISettings:set("simpleui_hs_active_preset", bp.id)
+                                                    return true
+                                                end, ctx2.repaint)
+                                            end,
+                                            on_user    = function(name)
+                                                local ok = _applyPresetWithNotice(function()
+                                                    if not SUIPresets.apply(name) then return false end
+                                                    SUISettings:set("simpleui_hs_active_preset", name)
+                                                    return true
+                                                end, ctx2.repaint)
+                                                if not ok then
+                                                    UI.Notify.toast(string.format(_("Preset \"%s\" not found."), name), 2)
+                                                end
+                                            end,
+                                        }
                                     end
                                 }
                             }
@@ -870,55 +929,20 @@ function SUIPresets.makeMenuItems(opts)
         text            = _("Save as new preset"),
         keep_menu_open  = true,
         callback = function()
-            local dialog
-            dialog = InputDialog():new{
-                title      = _("Save preset"),
-                input      = "",
-                input_hint = _("Preset name"),
-                buttons    = {{
-                    {
-                        text     = _("Cancel"),
-                        id       = "close",
-                        callback = function() closeDialog(dialog) end,
-                    },
-                    {
-                        text             = _("Save"),
-                        is_enter_default = true,
-                        callback         = function()
-                            local name = dialog:getInputText()
-                            name = name and util.trim(name) or ""
-                            if name == "" then
-                                UI.Notify.toast(_("Please enter a name for the preset."), 2)
-                                return
-                            end
-                            if isBuiltinName(name) then
-                                UI.Notify.toast(_("This name is reserved by a built-in preset."), 2)
-                                return
-                            end
-                            local function doSave()
-                                SUIPresets.save(name)
-                                SUISettings:set("simpleui_hs_active_preset", name)
-                                closeDialog(dialog)
-                                UI.Notify.toast(string.format(_("Preset \"%s\" saved."), name), 2)
-                                UIManager:nextTick(on_save)
-                            end
-                            if SUIPresets.exists(name) then
-                                showDialog(ConfirmBox():new{
-                                    text        = string.format(
-                                        _("A preset named \"%s\" already exists.\nOverwrite it?"), name),
-                                    ok_text     = _("Overwrite"),
-                                    cancel_text = _("Cancel"),
-                                    ok_callback = doSave,
-                                    cancel_callback = function() unlock_overlay() end,
-                                })
-                            else
-                                doSave()
-                            end
-                        end,
-                    },
-                }},
+            promptName{
+                store     = SUIPresets,
+                title     = _("Save preset"),
+                hint      = _("Preset name"),
+                ok_text   = _("Save"),
+                reserved  = isBuiltinName,
+                overwrite = true,
+                on_submit = function(name)
+                    SUIPresets.save(name)
+                    SUISettings:set("simpleui_hs_active_preset", name)
+                    UI.Notify.toast(string.format(_("Preset \"%s\" saved."), name), 2)
+                    UIManager:nextTick(on_save)
+                end,
             }
-            showDialog(dialog)
         end,
     }
 
@@ -934,71 +958,40 @@ function SUIPresets.makeMenuItems(opts)
                         text = _name,
                         sub_item_table = {
                             { text = _("Update with current settings"), callback = function()
-                                showDialog(ConfirmBox():new{
+                                Dialogs().confirm{
                                     text = string.format(_("Overwrite preset \"%s\" with the current homescreen settings?"), _name),
                                     ok_text     = _("Overwrite"),
                                     cancel_text = _("Cancel"),
                                     ok_callback = function()
-                                        unlock_overlay()
                                         SUIPresets.save(_name)
                                         SUISettings:set("simpleui_hs_active_preset", _name)
                                         UI.Notify.toast(string.format(_("Preset \"%s\" updated."), _name), 2)
                                         UIManager:nextTick(on_save)
                                     end,
-                                    cancel_callback = function() unlock_overlay() end,
-                                })
+                                }
                             end },
                             { text = _("Rename"), callback = function()
-                                local d
-                                d = InputDialog():new{
-                                    title = string.format(_("Rename \"%s\""), _name),
-                                    input = _name,
-                                    buttons = {{
-                                        { text = _("Cancel"), id = "close", callback = function() closeDialog(d) end },
-                                        { text = _("Rename"), is_enter_default = true, callback = function()
-                                            local new_name = d:getInputText()
-                                            new_name = new_name and util.trim(new_name) or ""
-                                            if new_name == "" or new_name == _name then closeDialog(d); return end
-                                            if isBuiltinName(new_name) then
-                                                UI.Notify.toast(_("This name is reserved by a built-in preset."), 2)
-                                                return
-                                            end
-                                            if SUIPresets.exists(new_name) then
-                                                UI.Notify.toast(string.format(_("A preset named \"%s\" already exists."), new_name), 2)
-                                                return
-                                            end
-                                            SUIPresets.rename(_name, new_name)
-                                            local active = SUISettings:get("simpleui_hs_active_preset")
-                                            if active == _name then SUISettings:set("simpleui_hs_active_preset", new_name) end
-                                            closeDialog(d)
-                                            UIManager:nextTick(on_save)
-                                        end },
-                                    }},
-                                }
-                                showDialog(d)
-                                d:onShowKeyboard()
+                                promptRenameHS(_name, function() UIManager:nextTick(on_save) end)
                             end },
                             { text = _("Delete"), callback = function()
-                                showDialog(ConfirmBox():new{
+                                Dialogs().confirm{
                                     text        = string.format(_("Delete preset \"%s\"?"), _name),
                                     ok_text     = _("Delete"),
                                     cancel_text = _("Cancel"),
                                     ok_callback = function()
-                                        unlock_overlay()
                                         SUIPresets.delete(_name)
                                         local active = SUISettings:get("simpleui_hs_active_preset")
                                         if active == _name then SUISettings:del("simpleui_hs_active_preset") end
                                         UIManager:nextTick(on_save)
                                     end,
-                                    cancel_callback = function() unlock_overlay() end,
-                                })
+                                }
                             end },
                         }
                     }
                 end
                 return sub
             end,
-            sui_build = opts.lock_overlay and function(ctx, _item)
+            sui_build = opts.in_window and function(ctx, _item)
                 local SUIWindow = require("engines/sui_window")
                 return SUIWindow.ListRow{
                     title        = _("Manage presets"),
@@ -1019,67 +1012,38 @@ function SUIPresets.makeMenuItems(opts)
                                                     title     = _name,
                                                     inner_w   = ctx2.inner_w,
                                                     on_delete = function()
-                                                        showDialog(ConfirmBox():new{
+                                                        Dialogs().confirm{
                                                             text        = string.format(_("Delete preset \"%s\"?"), _name),
                                                             ok_text     = _("Delete"),
                                                             cancel_text = _("Cancel"),
                                                             ok_callback = function()
-                                                                unlock_overlay()
                                                                 SUIPresets.delete(_name)
                                                                 local active = SUISettings:get("simpleui_hs_active_preset")
                                                                 if active == _name then SUISettings:del("simpleui_hs_active_preset") end
                                                                 ctx2.repaint()
                                                                 UIManager:nextTick(on_save)
                                                             end,
-                                                            cancel_callback = function() unlock_overlay() end,
-                                                        })
+                                                        }
                                                     end,
                                                     on_edit = function()
-                                                        local d
-                                                        d = InputDialog():new{
-                                                            title = string.format(_("Rename \"%s\""), _name),
-                                                            input = _name,
-                                                            buttons = {{
-                                                                { text = _("Cancel"), id = "close", callback = function() closeDialog(d) end },
-                                                                { text = _("Rename"), is_enter_default = true, callback = function()
-                                                                    local new_name = d:getInputText()
-                                                                    new_name = new_name and util.trim(new_name) or ""
-                                                                    if new_name == "" or new_name == _name then closeDialog(d); return end
-                                                            if isBuiltinName(new_name) then
-                                                                UI.Notify.toast(_("This name is reserved by a built-in preset."), 2)
-                                                                return
-                                                            end
-                                                                    if SUIPresets.exists(new_name) then
-                                                                        UI.Notify.toast(string.format(_("A preset named \"%s\" already exists."), new_name), 2)
-                                                                        return
-                                                                    end
-                                                                    SUIPresets.rename(_name, new_name)
-                                                                    local active = SUISettings:get("simpleui_hs_active_preset")
-                                                                    if active == _name then SUISettings:set("simpleui_hs_active_preset", new_name) end
-                                                                    closeDialog(d)
-                                                                    ctx2.repaint()
-                                                                    UIManager:nextTick(on_save)
-                                                                end }
-                                                            }}
-                                                        }
-                                                        showDialog(d)
-                                                        d:onShowKeyboard()
+                                                        promptRenameHS(_name, function()
+                                                            ctx2.repaint()
+                                                            UIManager:nextTick(on_save)
+                                                        end)
                                                     end,
                                                     on_update = function()
-                                                        showDialog(ConfirmBox():new{
+                                                        Dialogs().confirm{
                                                             text = string.format(_("Overwrite preset \"%s\" with the current homescreen settings?"), _name),
                                                             ok_text     = _("Overwrite"),
                                                             cancel_text = _("Cancel"),
                                                             ok_callback = function()
-                                                                unlock_overlay()
                                                                 SUIPresets.save(_name)
                                                                 SUISettings:set("simpleui_hs_active_preset", _name)
                                                                 UI.Notify.toast(string.format(_("Preset \"%s\" updated."), _name), 2)
                                                                 ctx2.repaint()
                                                                 UIManager:nextTick(on_save)
                                                             end,
-                                                            cancel_callback = function() unlock_overlay() end,
-                                                        })
+                                                        }
                                                     end,
                                                 }
                                             end
@@ -1191,4 +1155,7 @@ return {
     -- Homescreen preset menu items (shared between sui_menu and sui_layout_editor)
     makeMenuItems = SUIPresets.makeMenuItems,
     icons = SUIIconPresets,
+
+    -- Shared name prompt for any preset store (see promptName)
+    promptName = promptName,
 }

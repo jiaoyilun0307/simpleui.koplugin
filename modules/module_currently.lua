@@ -18,7 +18,6 @@ local UIManager       = require("ui/uimanager")
 local HorizontalGroup = require("ui/widget/horizontalgroup")
 local HorizontalSpan  = require("ui/widget/horizontalspan")
 local InputContainer  = require("ui/widget/container/inputcontainer")
-local LineWidget      = require("ui/widget/linewidget")
 local OverlapGroup    = require("ui/widget/overlapgroup")
 local TextWidget      = require("ui/widget/textwidget")
 local VerticalGroup   = require("ui/widget/verticalgroup")
@@ -36,7 +35,6 @@ local Text         = require("infra/sui_text")
 local Chrome       = require("features/sui_module_chrome")
 local PAD          = UI.PAD
 local LABEL_H      = UI.LABEL_H
-local CLR_TEXT_SUB = UI.CLR_TEXT_SUB
 
 -- Lazy-loaded shared book helpers (cover, progress bar, book data).
 local _SH = nil
@@ -93,36 +91,19 @@ local DESC_MAX_LINES = 8
 
 -- Layout plans: the cover size, text width and description clamp resolved by
 -- the measuring passes of M.build(). A plan is reused while every input of
--- those passes is unchanged, so repeat builds (page turns, refreshes) render
--- the text column once. Weak-keyed by the settings bundle: replacing the
--- bundle drops its plans. Keys carry the book content, so the per-bundle
--- count is capped.
+-- those passes is unchanged, so repeat builds (page turns, refreshes, progress
+-- updates) render the text column once. Weak-keyed by the settings bundle:
+-- replacing the bundle drops its plans. Keys carry the book texts, so the
+-- per-bundle count is capped.
 local _layout_plans     = setmetatable({}, { __mode = "k" })
 local MAX_PLANS_PER_CFG = 8
 
--- Appends the scalar fields of `t`, in key order, to `parts`. Returns false
--- when `t` holds a non-scalar value, which cannot be part of a stable key.
-local function _appendScalars(parts, t)
-    if not t then return true end
-    local keys = {}
-    for k in pairs(t) do keys[#keys + 1] = k end
-    table.sort(keys)
-    for _i, k in ipairs(keys) do
-        local v = t[k]
-        local kind = type(v)
-        if kind ~= "string" and kind ~= "number" and kind ~= "boolean" then return false end
-        parts[#parts + 1] = k .. "=" .. tostring(v)
-    end
-    return true
-end
-
--- Key of a layout plan: the geometry inputs in `parts` plus every field of
--- the book data and book stats the text column is built from. nil when the
--- inputs cannot be keyed.
-local function _layoutPlanKey(parts, book_data, book_stats)
-    if not _appendScalars(parts, book_data) or not _appendScalars(parts, book_stats) then
-        return nil
-    end
+-- Key of a layout plan: the geometry inputs in `parts` plus the book texts
+-- whose wrapping sets the text column's height (title, description). The
+-- progress and statistics values never change it.
+local function _layoutPlanKey(parts, book_data)
+    parts[#parts + 1] = tostring(book_data.title)
+    parts[#parts + 1] = tostring(book_data.description)
     return table.concat(parts, "\31")
 end
 
@@ -151,16 +132,17 @@ local function resolveDescAlign(stored)
     return Config.resolveChoice(stored, DESC_ALIGN_VALUES, DESC_ALIGN_DEFAULT)
 end
 
--- Setting key for progress bar style: "simple" (default) or "with_pct"
-local BAR_STYLE_KEY = "currently_bar_style"
+-- Setting key for progress bar style: "with_pct" (default) or "simple"
+local BAR_STYLE_KEY    = "currently_bar_style"
+local BAR_STYLE_VALUES = { "simple", "with_pct" }
 
 local function getBarStyle(pfx)
-    return SUISettings:readSetting(pfx .. BAR_STYLE_KEY) or "with_pct"
+    return Config.readChoice(pfx .. BAR_STYLE_KEY, BAR_STYLE_VALUES, "with_pct")
 end
 
 -- Progress badge (pentagon overlay on the cover) — same drawing primitive
 -- and settings shape as the Coverdeck / book-grid progress badge.
--- Opt-in (unset == off). Color override nil means "Follow Library".
+-- Opt-in (unset == off). Color override nil means "Follow Style".
 local SETTING_SHOW_PROGRESS_BADGE  = "currently_show_progress_badge"
 local SETTING_PROGRESS_BADGE_COLOR = "currently_progress_badge_color"
 
@@ -169,9 +151,7 @@ local function showProgressBadge(pfx)
 end
 
 local function getProgressBadgeColorOverride(pfx)
-    local v = SUISettings:readSetting(pfx .. SETTING_PROGRESS_BADGE_COLOR)
-    if v == "dark" or v == "light" then return v end
-    return nil
+    return SUIStyle.badgeChoice(SUISettings:readSetting(pfx .. SETTING_PROGRESS_BADGE_COLOR))
 end
 
 local function setProgressBadgeColor(pfx, v)
@@ -219,8 +199,8 @@ end
 -- Builds a progress bar with an inline percentage label: [▓▓▓░░░░] XX%
 -- Spacing below the bar is handled by gap_before() on the next element,
 -- consistent with how every other element in the layout works.
-local function buildProgressBarWithPct(w, pct, bar_h, scale, lbl_scale, face_inline, bold_inline, fg_color)
-    local PCT_W   = math.max(16, math.floor(_BASE_PCT_W       * scale * lbl_scale))
+local function buildProgressBarWithPct(w, pct, bar_h, scale, text_scale, face_inline, bold_inline, ink)
+    local PCT_W   = math.max(16, math.floor(_BASE_PCT_W       * scale * text_scale))
     local GAP     = math.max(2,  math.floor(_BASE_BAR_PCT_GAP * scale))
     local bar_w   = math.max(10, w - GAP - PCT_W)
     local pct_str = string.format("%.0f%%", (pct or 0) * 100)
@@ -228,11 +208,9 @@ local function buildProgressBarWithPct(w, pct, bar_h, scale, lbl_scale, face_inl
     -- direct calls is the default font in bold.
     local _face, _bold = face_inline, bold_inline
     if not _face then
-        _face, _bold = SUIStyle.getStyledFace(nil, math.max(7, math.floor(_BASE_INLINEPCT_FS * scale * lbl_scale)), "bold")
+        _face, _bold = SUIStyle.getStyledFace(nil, math.max(7, math.floor(_BASE_INLINEPCT_FS * scale * text_scale)), "bold")
     end
-    local _fg     = fg_color or SUIStyle.COLOR.text_primary
-
-    local bar = UI.progressBar(bar_w, pct, bar_h)
+    local bar = UI.progressBar(bar_w, pct, bar_h, ink.bar_fg, ink.bar_bg)
 
     return HorizontalGroup:new{
         align = "center",
@@ -242,7 +220,7 @@ local function buildProgressBarWithPct(w, pct, bar_h, scale, lbl_scale, face_inl
             text    = pct_str,
             face    = _face,
             bold    = _bold,
-            fgcolor = _fg,
+            fgcolor = ink.blk,
             width   = PCT_W,
         },
     }
@@ -250,6 +228,13 @@ end
 
 
 local fetchBookStats = BookStats.fetch
+
+-- Puts `bar` in the single-child `container`, freeing the bar it replaces.
+local function _swapBar(container, bar)
+    local old = container[1]
+    container[1] = bar
+    if old and old.free then old:free() end
+end
 
 
 -- ---------------------------------------------------------------------------
@@ -264,6 +249,15 @@ local STAT_IDS  = { "percent", "book_days", "book_time", "book_remaining" }
 local MAIN_ORDER_KEY  = "currently_main_order"   -- pfx .. this
 local STATS_ORDER_KEY = "currently_stats_order"  -- pfx .. this
 local STATS_STYLE_KEY = "currently_stats_style"  -- pfx .. this; "compact" | "default"
+local STATS_ICON_KEY  = "currently_stats_icon"   -- pfx .. this; clock icon before the compact line
+
+-- Clock glyph of the symbols font, drawn before the compact stats line.
+local STATS_ICON_GLYPH = "\u{E84F}"
+
+-- The icon is on until the user turns it off (shipped default: sui_config.lua).
+local function getStatsIcon(pfx)
+    return SUISettings:nilOrTrue(pfx .. STATS_ICON_KEY)
+end
 
 -- "compact" joins the statistics into one line; "default" gives each its own.
 local function getStatsStyle(pfx)
@@ -342,6 +336,7 @@ M.text_elems = { "title", "author", "series", "description", "stats" }
 Config.declareTextVariants(M.id, { title = "bold" })
 
 M.has_covers  = true   -- activates e-ink dithering and cover poll
+M.fills_row_height = true  -- rebuilt with ctx.grow_h when its row is taller (see moduleregistry)
 M.is_book_mod = true   -- suppresses empty-state when active
 
 
@@ -356,7 +351,7 @@ M.is_book_mod = true   -- suppresses empty-state when active
 -- Per-element text style scale multiplies the element's font size on top of
 -- the module layout scale.
 -- ---------------------------------------------------------------------------
-local function _scaledLayoutDims(scale, _lbl_scale, styles)
+local function _scaledLayoutDims(scale, styles)
     local function fs(base, min_fs, style)
         return math.max(min_fs, math.floor(base * scale * (style and style.scale or 1)))
     end
@@ -401,6 +396,9 @@ end
 -- column width this module ends up in (grid vs single column, portrait
 -- vs landscape) instead of a device-pixel constant that ignores it.
 local _COVER_W_PCT = 0.30
+-- Widest the cover grows when the module is stretched to the height of its
+-- row, as a fraction of the module width.
+local _COVER_GROW_MAX_W_PCT = 0.42
 
 -- _computeCoverDims(w, thumb_scale, ratio) — base cover pixel size for a
 -- module of width `w`. `thumb_scale` is the user's "Cover size" multiplier;
@@ -450,7 +448,7 @@ end
 -- Uses a wrapping text box rather than the single-line TextWidget behind
 -- makeColoredText, since this message is long enough to need multiple lines
 -- at the module's own width.
-local function _emptyPlaceholder(w, h, text_alpha)
+local function _emptyPlaceholder(w, h, text_alpha, ink)
     local face = Font:getFace(SUIStyle.FACE_REGULAR, SUIStyle.FS_BODY)
     local line_h = math.floor(1.3 * face.size + 0.5)
     local args = {
@@ -461,7 +459,7 @@ local function _emptyPlaceholder(w, h, text_alpha)
         height_adjust = true,
         height_overflow_show_ellipsis = true,
         alignment = "center",
-        fgcolor   = CLR_TEXT_SUB,
+        fgcolor   = (ink or Chrome.PLAIN_INK).sub,
     }
 
     return CenterContainer:new{
@@ -473,18 +471,20 @@ end
 -- Builds the module widget: cover on the left, text column on the right.
 -- Elements in the text column are rendered in user-configured order.
 function M.build(w, ctx)
+    -- Drops the stop of a previous build; the book's own is registered below.
+    if ctx.kbStops then ctx.kbStops(M.id, {}) end
     if not ctx.current_fp then
-        return _emptyPlaceholder(w, M.getHeight(ctx), ctx.text_alpha)
+        return _emptyPlaceholder(w, M.getHeight(ctx), ctx.text_alpha, ctx.ink)
     end
 
     local SH = getSH()
     if not SH then
-        return _emptyPlaceholder(w, M.getHeight(ctx), ctx.text_alpha)
+        return _emptyPlaceholder(w, M.getHeight(ctx), ctx.text_alpha, ctx.ink)
     end
 
     -- Use pre-read settings bundle from ctx when available (normal HS path).
     -- Falls back to direct reads only when called outside the homescreen.
-    -- c.scale/c.thumb_scale/c.lbl_scale (from ctx.cfg) are RAW; apply
+    -- c.scale/c.thumb_scale (from ctx.cfg) are RAW; apply
     -- ctx.landscape_factor here, on both the cached and fallback path.
     -- thumb_scale is the exception: `w` below is already the module's
     -- landscape-reduced column width (col_w, set by the screen engine), so
@@ -496,10 +496,11 @@ function M.build(w, ctx)
     local raw_scale   = c and c.scale       or Config.getModuleScale("currently", pfx)
     local scale       = raw_scale * lf
     local raw_thumb_scale = c and c.thumb_scale or Config.getThumbScale("currently", pfx)
-    local lbl_scale   = (c and c.lbl_scale   or Config.getItemLabelScale("currently", pfx)) * lf
     local bar_style   = c and c.bar_style   or getBarStyle(pfx)
     local layout = (c and c.layout) or getLayout(pfx)
     local stats_style = c and c.stats_style or getStatsStyle(pfx)
+    local stats_icon  = getStatsIcon(pfx)
+    if c and c.stats_icon ~= nil then stats_icon = c.stats_icon end
     local show        = c and c.show or _readShow(pfx)
     local item_order  = _getItemOrder(c and c.main_order or SUISettings:readSetting(pfx .. MAIN_ORDER_KEY))
     local stats_order = _getStatsOrder(c and c.stats_order or SUISettings:readSetting(pfx .. STATS_ORDER_KEY))
@@ -517,7 +518,7 @@ function M.build(w, ctx)
     -- Scale gaps and font sizes (layout scale × text scale where applicable).
     -- See _scaledLayoutDims for the shared formulas (also used by getHeight()).
     local styles = Config.resolveTextStyles(ctx, M.id, M.text_elems)
-    local LD = _scaledLayoutDims(scale, lbl_scale, styles)
+    local LD = _scaledLayoutDims(scale, styles)
     local title_gap, author_gap, series_gap, desc_gap =
         LD.title_gap, LD.author_gap, LD.series_gap, LD.desc_gap
     local bar_gap_before, bar_gap_after, pct_gap, bar_h =
@@ -589,12 +590,11 @@ function M.build(w, ctx)
         end
     end
 
-    -- Colour used for placeholder stats text (dimmer than the normal sub-text).
-    local CLR_PLACEHOLDER = SUIStyle.COLOR.text_dim
-
-    local _CLR_DARK_EFF    = SUIStyle.COLOR.text_primary
-    local CLR_TEXT_SUB_EFF = CLR_TEXT_SUB
-    local CLR_PH_EFF       = CLR_PLACEHOLDER
+    -- Content colours over the module fill; `dim` is the placeholder stats text.
+    local ink              = ctx.ink or Chrome.PLAIN_INK
+    local _CLR_DARK_EFF    = ink.blk
+    local CLR_TEXT_SUB_EFF = ink.sub
+    local CLR_PH_EFF       = ink.sub
 
     -- Inline pct on the progress bar uses the same Progress Text style as
     -- standalone percent / stats lines.
@@ -729,43 +729,26 @@ function M.build(w, ctx)
 
         elseif elem == "progress" and show.progress then
             gap_before(bar_gap_before)
-            if bar_style == "with_pct" then
-                -- The bar is wrapped in a container whose single child is
-                -- replaced by _update_bar, so a stats refresh only patches
-                -- the bar's pixels without touching the surrounding layout
-                -- or allocating new VerticalGroup nodes.
-                local _bar_w    = tw
-                local _bar_h    = bar_h
-                local _bar_sc   = scale
-                local _bar_lbl  = lbl_scale
-                local _bar_face = face_inlinepct
-                local _bar_bold = bold_inlinepct
-                local _bar_fg   = _CLR_DARK_EFF
-                local _init_bar = buildProgressBarWithPct(_bar_w, bd.percent, _bar_h, _bar_sc, _bar_lbl, _bar_face, _bar_bold, _bar_fg)
-                local bar_container = OverlapGroup:new{
-                    dimen = _init_bar:getSize(),
-                    _init_bar,
-                }
-                local function _update_bar(nb, nd)
-                    bar_container[1] = buildProgressBarWithPct(
-                        _bar_w, (nd and nd.percent or 0), _bar_h, _bar_sc, _bar_lbl, _bar_face, _bar_bold, _bar_fg)
+            -- The bar is wrapped in a container whose single child is
+            -- replaced by _update_bar, so a stats refresh only patches the
+            -- bar's pixels without touching the surrounding layout or
+            -- allocating new VerticalGroup nodes.
+            local function makeBar(pct)
+                if bar_style == "with_pct" then
+                    return buildProgressBarWithPct(
+                        tw, pct, bar_h, scale, styles.stats.scale or 1, face_inlinepct, bold_inlinepct, ink)
                 end
-                table.insert(_cr_update_funcs, _update_bar)
-                meta[#meta+1] = bar_container
-            else
-                local _bar_w = tw
-                local _bar_h = bar_h
-            local _init_bar = UI.progressBar(_bar_w, bd.percent, _bar_h)
-                local bar_container = OverlapGroup:new{
-                    dimen = _init_bar:getSize(),
-                    _init_bar,
-                }
-                local function _update_bar(nb, nd)
-                bar_container[1] = UI.progressBar(_bar_w, (nd and nd.percent or 0), _bar_h)
-                end
-                table.insert(_cr_update_funcs, _update_bar)
-                meta[#meta+1] = bar_container
+                return UI.progressBar(tw, pct, bar_h, ink.bar_fg, ink.bar_bg)
             end
+            local init_bar = makeBar(bd.percent)
+            local bar_container = OverlapGroup:new{
+                dimen = init_bar:getSize(),
+                init_bar,
+            }
+            table.insert(_cr_update_funcs, function(_nb, nd)
+                _swapBar(bar_container, makeBar(nd and nd.percent or 0))
+            end)
+            meta[#meta+1] = bar_container
             meta_has_content = true
             _next_gap = bar_gap_after  -- next element uses the larger post-bar gap
 
@@ -788,17 +771,61 @@ function M.build(w, ctx)
                     return line, CLR_TEXT_SUB_EFF
                 end
                 local text0, fg0 = rowContent(bstats, bd)
-                local row_w = UI.makeColoredText{
+
+                -- A clock before the single compact line (not before the
+                -- one-statistic-per-row layout). It is centred on the text
+                -- line's own height, so it never makes the row taller than
+                -- the height getHeight() reserves for it.
+                local icon_w, icon_gap, icon_widget = 0, 0, nil
+                if stats_icon and stats_style == "compact" then
+                    local icon_face = SUIStyle.pxFace(SUIStyle.FACE_ICONS, face_s.size * 1.1)
+                    icon_widget = UI.makeColoredText{
+                        text = STATS_ICON_GLYPH, face = icon_face, fgcolor = fg0, padding = 0,
+                    }
+                    icon_w   = icon_widget:getSize().w
+                    icon_gap = math.floor(face_s.size * 0.5)
+                    -- Symbol glyphs sit off-centre in their line box: nudge the
+                    -- drawn clock to the middle of the line.
+                    local nudge = SUIStyle.inkCentreShift(icon_face, STATS_ICON_GLYPH, false)
+                    if nudge ~= 0 then
+                        icon_widget = FrameContainer:new{
+                            bordersize = 0, padding = 0,
+                            padding_top    = math.max(0,  nudge),
+                            padding_bottom = math.max(0, -nudge),
+                            icon_widget,
+                        }
+                        icon_widget._clock = icon_widget[1]
+                    end
+                end
+
+                local row_text = UI.makeColoredText{
                     text                   = text0,
                     face                   = face_s,
                     bold                   = FB.stats,
                     fgcolor                = fg0,
-                    max_width              = tw,
+                    max_width              = math.max(1, tw - icon_w - icon_gap),
                     truncate_with_ellipsis = true,
                 }
+                local row_w = row_text
+                if icon_widget then
+                    local line_h = row_text:getSize().h
+                    row_w = HorizontalGroup:new{
+                        align = "center",
+                        CenterContainer:new{
+                            dimen = Geom:new{ w = icon_w, h = line_h },
+                            icon_widget,
+                        },
+                        HorizontalSpan:new{ width = icon_gap },
+                        row_text,
+                    }
+                end
                 table.insert(_cr_update_funcs, function(nb, nd)
                     local text, fg = rowContent(nb, nd)
-                    _updateColoredText(row_w, text, fg)
+                    _updateColoredText(row_text, text, fg)
+                    -- The icon follows the text colour (dimmed placeholder).
+                    if icon_widget then
+                        UI.updateColoredText(icon_widget._clock or icon_widget, STATS_ICON_GLYPH, fg)
+                    end
                 end)
                 gap_before(pct_gap)
                 meta[#meta+1] = row_w
@@ -842,8 +869,8 @@ function M.build(w, ctx)
             -- changes size.
             --
             -- IMPORTANT (landscape): meta_h is the measured height of the text
-            -- column, which was already built using `scale`/`lbl_scale` — both
-            -- of which have `lf` (landscape_factor) folded in. Multiplying
+            -- column, which was already built using `scale`, which
+            -- has `lf` (landscape_factor) folded in. Multiplying
             -- meta_h by the lf-inclusive `thumb_scale` would apply lf a SECOND
             -- time (effectively lf² instead of lf), collapsing the dynamic
             -- cover far more than intended in landscape. Use the RAW thumb
@@ -863,6 +890,7 @@ function M.build(w, ctx)
             if new_cover_w ~= cover_w or new_cover_h ~= cover_h then
                 cover_w, cover_h = new_cover_w, new_cover_h
                 tw = math.max(1, w - cover_w - cover_gap)
+                meta:free()
                 -- Pass 2: rebuild the text column at the corrected width now
                 -- that the cover (and thus the space left for text) changed
                 -- size. Height cannot change between passes (see comment on
@@ -881,13 +909,16 @@ function M.build(w, ctx)
             if show.description and bd.description and bd.description ~= "" then
                 -- Measure every OTHER element's height first (description
                 -- suppressed), so we know exactly how much room is left for it.
-                local other_h = buildMetaColumn(tw0, { suppress_description = true }):getSize().h
+                local probe   = buildMetaColumn(tw0, { suppress_description = true })
+                local other_h = probe:getSize().h
+                probe:free()
                 local breath  = math.max(1, desc_gap)
                 local available = cover_h - other_h - breath
                 local desc_line_h = math.floor(1.3 * face_desc.size + 0.5)
                 local new_desc_lines = (available >= face_desc.size)
                     and math.max(1, math.floor(available / desc_line_h)) or 0
                 meta_opts = { desc_max_lines = new_desc_lines }
+                meta:free()
                 meta, update_funcs = buildMetaColumn(tw0, meta_opts)
                 meta_h = meta:getSize().h
             end
@@ -901,19 +932,37 @@ function M.build(w, ctx)
     end
 
     -- A plan is only valid for identical inputs: the settings bundle (its
-    -- identity), the geometry below, and the book data and stats scalars.
-    local plan_key = c and _layoutPlanKey({
-        w, lf, raw_scale, raw_thumb_scale, lbl_scale, layout, cover_gap,
-        _cover_ratio, ctx.has_wallpaper and 1 or 0, series_text,
-    }, bd, bstats)
-    local plan = plan_key and _findLayoutPlan(c, plan_key)
-    local meta, _cr_update_funcs
-    if plan then
-        meta, _cr_update_funcs = buildMetaColumn(plan.tw, plan.meta_opts)
-    else
-        plan, meta, _cr_update_funcs = resolveLayout()
-        if plan_key then _storeLayoutPlan(c, plan_key, plan) end
+    -- identity), the geometry below and the book texts. A plan found in the
+    -- cache comes without a column; the caller builds it.
+    local function resolvePlan()
+        local plan_key = c and _layoutPlanKey({
+            w, lf, raw_scale, raw_thumb_scale, layout, cover_gap,
+            _cover_ratio, ctx.has_wallpaper and 1 or 0, series_text, D.COVER_W,
+        }, bd)
+        local found = plan_key and _findLayoutPlan(c, plan_key)
+        if found then return found end
+        local resolved, meta_col, funcs = resolveLayout()
+        if plan_key then _storeLayoutPlan(c, plan_key, resolved) end
+        return resolved, meta_col, funcs
     end
+    local plan, meta, _cr_update_funcs = resolvePlan()
+
+    -- The row is taller than the module (see `fills_row_height`): the cover
+    -- takes the extra height, as far as the width left for the text allows. A
+    -- dynamic cover already follows the text column.
+    local grow = tonumber(ctx.grow_h) or 0
+    if grow > 0 and not dynamic_cover then
+        local ratio = D.COVER_H / D.COVER_W
+        local target_h = math.max(plan.cover_h, plan.meta_h) + grow
+        local grown_w = math.min(math.floor(w * _COVER_GROW_MAX_W_PCT), math.floor(target_h / ratio))
+        if grown_w > D.COVER_W then
+            D.COVER_W, D.COVER_H = grown_w, math.floor(grown_w * ratio)
+            tw0 = w - D.COVER_W - cover_gap
+            if meta then meta:free() end
+            plan, meta, _cr_update_funcs = resolvePlan()
+        end
+    end
+    if not meta then meta, _cr_update_funcs = buildMetaColumn(plan.tw, plan.meta_opts) end
     local cover_w, cover_h, tw, meta_h = plan.cover_w, plan.cover_h, plan.tw, plan.meta_h
 
     local content_h = math.max(cover_h, meta_h)
@@ -932,8 +981,6 @@ function M.build(w, ctx)
     if showProgressBadge(pfx) then
         cover = applyProgressBadge(cover, bd, cover_w, cover_h, pfx)
     end
-
-    local full_h = content_h
 
     -- Layout: cover on left, text column on right.
     -- The cover is wrapped in a CenterContainer sized to content_h so it
@@ -959,7 +1006,7 @@ function M.build(w, ctx)
         meta_centered,
     }
     local tappable = InputContainer:new{
-        dimen    = Geom:new{ w = w, h = full_h },
+        dimen    = Geom:new{ w = w, h = content_h },
         _fp      = ctx.current_fp,
         _open_fn = ctx.open_fn,
         [1] = row,
@@ -994,8 +1041,6 @@ function M.build(w, ctx)
     -- tappable unconditionally, so a hold on the text column also opened
     -- the book dialog instead of settings.
     if Config.getCoverHoldMode("currently", ctx.pfx) == "book_dialog" then
-        local _cover_x0 = PAD
-        local _cover_x1 = PAD + cover_w + cover_gap
         tappable.ges_events.HoldBook = {
             GestureRange:new{ ges = "hold", range = function() return tappable.dimen end },
         }
@@ -1004,7 +1049,7 @@ function M.build(w, ctx)
         }
         function tappable:onHoldBook(_, ges)
             local x = ges.pos.x - self.dimen.x
-            self._hold_on_cover = (x >= _cover_x0 and x < _cover_x1)
+            self._hold_on_cover = (x >= 0 and x < cover_w)
             -- Only swallow the gesture (and thus block the settings-menu
             -- fallback) when it actually lands on the cover.
             return self._hold_on_cover or nil
@@ -1019,20 +1064,9 @@ function M.build(w, ctx)
 
     tappable._cr_update_funcs = _cr_update_funcs
 
-    -- Keyboard focus: overlay a black rectangular border on the tappable when
-    -- this book is the currently selected keyboard-navigation item.
-    if ctx.kb_currently_focused then
-        local bw = Screen:scaleBySize(3)
-        local tw = w
-        local th = full_h
-        return OverlapGroup:new{
-            dimen = Geom:new{ w = tw, h = th },
-            tappable,
-            LineWidget:new{ dimen = Geom:new{ w = tw, h = bw },    background = _CLR_DARK_EFF },
-            LineWidget:new{ dimen = Geom:new{ w = tw, h = bw },    background = _CLR_DARK_EFF, overlap_offset = {0, th - bw} },
-            LineWidget:new{ dimen = Geom:new{ w = bw, h = th },    background = _CLR_DARK_EFF },
-            LineWidget:new{ dimen = Geom:new{ w = bw, h = th },    background = _CLR_DARK_EFF, overlap_offset = {tw - bw, 0} },
-        }
+    if ctx.kbStops then
+        UI.makeFocusable(tappable, tappable.onTapBook)
+        ctx.kbStops(M.id, { { id = "book", widget = tappable } })
     end
 
     return tappable
@@ -1043,10 +1077,7 @@ end
 -- tree, leaving all text, layout, and gesture handlers untouched.
 -- Returns true if all covers are now resolved, false if some are still missing.
 function M.updateCovers(widget, _ctx)
-    -- widget is either tappable (normal) or OverlapGroup{tappable,...} (kb focus)
-    local tappable = (widget._cover_slots) and widget
-                     or (widget[1] and widget[1]._cover_slots and widget[1])
-    if not tappable or not tappable._cover_slots then return true end
+    if not widget or not widget._cover_slots then return true end
 
     local SH = getSH()
     if not SH then return true end
@@ -1054,7 +1085,7 @@ function M.updateCovers(widget, _ctx)
     local pfx = (_ctx and _ctx.pfx) or ""
     local show_badge = showProgressBadge(pfx)
     local all_done = true
-    for _, slot in ipairs(tappable._cover_slots) do
+    for _, slot in ipairs(widget._cover_slots) do
         local new_cover = SH.getBookCover(slot.fp, slot.w, slot.h)
         if new_cover then
             if show_badge then
@@ -1078,7 +1109,7 @@ function M.getHeight(_ctx)
     if not SH then return SectionLabel.height(M.id, _ctx and _ctx.landscape_factor) end
     local pfx = _ctx and _ctx.pfx
     -- Use pre-read settings bundle from ctx when available (normal HS path).
-    -- c.scale/c.thumb_scale/c.lbl_scale (from ctx.cfg) are RAW; apply
+    -- c.scale/c.thumb_scale (from ctx.cfg) are RAW; apply
     -- ctx.landscape_factor here, on both the cached and fallback path.
     -- thumb_scale is the exception: w_estimate below (ctx.col_w) is already
     -- the module's landscape-reduced column width, so the cover-size
@@ -1088,7 +1119,6 @@ function M.getHeight(_ctx)
     local lf          = (_ctx and _ctx.landscape_factor) or (UI.isLandscape() and UI.getLandscapeFactor() or 1)
     local raw_scale   = c and c.scale       or Config.getModuleScale("currently", pfx)
     local scale       = raw_scale * lf
-    local lbl_scale   = (c and c.lbl_scale   or Config.getItemLabelScale("currently", pfx)) * lf
     local raw_thumb_scale = c and c.thumb_scale or Config.getThumbScale("currently", pfx)
 
     local layout = (c and c.layout) or getLayout(pfx)
@@ -1110,7 +1140,7 @@ function M.getHeight(_ctx)
     -- Measure real line heights using the same font faces as build().
     -- See _scaledLayoutDims for the shared formulas (also used by build()).
     local styles = Config.resolveTextStyles(_ctx, M.id, M.text_elems)
-    local LD = _scaledLayoutDims(scale, lbl_scale, styles)
+    local LD = _scaledLayoutDims(scale, styles)
     local FC = _resolveFaces(LD, styles)
     local bar_h, bar_gap_b, bar_gap_a, title_gap, author_gap, series_gap, desc_gap, pct_gap =
         LD.bar_h, LD.bar_gap_before, LD.bar_gap_after, LD.title_gap, LD.author_gap, LD.series_gap, LD.desc_gap, LD.pct_gap
@@ -1348,6 +1378,15 @@ function M.getMenuItems(ctx_menu)
     }
 
     local progress_badge_group = {
+        Config.makeBadgeSizeItem{
+            info         = _lc("Scale for the progress badge."),
+            enabled_func = function() return showProgressBadge(pfx) end,
+            get          = function() return Config.getBadgeScalePct("currently", pfx) end,
+            set          = function(v) Config.setBadgeScale(v, "currently", pfx) end,
+            refresh      = refresh,
+            _lc          = _lc,
+            separator    = true,
+        },
         {
             text           = _lc("Progress Badge"),
             checked_func   = function() return showProgressBadge(pfx) end,
@@ -1360,22 +1399,10 @@ function M.getMenuItems(ctx_menu)
         Config.makeRadioSubmenuItem{
             text         = _lc("Progress Badge Color"),
             enabled_func = function() return showProgressBadge(pfx) end,
-            options      = {
-                { value = nil,     label = _lc("Follow Library") },
-                { value = "dark",  label = _lc("Dark") },
-                { value = "light", label = _lc("Light") },
-            },
-            get          = function() return getProgressBadgeColorOverride(pfx) end,
+            options      = SUIStyle.badgeColorOptions(_lc, _lc("Follow Style")),
+            get          = function() return SUIStyle.badgeChoiceShown(getProgressBadgeColorOverride(pfx)) end,
             set          = function(v) setProgressBadgeColor(pfx, v) end,
             refresh      = refresh,
-        },
-        Config.makeBadgeSizeItem{
-            info         = _lc("Scale for the progress badge."),
-            enabled_func = function() return showProgressBadge(pfx) end,
-            get          = function() return Config.getBadgeScalePct("currently", pfx) end,
-            set          = function(v) Config.setBadgeScale(v, "currently", pfx) end,
-            refresh      = refresh,
-            _lc          = _lc,
         },
     }
 
@@ -1401,6 +1428,17 @@ function M.getMenuItems(ctx_menu)
                     get     = function() return getStatsStyle(pfx) end,
                     set     = function(v) SUISettings:saveSetting(pfx .. STATS_STYLE_KEY, v) end,
                     refresh = refresh,
+                },
+                {
+                    -- Only the compact (single-line) layout carries the clock.
+                    text           = _lc("Clock icon"),
+                    enabled_func   = function() return getStatsStyle(pfx) == "compact" end,
+                    checked_func   = function() return getStatsIcon(pfx) end,
+                    keep_menu_open = true,
+                    callback       = function()
+                        SUISettings:saveSetting(pfx .. STATS_ICON_KEY, not getStatsIcon(pfx))
+                        refresh()
+                    end,
                 },
                 {
                     text_func  = function() return _lc("Progress Badge") end,
@@ -1432,7 +1470,7 @@ function M.getMenuItems(ctx_menu)
                 if MC and MC.invalidateCache then MC.invalidateCache() end
                 local MCD = package.loaded["modules/module_coverdeck"]
                 if MCD and MCD.invalidateCache then MCD.invalidateCache() end
-                
+
                 local ScreenEngine = package.loaded["engines/sui_screen_engine"]
                 if ScreenEngine and ScreenEngine.invalidateAllCfgAndRefresh then
                     ScreenEngine.invalidateAllCfgAndRefresh(true)
@@ -1453,6 +1491,7 @@ function M.getMenuItems(ctx_menu)
             _lc          = _lc,
         },
         Config.makeLabelToggleItem("currently", refresh, _lc),
+        Config.makeLabelPlacementItem("currently", refresh, _lc),
     }
 
     return Config.buildModuleMenu({
@@ -1469,11 +1508,9 @@ function M.getMenuItems(ctx_menu)
 end
 
 function M.updateStats(widget, ctx)
-    local actual_widget = (widget._cr_update_funcs) and widget
-                          or (widget[1] and widget[1]._cr_update_funcs and widget[1])
-    if not actual_widget or not actual_widget._cr_update_funcs then return false end
-    
-    local fp = actual_widget._fp
+    if not widget or not widget._cr_update_funcs then return false end
+
+    local fp = widget._fp
     if not fp then return false end
 
     -- The widget only carries data for the book it was built with (_fp).
@@ -1492,14 +1529,17 @@ function M.updateStats(widget, ctx)
     local pfx = (ctx and ctx.pfx) or ""
     if showProgressBadge(pfx) then return false end
 
+    local c = ctx.cfg and ctx.cfg.currently
+    local show = c and c.show or _readShow(pfx)
+
     local bstats
     local pre = ctx.currently_book_stats
     if pre and pre.fp == fp then
         bstats = pre.stats
     end
-    
+
     local prefetched_entry = ctx.prefetched and ctx.prefetched[fp]
-    if not bstats then
+    if not bstats and M.needsDbStats(show) then
         local md5 = prefetched_entry and prefetched_entry.partial_md5_checksum
         if not md5 then
             local DS = require("docsettings")
@@ -1513,11 +1553,11 @@ function M.updateStats(widget, ctx)
             bstats = fetchBookStats(md5, ctx.db_conn, ctx, true)
         end
     end
-    
+
     local SH = getSH()
     if SH then
         local bd = SH.getBookData(fp, prefetched_entry)
-        for _, fn in ipairs(actual_widget._cr_update_funcs) do
+        for _, fn in ipairs(widget._cr_update_funcs) do
             fn(bstats, bd)
         end
     end

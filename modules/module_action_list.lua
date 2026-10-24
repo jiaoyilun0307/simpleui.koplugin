@@ -24,7 +24,7 @@ local UI          = require("infra/sui_core")
 local SUISettings = require("infra/sui_store")
 local SUIStyle    = require("features/sui_style")
 local PAD         = UI.PAD
-local CLR_TEXT_SUB = UI.CLR_TEXT_SUB
+local Chrome       = require("features/sui_module_chrome")
 
 local _BASE_PH_FS = SUIStyle.FS_BODY    -- 18: placeholder text
 
@@ -74,10 +74,9 @@ end
 -- ---------------------------------------------------------------------------
 -- Core widget builder
 -- ---------------------------------------------------------------------------
-local function buildListWidget(w, action_ids, show_icons, align, on_tap_fn, d, colors)
-    local clr_blk = colors and colors.blk or SUIStyle.COLOR.text_primary
-    local clr_sub = colors and colors.sub or CLR_TEXT_SUB
-
+-- `on_stops(stops)`, when given, receives the rows as { id, widget } D-pad
+-- focus stops, top to bottom (each one is a focus row of its own).
+local function buildListWidget(w, action_ids, show_icons, align, on_tap_fn, d, ink, on_stops)
     -- Placeholder: no actions configured at all
     if not action_ids or #action_ids == 0 then
         local ph_fs   = math.max(8, math.floor(_BASE_PH_FS * (d.row_h / _BASE_ROW_H)))
@@ -89,7 +88,7 @@ local function buildListWidget(w, action_ids, show_icons, align, on_tap_fn, d, c
             UI.makeColoredText{
                 text    = ph_text,
                 face    = Font:getFace(SUIStyle.FACE_REGULAR, ph_fs),
-                fgcolor = clr_sub,
+                fgcolor = ink.sub,
                 width   = w - PAD * 2,
             },
         }
@@ -108,7 +107,7 @@ local function buildListWidget(w, action_ids, show_icons, align, on_tap_fn, d, c
             UI.makeColoredText{
                 text    = ph_text,
                 face    = Font:getFace(SUIStyle.FACE_REGULAR, ph_fs),
-                fgcolor = clr_sub,
+                fgcolor = ink.sub,
                 width   = w - PAD * 2,
             },
         }
@@ -127,8 +126,11 @@ local function buildListWidget(w, action_ids, show_icons, align, on_tap_fn, d, c
     local icon_opts = {
         container_h             = d.row_h,
         wrap_image_in_container  = true,
+        -- Icons take the ink colour over a tinted fill.
+        tint                    = ink ~= Chrome.PLAIN_INK or nil,
     }
 
+    local stops = {}
     for i = 1, n do
         local aid = valid_ids[i]
         local row_content = QARenderer.buildListRow(aid, {
@@ -139,17 +141,20 @@ local function buildListWidget(w, action_ids, show_icons, align, on_tap_fn, d, c
             icon_gap       = d.icon_gap,
             lbl_face       = d.lbl_face,
             lbl_bold       = d.lbl_bold,
-            fgcolor        = clr_blk,
+            fgcolor        = ink.blk,
             icon_opts      = icon_opts,
             on_tap_fn      = on_tap_fn,
             tap_event_name = "TapAL",
+            focusable      = on_stops ~= nil,
         })
+        stops[i] = { id = i, widget = row_content }
 
         if i > 1 and d.row_gap > 0 then
             vg[#vg + 1] = VerticalSpan:new{ width = d.row_gap }
         end
         vg[#vg + 1] = row_content
     end
+    if on_stops then on_stops(stops) end
 
     -- `fit_align` makes the module chrome hug the list and position it within
     -- the column (see ModuleChrome.wrap). Horizontal insets come from the chrome.
@@ -224,6 +229,17 @@ function M.setEnabled(pfx, on)
     SUISettings:saveSetting(pfx .. MOD_SUFFIX .. "_enabled", on)
 end
 
+-- Layout-editor summary: the labels of the configured actions.
+function M.getSummary(_id, pfx)
+    local labels = {}
+    for _i, entry in ipairs(getALPool()) do labels[entry.id] = entry.label end
+    local names = {}
+    for _i, id in ipairs(SUISettings:readSetting(pfx .. ITEMS_KEY) or {}) do
+        names[#names + 1] = labels[id] or id
+    end
+    return #names > 0 and table.concat(names, "  ·  ") or nil
+end
+
 local _label_scale_migrated = {}
 
 local function _migrateLabelScale(mod_id, pfx)
@@ -252,7 +268,10 @@ function M.build(w, ctx)
     local styles = Config.resolveTextStyles(ctx, MOD_ID, M.text_elems)
     d.fs = math.max(8, math.floor(d.fs * lf * (styles.label.scale or 1)))
     d.lbl_face, d.lbl_bold = SUIStyle.getTextFace(styles.label, d.fs)
-    return buildListWidget(w, qa_ids, show_icons, align, ctx.on_qa_tap, d)
+    return buildListWidget(w, qa_ids, show_icons, align, ctx.on_qa_tap, d, ctx.ink or Chrome.PLAIN_INK,
+        ctx.kbStops and function(stops)
+            for i, stop in ipairs(stops) do ctx.kbStops(MOD_ID .. ":" .. i, { stop }) end
+        end)
 end
 
 function M.getHeight(ctx)

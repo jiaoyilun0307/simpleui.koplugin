@@ -104,10 +104,6 @@ local function schedule_coverbrowser_check()
         local ok_cm = pcall(require, "covermenu")
         if ok_cm then return end
 
-        local ButtonDialog = require("ui/widget/buttondialog")
-        local dialog
-        local buttons = {}
-
         local disabled_list = {}
         if G_reader_settings then
             local dl = G_reader_settings:readSetting("plugins_disabled")
@@ -115,39 +111,29 @@ local function schedule_coverbrowser_check()
         end
         local plugin_available = disabled_list["coverbrowser"] ~= nil
 
-        if plugin_available then
-            table.insert(buttons, {{
-                text = _("Enable"),
-                callback = function()
-                    UIManager:close(dialog)
-                    if G_reader_settings then
-                        disabled_list["coverbrowser"] = nil
-                        G_reader_settings:saveSetting("plugins_disabled", disabled_list)
-                        G_reader_settings:flush()
-                    end
-                    local Event = require("ui/event")
-                    UIManager:show(require("ui/widget/confirmbox"):new{
-                        text = _("Please restart KOReader for the change to take effect."),
-                        ok_text = _("Restart now"),
-                        ok_callback = function()
-                            UIManager:broadcastEvent(Event:new("Restart"))
-                        end,
-                    })
+        local function enable()
+            if G_reader_settings then
+                disabled_list["coverbrowser"] = nil
+                G_reader_settings:saveSetting("plugins_disabled", disabled_list)
+                G_reader_settings:flush()
+            end
+            local Event = require("ui/event")
+            require("features/dialogs/sui_dialogs").confirm{
+                text        = _("Please restart KOReader for the change to take effect."),
+                ok_text     = _("Restart now"),
+                ok_callback = function()
+                    UIManager:broadcastEvent(Event:new("Restart"))
                 end,
-            }})
+            }
         end
 
-        table.insert(buttons, {{
-            text = _("OK"),
-            callback = function() UIManager:close(dialog) end,
-        }})
-
-        dialog = ButtonDialog:new{
-            title = _("CoverBrowser plugin is not enabled, some features will not work correctly."),
-            title_align = "center",
-            buttons = buttons,
+        require("features/dialogs/sui_dialogs").confirm{
+            text         = _("CoverBrowser plugin is not enabled, some features will not work correctly."),
+            ok_text      = _("Enable"),
+            cancel_text  = _("OK"),
+            no_ok_button = not plugin_available,
+            ok_callback  = enable,
         }
-        UIManager:show(dialog)
     end)
 end
 

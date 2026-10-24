@@ -104,22 +104,20 @@ function Goals.setUnits(id, units)
 end
 
 function Goals.showDialog(id, on_confirm)
-    local spec       = _spec(id)
-    local SpinWidget = require("ui/widget/spinwidget")
-    require("ui/uimanager"):show(SpinWidget:new{
-        title_text  = spec.title(),
-        info_text   = spec.info(),
-        value       = Goals.getUnits(id),
-        value_min   = 0,
-        value_max   = spec.max,
-        value_step  = spec.step or 1,
-        ok_text     = _("Save"),
-        cancel_text = _("Cancel"),
-        callback    = function(spin)
-            Goals.setUnits(id, spin.value)
+    local spec = _spec(id)
+    require("features/dialogs/sui_dialogs").spin{
+        title    = spec.title(),
+        info     = spec.info(),
+        value    = Goals.getUnits(id),
+        min      = 0,
+        max      = spec.max,
+        step     = spec.step or 1,
+        ok_text  = _("Save"),
+        on_apply = function(value)
+            Goals.setUnits(id, value)
             if on_confirm then on_confirm() end
         end,
-    })
+    }
 end
 
 --- One stepper row per goal, for the Stats settings menu.

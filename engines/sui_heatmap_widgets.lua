@@ -23,6 +23,8 @@
 local Blitbuffer      = require("ffi/blitbuffer")
 local Device          = require("device")
 local SUIStyle        = require("features/sui_style")
+local Accent          = require("infra/sui_accent")
+local AAPaint         = require("infra/sui_aa_paint")
 local Geom            = require("ui/geometry")
 local HorizontalGroup = require("ui/widget/horizontalgroup")
 local HorizontalSpan  = require("ui/widget/horizontalspan")
@@ -54,16 +56,28 @@ function HW.classify(seconds, max_seconds)
     return 4
 end
 
+-- The accent colour mixed into the surface colour, `strength` 0..1.
+local function accentShade(accent, strength)
+    local a, s = accent:getColorRGB32(), SUIStyle.COLOR.surface:getColorRGB32()
+    local function mix(av, sv) return math.floor(sv + (av - sv) * strength + 0.5) end
+    return Blitbuffer.ColorRGB32(mix(a.r, s.r), mix(a.g, s.g), mix(a.b, s.b), 0xFF)
+end
+
 -- Level 0 (no reading at all) is always pure white, regardless of the
 -- gray scale used for levels 1-4 — an empty cell should read as blank,
--- not as a shade of activity.
-local _level_colors = {}
+-- not as a shade of activity. Levels 1-4 are shades of the accent colour when
+-- one is set; the shades are rebuilt when the painted accent colour changes
+-- (compared by identity: colour `==` calls into the colour and fails on nil).
+local _level_colors, _level_accent = {}, nil
 function HW.levelColor(level)
     level = level or 0
     if level == 0 then return SUIStyle.COLOR.surface end
+    local accent = Accent.color()
+    if not rawequal(accent, _level_accent) then _level_colors, _level_accent = {}, accent end
     local color = _level_colors[level]
     if not color then
-        color = Blitbuffer.gray(_LEVEL_GRAY[level + 1] or _LEVEL_GRAY[1])
+        local strength = _LEVEL_GRAY[level + 1] or _LEVEL_GRAY[1]
+        color = accent and accentShade(accent, strength) or Blitbuffer.gray(strength)
         _level_colors[level] = color
     end
     return color
@@ -94,8 +108,8 @@ local function buildCellRow(cell_size, border, gap, cells, count)
             local fill = cells[i]
             if fill then
                 local cx = x + (i - 1) * stride
-                bb:paintRect(cx, y, cell_size, cell_size, border_color)
-                bb:paintRect(cx + inset, y + inset, inner, inner, fill)
+                AAPaint.fillRect(bb, cx, y, cell_size, cell_size, border_color, 255)
+                AAPaint.fillRect(bb, cx + inset, y + inset, inner, inner, fill, 255)
             end
         end
     end
@@ -181,6 +195,7 @@ end
 -- labels (see module_heatmap.lua, which renders its labels in a larger
 -- font than before but wants its grid cells unchanged).
 function HW.buildRangeHeatmap(daily_map, start_t, end_t, fonts, max_width, opts)
+    local label_fg = opts and opts.label_fg or SUIStyle.COLOR.text_primary
     local cols, num_cols = HW.buildRangeGrid(daily_map, start_t, end_t)
 
     local gap     = Screen:scaleBySize(2)
@@ -234,7 +249,7 @@ function HW.buildRangeHeatmap(daily_map, start_t, end_t, fonts, max_width, opts)
         if text then
             table.insert(labels_row, LeftContainer:new{
                 dimen = Geom:new{ w = cell_size, h = label_h },
-                TextWidget:new{ text = text, face = fonts.small, fgcolor = SUIStyle.COLOR.text_dim },
+                TextWidget:new{ text = text, face = fonts.small, fgcolor = label_fg },
             })
         else
             table.insert(labels_row, HorizontalSpan:new{ width = cell_size })
@@ -257,7 +272,7 @@ function HW.buildRangeHeatmap(daily_map, start_t, end_t, fonts, max_width, opts)
         if wd_text then
             table.insert(row_group, LeftContainer:new{
                 dimen = Geom:new{ w = wd_label_w, h = cell_size },
-                TextWidget:new{ text = wd_text, face = fonts.small, fgcolor = SUIStyle.COLOR.text_dim },
+                TextWidget:new{ text = wd_text, face = fonts.small, fgcolor = label_fg },
             })
         else
             table.insert(row_group, HorizontalSpan:new{ width = wd_label_w })
@@ -301,6 +316,7 @@ end
 -- opts.cell_size, when given, forces that exact cell size — see
 -- HW.buildRangeHeatmap's own opts.cell_size for the rationale.
 function HW.buildDayPartHeatmap(weekday_hour_map, fonts, max_width, is_12h, opts)
+    local label_fg = opts and opts.label_fg or SUIStyle.COLOR.text_primary
     local num_cols = 24
     local gap      = Screen:scaleBySize(2)
     local row_gap  = Screen:scaleBySize(2)
@@ -337,7 +353,7 @@ function HW.buildDayPartHeatmap(weekday_hour_map, fonts, max_width, is_12h, opts
         if h % 3 == 0 then
             table.insert(labels_row, LeftContainer:new{
                 dimen = Geom:new{ w = cell_size, h = label_h },
-                TextWidget:new{ text = formatHourLabel(h, is_12h), face = fonts.small, fgcolor = SUIStyle.COLOR.text_dim },
+                TextWidget:new{ text = formatHourLabel(h, is_12h), face = fonts.small, fgcolor = label_fg },
             })
         else
             table.insert(labels_row, HorizontalSpan:new{ width = cell_size })
@@ -356,7 +372,7 @@ function HW.buildDayPartHeatmap(weekday_hour_map, fonts, max_width, is_12h, opts
         if wd_text then
             table.insert(row_group, LeftContainer:new{
                 dimen = Geom:new{ w = wd_label_w, h = cell_size },
-                TextWidget:new{ text = wd_text, face = fonts.small, fgcolor = SUIStyle.COLOR.text_dim },
+                TextWidget:new{ text = wd_text, face = fonts.small, fgcolor = label_fg },
             })
         else
             table.insert(row_group, HorizontalSpan:new{ width = wd_label_w })
@@ -382,20 +398,22 @@ end
 -- "Less [ ][ ][ ][ ][ ] More" — five sample cells, one per shading level.
 -- cell_size defaults to a fixed comfortable size for the full-screen
 -- popup; callers with their own scaled cell size (the homescreen card, to
--- keep the legend in step with its own grid) can pass one in.
-function HW.buildLegend(fonts, cell_size)
+-- keep the legend in step with its own grid) can pass one in. `label_fg` is
+-- the colour of the "Less"/"More" labels.
+function HW.buildLegend(fonts, cell_size, label_fg)
+    label_fg = label_fg or SUIStyle.COLOR.text_primary
     local gap    = Screen:scaleBySize(3)
     local cell   = cell_size or Screen:scaleBySize(11)
     local border = Size.line.thin
 
     local row = HorizontalGroup:new{ align = "center" }
-    table.insert(row, TextWidget:new{ text = _("Less"), face = fonts.small, fgcolor = SUIStyle.COLOR.text_dim })
+    table.insert(row, TextWidget:new{ text = _("Less"), face = fonts.small, fgcolor = label_fg })
     table.insert(row, HorizontalSpan:new{ width = gap * 2 })
     local levels = {}
     for level = 0, 4 do levels[level + 1] = HW.levelColor(level) end
     table.insert(row, buildCellRow(cell, border, gap, levels, 5))
     table.insert(row, HorizontalSpan:new{ width = gap * 2 })
-    table.insert(row, TextWidget:new{ text = _("More"), face = fonts.small, fgcolor = SUIStyle.COLOR.text_dim })
+    table.insert(row, TextWidget:new{ text = _("More"), face = fonts.small, fgcolor = label_fg })
     return row
 end
 

@@ -32,23 +32,36 @@
 --   M.has_covers     bool?    true → enables e-ink dithering and cover poll
 --                             (equivalent to belonging to _COVER_MOD_IDS)
 --   M.is_book_mod    bool?    true → suppresses the "No books opened yet" empty-state
---                             (equivalent to "currently"/"recent"/"coverdeck")
+--                             (equivalent to "currently"/"recent"/"coverdeck") and lets
+--                             the module repaint alone after a page turn
 --   M.needs          table?   data the screen engine prepares while the module is enabled:
 --                             recent = n | function(pfx) -> n   n recent books in
 --                                      ctx.recent_fps (see Registry.getRecentDemand)
---                             db, stats, books = true           external modules only
+--                             db, stats, books, status, records, charts, year
+--                                      = true | function(pfx) -> bool
+--                                      the DB connection, StatsProvider's stats,
+--                                      the finished-books ledger, the library
+--                                      status counts, the session records, the
+--                                      chart data and the year data (see
+--                                      Registry.wantsData)
 --   M.text_elems     string[]?  ids of the text elements with a user-selectable
 --                             font family, size scale and variant (regular, bold,
 --                             italic, bold italic; see Config.makeTextStyleMenu).
---                             Each style is { family, scale, variant }. The screen engine
---                             reads them into ctx.cfg[M.id].text; render multiplies scale
---                             into the element font size and draws the face with
+--                             Each style is { family, scale, variant, color }. The screen
+--                             engine reads them into ctx.cfg[M.id].text; render multiplies
+--                             scale into the element font size and draws the face with
 --                             SUIStyle.getTextFace. Elements that are not regular by
 --                             default are declared with Config.declareTextVariants.
+--                             Elements that can take a palette colour are declared with
+--                             Config.declareTextColors; render picks the colour with
+--                             SUIStyle.textColor(style, ctx.palette, default).
 --
 --   M.isEnabled(pfx)         → bool         (optional; replaces enabled_key)
 --   M.build(w, ctx)          → widget | nil
 --   M.getHeight(ctx)         → number
+--   M.fills_row_height       → bool         (optional; in a Home Screen row taller than the
+--                                            module, build is called again with ctx.grow_h,
+--                                            the extra height in px, to use it)
 --   M.getMenuItems(ctx_menu) → table | nil  (nil = no settings sub-menu)
 --
 -- Instantiable modules (e.g. quick_actions_row) declare
@@ -58,15 +71,21 @@
 -- Instance ids are "<base id>_<hex>". Each base persists its instance ids in
 -- the list stored under M.instances_key (default "simpleui_qa_row_instances").
 -- A base may also declare:
+--   M.bare_instance = true           the base id is itself the first instance
+--                                    (keys pfx .. base id .. suffix). It is
+--                                    never pruned or destroyed, and
+--                                    createInstance hands it out again while
+--                                    it sits on no surface
 --   M.menu_group = "quick_actions"   groups its instances under that entry of
 --                                    the global module settings menu
---   M.getInstanceSubtitle(inst_id, pfx, pfx_qa) → string | nil
---                                    summary shown under an instance in the
---                                    layout editor's module list
 --   M.setting_suffixes = { "_tabs" } suffixes of the instance's own settings
 --                                    keys (pfx .. inst_id .. suffix), removed
 --                                    together with the instance
--- A module may also declare:
+-- A module (instanciable or not) may also declare:
+--   M.getSummary(mod_id, pfx, pfx_qa) → string | nil
+--                                    what the module shows (its selected
+--                                    items), listed in the layout editor
+--                                    under a full-width module
 --   M.owns_chrome = true             the module draws its own frame and
 --                                    background boxes (see
 --                                    features/sui_module_chrome.lua): the
@@ -109,8 +128,9 @@ local MODULES = {
     { require_mod = "modules/module_tab_grid"       },
     { require_mod = "modules/module_library"        },
     { require_mod = "modules/module_reading_goals" },
-    { require_mod = "modules/module_reading_stats" },
+    { require_mod = "modules/reading_stats/module_reading_stats" },
     { require_mod = "modules/module_heatmap"       },
+    { require_mod = "modules/critter/module_critter"  },
     { require_mod = "modules/module_quick_actions" },
     { require_mod = "modules/module_action_list"   },
     { require_mod = "modules/module_spacer"        },
@@ -132,6 +152,11 @@ local DEFAULT_INSTANCES_KEY = "simpleui_qa_row_instances"
 
 local function _instancesKey(base)
     return base.instances_key or DEFAULT_INSTANCES_KEY
+end
+
+-- True when `id` is the bare instance of `base` (see M.bare_instance).
+local function _isBareInstance(base, id)
+    return base.bare_instance == true and id == base.id
 end
 
 -- Base descriptors of every instanciable built-in module, in MODULES order.
@@ -156,7 +181,9 @@ end
 local function _baseOf(mod_id)
     if type(mod_id) ~= "string" then return nil end
     for _, base in ipairs(_instanciableBases()) do
-        if mod_id:sub(1, #base.id + 1) == base.id .. "_" then return base end
+        if mod_id:sub(1, #base.id + 1) == base.id .. "_" or _isBareInstance(base, mod_id) then
+            return base
+        end
     end
     return nil
 end
@@ -203,11 +230,11 @@ function Registry.getMenuGroup(mod_id)
     return base and base.menu_group
 end
 
--- Layout-editor summary of an instance, or nil when its base provides none.
-function Registry.getInstanceSubtitle(mod_id, pfx, pfx_qa)
-    local base = _baseOf(mod_id)
-    if base and base.getInstanceSubtitle then
-        return base.getInstanceSubtitle(mod_id, pfx, pfx_qa)
+-- Layout-editor summary of a module or instance, or nil when it provides none.
+function Registry.getSummary(mod_id, pfx, pfx_qa)
+    local mod = _baseOf(mod_id) or Registry.get(mod_id)
+    if mod and mod.getSummary then
+        return mod.getSummary(mod_id, pfx, pfx_qa)
     end
     return nil
 end
@@ -292,7 +319,7 @@ local function _pruneOrphanInstances(mod, placed)
     local kept    = {}
     local orphans = {}
     for _, iid in ipairs(inst_ids) do
-        if placed[iid] then
+        if placed[iid] or _isBareInstance(mod, iid) then
             kept[#kept + 1] = iid
         else
             orphans[#orphans + 1] = iid
@@ -311,6 +338,17 @@ local function _pruneOrphanInstances(mod, placed)
     return kept
 end
 
+-- Lists the bare instance of `base` (first) when the stored list lacks it.
+local function _ensureBareInstance(base, inst_ids)
+    if not base.bare_instance then return inst_ids end
+    for _, iid in ipairs(inst_ids) do
+        if iid == base.id then return inst_ids end
+    end
+    table.insert(inst_ids, 1, base.id)
+    SUISettings:set(_instancesKey(base), inst_ids)
+    return inst_ids
+end
+
 local function _load()
     if _loaded then return end
     _loaded = {}
@@ -326,7 +364,7 @@ local function _load()
                 -- Dynamic-instance module: prune orphaned instance ids, then
                 -- load the (now-clean) persisted instance ids and materialise
                 -- one descriptor per instance.
-                local inst_ids = _pruneOrphanInstances(mod, placed)
+                local inst_ids = _ensureBareInstance(mod, _pruneOrphanInstances(mod, placed))
                 for _, iid in ipairs(inst_ids) do
                     local m = mod.makeInstance(iid)
                     if m and type(m.id) == "string" and not _by_id[m.id] then
@@ -405,6 +443,19 @@ function Registry.getRecentDemand(pfx)
     return demand
 end
 
+-- True when a module enabled under `pfx` needs the data kind `need` (see
+-- M.needs): the entry is true, or a function(pfx) that returns true.
+function Registry.wantsData(pfx, need)
+    for _, mod in ipairs(Registry.list()) do
+        local n = mod.needs and mod.needs[need]
+        if n and Registry.isEnabled(mod, pfx) then
+            if type(n) == "function" then n = n(pfx) end
+            if n then return true end
+        end
+    end
+    return false
+end
+
 function Registry.countEnabled(pfx)
     local n = 0
     for _, mod in ipairs(Registry.list()) do
@@ -469,12 +520,16 @@ end
 -- Creates a new instance of an instanciable module, persists its id in
 -- the base's instances list, registers it in _loaded/_by_id, and returns
 -- the new instance id (e.g. "quick_actions_row_a1b2c3").
--- Returns nil if the base module is not instanciable or not found.
+-- Returns nil if the base module is not instanciable or not found. A base with
+-- M.bare_instance returns its own id while that instance sits on no surface.
 -- ---------------------------------------------------------------------------
 function Registry.createInstance(base_id)
     _load()
     local base = _instanciable[base_id or "quick_actions_row"]
     if not base then return nil end
+    if base.bare_instance and not _placedInstanceIds()[base.id] then
+        return base.id
+    end
     -- Generate a short unique id: base_id + 6-char hex timestamp fragment.
     local inst_id = (base_id or "quick_actions_row") .. "_" .. string.format("%06x", math.floor(os.time() * 1000) % 0xFFFFFF)
     -- Avoid collisions (unlikely but safe).
@@ -496,12 +551,15 @@ end
 -- Registry.destroyInstance(inst_id)
 --
 -- Removes an instanciable module instance from the registry and from the
--- persisted instance list. Does NOT remove the module's own settings keys
+-- persisted instance list; a bare instance (M.bare_instance) is left alone.
+-- Does NOT remove the module's own settings keys
 -- (items, shape, bg, etc.) — callers that want a clean slate should call
 -- Registry.purgeInstanceSettings(inst_id) first or after.
 -- ---------------------------------------------------------------------------
 function Registry.destroyInstance(inst_id)
     if not inst_id then return end
+    local base = _baseOf(inst_id)
+    if base and _isBareInstance(base, inst_id) then return end
     _load()
     -- Remove from _loaded.
     for i = #_loaded, 1, -1 do
@@ -540,7 +598,8 @@ end
 -- Registry.purgeInstanceSettings(inst_id, pfx)
 --
 -- Removes all settings keys that belong to this instance: enabled, shape,
--- bg, items, labels, scale, gap, label_scale (under both pfx and pfx_qa).
+-- bg, items, labels, scale, gap, label_scale, bento_width (under both pfx
+-- and pfx_qa). Does not touch global keys (hide_label / label_outside).
 -- Safe to call even if the instance no longer exists in the registry.
 -- ---------------------------------------------------------------------------
 function Registry.purgeInstanceSettings(inst_id, pfx)
@@ -579,8 +638,11 @@ function Registry.purgeInstanceSettings(inst_id, pfx)
     -- Also the bare keys used by build/getHeight.
     SUISettings:set(qa_pfx .. inst_id .. "_items",  nil)
     SUISettings:set(qa_pfx .. inst_id .. "_labels", nil)
-    -- "Show section label" toggle — its own key, no pfx (sui_config.lua).
-    SUISettings:set("simpleui_hide_label_" .. inst_id, nil)
+    -- Column width (bento grid): key is pfx .. "bento_width_" .. id (sui_config).
+    SUISettings:set(pfx    .. "bento_width_" .. inst_id, nil)
+    SUISettings:set(qa_pfx .. "bento_width_" .. inst_id, nil)
+    -- simpleui_hide_label_* / simpleui_label_outside_* are global (no pfx),
+    -- not per-screen; leave them for the module/instance lifetime elsewhere.
 end
 
 -- ---------------------------------------------------------------------------

@@ -24,7 +24,7 @@ local SUISettings = require("infra/sui_store")
 local AAPaint      = require("infra/sui_aa_paint")
 local RasterCache  = require("infra/sui_raster_cache")
 local PAD          = UI.PAD
-local CLR_TEXT_SUB = UI.CLR_TEXT_SUB
+local Chrome       = require("features/sui_module_chrome")
 
 -- ---------------------------------------------------------------------------
 -- Translated date string
@@ -381,7 +381,7 @@ end
 -- getSize() sometimes reports incorrect heights before the first paint.
 -- ---------------------------------------------------------------------------
 
-local function _buildWordClockWidget(text, face, bold, align)
+local function _buildWordClockWidget(text, face, bold, align, fgcolor)
     -- Split the "Hour\nMinutes" string into two parts.
     local nl = text:find("\n")
     local line1 = nl and text:sub(1, nl - 1) or text
@@ -394,9 +394,10 @@ local function _buildWordClockWidget(text, face, bold, align)
 
     local function makeLine(txt)
         return _slot(UI.makeColoredText{
-            text = txt,
-            face = face,
-            bold = bold,
+            text    = txt,
+            face    = face,
+            bold    = bold,
+            fgcolor = fgcolor,
         }, line_h)
     end
 
@@ -538,7 +539,7 @@ local function _battInfo()
 end
 
 -- lvl is always a number in [0,100] or nil (normalised by _battInfo).
--- Battery always uses CLR_TEXT_SUB — same subdued grey as date and author text.
+-- Battery uses the secondary ink — same as the date.
 
 -- Builds the battery display string.
 -- Uses ▰/▱ (filled/empty blocks) matching module_header.lua visual style.
@@ -584,6 +585,9 @@ local TEXT_ELEMS = { "clock", "date", "battery" }
 -- The time is bold until the user picks another variant.
 Config.declareTextVariants("clock", { clock = "bold" })
 
+-- Every element can take a palette colour.
+Config.declareTextColors("clock", TEXT_ELEMS, { clock = "accent" })
+
 -- One-shot: copy legacy *_elem_scale values into text-style scales, then delete
 -- the legacy keys. Runs at most once per prefix per process.
 local _LEGACY_ELEM = { clock = "clock", date = "date", battery = "batt" }
@@ -614,7 +618,7 @@ end
 --   texts — { widget, text } per text widget, `text` returning its current string
 --           (nil for the word style, whose lines change size almost every minute)
 --   face  — the analogue face widget, if any
-local function build(w, pfx, vspan_pool, landscape_factor, styles, live)
+local function build(w, pfx, vspan_pool, landscape_factor, styles, live, ink, palette)
     local lf    = landscape_factor or 1
     _migrateLegacyElemScales(pfx)
     styles = styles or Config.readTextStyles("clock", TEXT_ELEMS, pfx)
@@ -638,7 +642,11 @@ local function build(w, pfx, vspan_pool, landscape_factor, styles, live)
     local visible     = getVisibleItems(pfx)
     local clock_style = getClockStyle(pfx)
 
-    local sub_fg = CLR_TEXT_SUB
+    ink = ink or Chrome.PLAIN_INK
+    palette = palette or Chrome.NO_PALETTE
+    local clock_fg = SUIStyle.textColor(styles.clock,   palette, ink.blk)
+    local date_fg  = SUIStyle.textColor(styles.date,    palette, ink.sub)
+    local batt_fg  = SUIStyle.textColor(styles.battery, palette, ink.sub)
 
     local align = getAlignment(pfx)
     local vg = VerticalGroup:new{ align = align }
@@ -650,22 +658,21 @@ local function build(w, pfx, vspan_pool, landscape_factor, styles, live)
             local t      = os.date("*t", os.time())
             local wc_text = timeToWords(t.hour, t.min, is_12h)
             local face_word, bold_word = SUIStyle.getTextFace(styles.clock, word_fs)
-            vg[#vg+1] = _buildWordClockWidget(wc_text, face_word, bold_word, align)
+            vg[#vg+1] = _buildWordClockWidget(wc_text, face_word, bold_word, align, clock_fg)
         elseif clock_style == "analogue" then
             local diameter = math.min(clock_span, w)
             if diameter % 2 == 1 then diameter = diameter - 1 end
-            face_widget = _buildAnalogueClockWidget(diameter, SUIStyle.COLOR.text_primary)
+            face_widget = _buildAnalogueClockWidget(diameter, clock_fg)
             if face_widget then vg[#vg+1] = face_widget end
         else
             local face_clock, bold_clock = SUIStyle.getTextFace(styles.clock, clock_fs)
             local time_text = _timeText()
-            -- No fgcolor: makeColoredText returns a plain TextWidget, which
-            -- must record its own on-screen box for in-place refreshes.
-            local time_w = UI.trackDimen(UI.makeColoredText{
-                text = time_text,
-                face = face_clock,
-                bold = bold_clock,
-            })
+            local time_w = UI.makeColoredText{
+                text    = time_text,
+                face    = face_clock,
+                bold    = bold_clock,
+                fgcolor = clock_fg,
+            }
             vg[#vg+1] = _slot(time_w, clock_w, SUIStyle.inkCentreShift(face_clock, time_text, bold_clock))
             texts[#texts+1] = { widget = time_w, text = _timeText }
         end
@@ -677,7 +684,7 @@ local function build(w, pfx, vspan_pool, landscape_factor, styles, live)
             text    = _localDate(),
             face    = face_date,
             bold    = bold_date,
-            fgcolor = sub_fg,
+            fgcolor = date_fg,
         }
         vg[#vg+1] = _slot(date_w, date_h)
         texts[#texts+1] = { widget = date_w, text = _localDate }
@@ -689,7 +696,7 @@ local function build(w, pfx, vspan_pool, landscape_factor, styles, live)
             text    = _battLabel(),
             face    = face_batt,
             bold    = bold_batt,
-            fgcolor = sub_fg,
+            fgcolor = batt_fg,
         }
         vg[#vg+1] = _slot(batt_w, batt_h)
         texts[#texts+1] = { widget = batt_w, text = _battLabel }
@@ -738,6 +745,15 @@ M.name       = _("Clock")
 M.label      = nil
 M.default_on = true
 M.text_elems = TEXT_ELEMS
+
+-- Layout-editor summary: the visible items, in order.
+function M.getSummary(_id, pfx)
+    local names = {}
+    for _i, k in ipairs(getVisibleItems(pfx)) do
+        names[#names + 1] = itemLabel(k, _)
+    end
+    return #names > 0 and table.concat(names, "  ·  ") or nil
+end
 
 function M.isEnabled(pfx)
     return isClockEnabled(pfx) or isDateEnabled(pfx) or isBattEnabled(pfx)
@@ -814,27 +830,24 @@ local function _rebuildModule(screen)
         -- surgical swap matches the size _updatePage would have built.
         local lf = screen._clock_landscape_factor
 
-        local ok_ch, Chrome = pcall(require, "features/sui_module_chrome")
         local pfx = screen._clock_pfx or "simpleui_hs_"
-        local chrome = ok_ch and Chrome and Chrome.resolve(pfx, "clock") or nil
+        local chrome = Chrome.resolve(pfx, "clock")
         local col_w = screen._clock_col_w
-        if not col_w and chrome then
+        if not col_w then
             col_w = inner_w + Chrome.outerMargin(chrome) * 2
                 + Chrome.boxInset(chrome)
         end
         col_w = col_w or inner_w
 
         -- Build at the same content width the page path would use.
-        local build_w = (chrome and Chrome.contentWidth(col_w, chrome)) or inner_w
+        local build_w = Chrome.contentWidth(col_w, chrome)
         local live = {}
-        local ok_w, new_widget = pcall(build, build_w, pfx, screen._vspan_pool, lf, nil, live)
+        local ok_w, new_widget = pcall(build, build_w, pfx, screen._vspan_pool, lf, nil, live, Chrome.ink(chrome), Chrome.palette(chrome))
 
         if ok_w and new_widget then
             -- Re-apply module chrome so the surgical swap keeps the same
             -- fill/frame width the full page build would have wrapped.
-            if chrome then
-                new_widget = Chrome.wrap(new_widget, chrome, col_w, lf or 1)
-            end
+            new_widget = Chrome.wrap(new_widget, chrome, col_w, lf or 1, nil, screen._clock_min_h)
             local target
             if is_wrapped then
                 -- The clock was wrapped in an InputContainer for hold-to-settings.
@@ -988,7 +1001,7 @@ function M.build(w, ctx)
     local live = {}
     if ctx._screen_widget then ctx._screen_widget._clock_live = live end
     return build(w, ctx.pfx, ctx.vspan_pool, ctx.landscape_factor,
-        Config.resolveTextStyles(ctx, M.id, TEXT_ELEMS), live)
+        Config.resolveTextStyles(ctx, M.id, TEXT_ELEMS), live, ctx.ink, ctx.palette)
 end
 
 function M.getHeight(ctx)
@@ -1123,30 +1136,18 @@ function M.getMenuItems(ctx_menu)
     }
 
     if #getVisibleItems(pfx) > 1 then
-        appearance_extra[#appearance_extra + 1] = {
-            text_func  = function() return _lc("Spacing") end,
-            value_func = function() return getItemGapPct(pfx) .. "%" end,
-            keep_menu_open = true,
-            callback = function()
-                local SpinWidget = require("ui/widget/spinwidget")
-                local UIManager_ = require("ui/uimanager")
-                UIManager_:show(SpinWidget:new{
-                    title_text    = _lc("Spacing"),
-                    info_text     = _lc("Vertical space between items.\n100% is the default spacing."),
-                    value         = getItemGapPct(pfx),
-                    value_min     = ITEM_GAP_MIN,
-                    value_max     = ITEM_GAP_MAX,
-                    value_step    = ITEM_GAP_STEP,
-                    unit          = "%",
-                    ok_text       = _lc("Apply"),
-                    cancel_text   = _lc("Cancel"),
-                    default_value = ITEM_GAP_DEF,
-                    callback      = function(spin)
-                        setItemGapPct(pfx, spin.value)
-                        refresh()
-                    end,
-                })
-            end,
+        appearance_extra[#appearance_extra + 1] = Config.makeSpinItem{
+            text_func     = function() return _lc("Spacing") end,
+            title         = _lc("Spacing"),
+            info          = _lc("Vertical space between items.\n100% is the default spacing."),
+            get           = function() return getItemGapPct(pfx) end,
+            set           = function(value) setItemGapPct(pfx, value) end,
+            refresh       = refresh,
+            value_min     = ITEM_GAP_MIN,
+            value_max     = ITEM_GAP_MAX,
+            value_step    = ITEM_GAP_STEP,
+            default_value = ITEM_GAP_DEF,
+            unit          = "%",
         }
     end
 

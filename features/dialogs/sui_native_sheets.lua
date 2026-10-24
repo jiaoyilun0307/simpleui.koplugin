@@ -67,6 +67,8 @@
 --     text       string                  label drawn instead of the button's
 --     group      string                  block of segments the choice joins
 --     rank       number                  position within its group
+--   NativeSheets.canReplace(over_windows) -> boolean  whether native widgets may be
+--                                                   drawn as sheets right now
 --   NativeSheets.interceptShow(widget) -> boolean   show step (consumes the call)
 --   NativeSheets.interceptClose(widget) -> boolean  close step (consumes the call)
 
@@ -130,14 +132,20 @@ local function hasPlainButtons(buttons)
     return count > 0
 end
 
+--- True when a native widget may be drawn as a sheet now: the file manager is
+--- the active environment (no book open) and no Simple UI window is open, unless
+--- `over_windows` allows the sheet to open above one.
+function NativeSheets.canReplace(over_windows)
+    return isDesktop() and (over_windows or not isSimpleUIWindowOpen())
+end
+
 local function isEligible(widget)
     return type(widget.buttons) == "table"
         and not widget.anchor
         and widget.dismissable ~= false
         and not widget._added_widgets
         and not widget.sui_native
-        and isDesktop()
-        and not isSimpleUIWindowOpen()
+        and NativeSheets.canReplace()
         and hasPlainButtons(widget.buttons)
 end
 
@@ -183,7 +191,7 @@ local function toItem(spec)
         choice        = choice,
         checked_func  = spec.checked_func,
         keep_open     = spec.sui_keep_open == true,
-        toggle        = spec.sui_toggle == true,
+        clearable     = spec.sui_toggle == true,
         group         = spec.sui_group,
         rank          = spec.sui_rank or 0,
         callback      = spec.callback,
@@ -226,15 +234,23 @@ local function allChoices(items)
     return true
 end
 
+-- True for a Cancel button beside one action without icon.
+local function isConfirmPair(items)
+    return #items == 2 and not allChoices(items) and not hasIcon(items) and hasCancel(items)
+end
+
 -- Rows drawn as one row of buttons: three or more buttons, a pair of choices,
 -- or a confirmation pair.
 local function isSegmentRow(items)
-    return #items >= 3
-        or (#items == 2 and (allChoices(items) or (not hasIcon(items) and hasCancel(items))))
+    return #items >= 3 or (#items == 2 and (allChoices(items) or isConfirmPair(items)))
 end
 
 local function segmentsSection(items)
-    for _i, item in ipairs(items) do item.selected = item.checked end
+    local cancel = isConfirmPair(items) and gettext("Cancel")
+    for _i, item in ipairs(items) do
+        item.selected = item.checked
+        item.primary  = cancel and item.text ~= cancel or nil
+    end
     return { type = "segments", items = items }
 end
 
@@ -416,7 +432,7 @@ local function holdOpen(proxy, sections)
         local run = item.callback
         if not (item.keep_open and run) then return end
         item.callback = function(...)
-            if item.checked and not item.toggle then return end
+            if item.checked and not item.clearable then return end
             proxy.holding = true
             local ok, err = pcall(run, ...)
             proxy.holding = false

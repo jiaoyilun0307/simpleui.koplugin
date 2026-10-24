@@ -2,10 +2,10 @@
 -- Aggregates various statistics windows.
 
 local Blitbuffer      = require("ffi/blitbuffer")
-local BottomContainer = require("ui/widget/container/bottomcontainer")
 local Device          = require("device")
 local Font            = require("ui/font")
 local FrameContainer  = require("ui/widget/container/framecontainer")
+local RoundedFrame    = require("infra/sui_backdrop").RoundedFrame
 local Geom            = require("ui/geometry")
 local GestureRange    = require("ui/gesturerange")
 local HorizontalGroup = require("ui/widget/horizontalgroup")
@@ -26,6 +26,9 @@ local SUIStyle        = require("features/sui_style")
 local UI              = require("infra/sui_core")
 local SUIStreak       = require("infra/sui_streak")
 local DateNames       = require("infra/sui_datenames")
+local Charts          = require("engines/sui_stats_charts")
+local Frames          = require("screens/insights/sui_insights_frames")
+local InsightsCharts  = require("screens/insights/sui_insights_charts")
 
 -- Landscape-aware size multiplier for the few call sites in this file that
 -- run BEFORE any SUIWindow ctx exists — e.g. shared fonts computed once in
@@ -38,8 +41,7 @@ local DateNames       = require("infra/sui_datenames")
 -- anything nested inside them) uses ctx.SZ(n) instead — the same scale
 -- SUIWindow's own chrome uses, handed in for free, no import needed. The
 -- handful of standalone helpers that build screen content but aren't
--- themselves screen builders (_makeDateCard, _riYearlyRow,
--- _riMonthlyChart, _buildInsightsPage2) take SZ as an explicit trailing
+-- themselves screen builders (_makeDateCard, _riMonthlyChart) take SZ as an explicit trailing
 -- parameter from their caller's ctx.SZ, falling back to UI.SZ if ever called
 -- without one.
 local function SZ(n) return UI.SZ(n) end
@@ -481,7 +483,7 @@ end
 --   on_end_saved      – function(new_date) called after a valid end edit or reset
 --
 -- Returns a FrameContainer with each date half wrapped in its own
--- InputContainer.  Tapping opens an InputDialog with Cancel / Reset / Save.
+-- InputContainer.  Tapping opens the text prompt with Cancel / Reset / Save.
 -- SZ is threaded in by the caller (ctx.SZ) since this is a standalone helper,
 -- not itself a screen builder with ctx in scope; falls back to UI.SZ if ever
 -- called without one (identical value during a synchronous window build).
@@ -499,51 +501,38 @@ local function _makeDateCard(inner_w, PAD_H,
     local date_third = math.floor(date_inner / 3)
     local date_row_h = SZ(Screen:scaleBySize(24))
 
-    -- Helper: open an InputDialog for a single date field.
+    -- Helper: open a prompt for a single date field.
     -- delete_fn  – called with filepath on Reset to remove the sidecar field
     -- original   – the DB fallback value passed to on_saved after a reset
     -- has_custom – true when the displayed value came from the sidecar (not DB)
     local function openDateDialog(title, current, write_fn, delete_fn,
                                   original, has_custom, on_saved)
-        local InputDialog = require("ui/widget/inputdialog")
-        local dlg
-        dlg = InputDialog:new{
-            title      = title,
-            input      = current or os.date("%Y-%m-%d"),
-            input_hint = "YYYY-MM-DD",
-            input_type = "string",
-            buttons    = {{
+        local format_error = _("Please enter a date in YYYY-MM-DD format.")
+        require("features/dialogs/sui_dialogs").prompt{
+            title       = title,
+            value       = current or os.date("%Y-%m-%d"),
+            hint        = "YYYY-MM-DD",
+            ok_text     = _("Save"),
+            empty_error = format_error,
+            validate    = function(text)
+                if not _isValidDateStr(text) then return format_error end
+            end,
+            on_submit   = function(text)
+                if write_fn(filepath, text) then
+                    on_saved(text)
+                end
+            end,
+            buttons     = {
                 {
-                    text     = _("Cancel"),
-                    callback = function() UIManager:close(dlg) end,
-                },
-                {
-                    text    = _("Reset"),
-                    enabled = has_custom,
+                    text     = _("Reset"),
+                    enabled  = has_custom,
                     callback = function()
-                        UIManager:close(dlg)
                         delete_fn(filepath)
                         on_saved(original)
                     end,
                 },
-                {
-                    text             = _("Save"),
-                    is_enter_default = true,
-                    callback         = function()
-                        local val = dlg:getInputText()
-                        if not _isValidDateStr(val) then
-                            UI.Notify.toast(_("Please enter a date in YYYY-MM-DD format."))
-                            return
-                        end
-                        UIManager:close(dlg)
-                        if write_fn(filepath, val) then
-                            on_saved(val)
-                        end
-                    end,
-                },
-            }},
+            },
         }
-        UIManager:show(dlg)
     end
 
     -- Build each of the three columns.  Start/end are tappable when filepath
@@ -595,7 +584,7 @@ local function _makeDateCard(inner_w, PAD_H,
         original_end_str,
         on_end_saved)
 
-    return FrameContainer:new{
+    return RoundedFrame:new{
         bordersize     = 0,
         radius         = SZ(Screen:scaleBySize(12)),
         background     = SUIStyle.COLOR.surface_flat,
@@ -608,11 +597,7 @@ local function _makeDateCard(inner_w, PAD_H,
             start_widget,
             _CenterContainer:new{
                 dimen = Geom:new{ w = date_inner - 2 * date_third, h = date_row_h },
-                TextWidget:new{
-                    text    = ARROW,
-                    face    = face_arrow,
-                    fgcolor = CLR_BLACK,
-                },
+                UI.makeAccentText({ text = ARROW, face = face_arrow }, CLR_BLACK),
             },
             end_widget,
         },
@@ -628,15 +613,15 @@ local function _openBookFromStats(filepath)
                       or require("apps/reader/readerui")
         ReaderUI:showReader(filepath)
     end
-    local ConfirmBox = require("ui/widget/confirmbox")
+    local Dialogs = require("features/dialogs/sui_dialogs")
     local BD        = require("ui/bidi")
-    UIManager:show(ConfirmBox:new{
+    Dialogs.confirm{
         text        = _("Open this file?") .. "\n\n"
                       .. BD.filename(filepath:match("([^/]+)$")),
         ok_text     = _("Open"),
         cancel_text = _("Cancel"),
         ok_callback = doOpen,
-    })
+    }
 end
 
 -- Year-dropdown options covering min_year..max_year, newest first.
@@ -888,7 +873,7 @@ function StatsWindows.showFinishedBooksDialog(opts)
                 },
             }
 
-            return FrameContainer:new{
+            return RoundedFrame:new{
             bordersize     = SUIStyle.BORDER_SZ, color = CLR_BORDER,
                 radius         = ctx.SZ(Screen:scaleBySize(12)),
                 padding        = 0, margin = 0,
@@ -1008,15 +993,13 @@ function StatsWindows.showFinishedBooksDialog(opts)
             local val_w = ctx.SZ(Screen:scaleBySize(160))
             local lbl_w = row_inner - ICON_W - val_w
 
+            local icon_widget = UI.makeAccentText({ text = icon_glyph, face = icon_face }, CLR_BLACK)
+
             local row_content = HorizontalGroup:new{
                 align = "center",
                 _CenterContainer:new{
                     dimen = Geom:new{ w = ICON_W, h = ROW_H },
-                    TextWidget:new{
-                        text    = icon_glyph,
-                        face    = icon_face,
-                        fgcolor = CLR_BLACK,
-                    },
+                    icon_widget,
                 },
                 _LeftContainer:new{
                     dimen = Geom:new{ w = lbl_w, h = ROW_H },
@@ -1091,7 +1074,7 @@ function StatsWindows.showFinishedBooksDialog(opts)
                     align = "center",
                     _CenterContainer:new{
                         dimen = Geom:new{ w = ICON_W, h = ROW_H },
-                        TextWidget:new{ text = icon_glyph, face = icon_face, fgcolor = CLR_BLACK },
+                        UI.makeAccentText({ text = icon_glyph, face = icon_face }, CLR_BLACK),
                     },
                     _LeftContainer:new{
                         dimen = Geom:new{ w = lbl_w, h = ROW_H },
@@ -1155,7 +1138,7 @@ function StatsWindows.showFinishedBooksDialog(opts)
             }
         end
 
-        local rows_block = FrameContainer:new{
+        local rows_block = RoundedFrame:new{
             bordersize = SUIStyle.BORDER_SZ,
             color      = CLR_BORDER,
             radius     = ctx.SZ(Screen:scaleBySize(12)),
@@ -1172,7 +1155,7 @@ function StatsWindows.showFinishedBooksDialog(opts)
                 ),
                 makeRowSep(),
                 makeIconRow(
-                    book.exclude_from_goals and SUIStyle.icon("check") or SUIStyle.icon("uncheck"),
+                    SUIStyle.selectionIcon(false, book.exclude_from_goals),
                     _("Exclude from goals"),
                     book.exclude_from_goals and _("Yes") or _("No"),
                     function()
@@ -1785,78 +1768,6 @@ end
 
 
 
--- Builds the two-column yearly stat row (days/hours | pages).
--- Returns a HorizontalGroup of two tappable cells.
--- SZ threaded in by the caller (ctx.SZ); falls back to UI.SZ if ever called
--- without one (identical value during a synchronous window build).
-local function _riYearlyRow(inner_w, yearly_stats, mode_key, on_toggle_mode, avail_h, SZ)
-    SZ = SZ or UI.SZ
-    local CLR_BLACK = SUIStyle.COLOR.text_primary
-    local face_val  = Font:getFace(SUIStyle.FACE_REGULAR, SZ(SUIStyle.FS_TITLE))
-    local face_lbl  = Font:getFace(SUIStyle.FACE_REGULAR, SZ(SUIStyle.FS_DETAIL))
-
-    local sep_w  = SUIStyle.BORDER_SZ
-    local col_w  = math.floor((inner_w - sep_w) / 2)
-    local cell_h = math.max(SZ(Screen:scaleBySize(48)),
-                       math.min(SZ(Screen:scaleBySize(90)),
-                           math.floor(avail_h * 0.12)))
-
-    local function makeCell(val_str, lbl_str, on_tap)
-        local content = VerticalGroup:new{ align = "center",
-            TextWidget:new{ text = val_str, face = face_val,
-                            fgcolor = CLR_BLACK, bold = true },
-            VerticalSpan:new{ width = SZ(Screen:scaleBySize(2)) },
-            TextWidget:new{ text = lbl_str, face = face_lbl,
-                            fgcolor = CLR_BLACK },
-        }
-        local cc = _CenterContainer:new{
-            dimen = Geom:new{ w = col_w, h = cell_h },
-            content,
-        }
-        if on_tap then
-            local ic = InputContainer:new{
-                dimen = Geom:new{ w = col_w, h = cell_h },
-                cc,
-            }
-            ic.ges_events = {
-                Tap = { GestureRange:new{ ges = "tap",
-                    range = function() return ic.dimen end } },
-            }
-            function ic:onTap() on_tap(); return true end
-            return ic
-        end
-        return cc
-    end
-
-    local left_val, left_lbl
-    if mode_key == "hours" then
-        left_val = _riFmtHours(yearly_stats.duration)
-        if yearly_stats.duration < 60 then left_val = "0m" end
-        left_lbl = _("hours read")
-    else
-        left_val = _riFmtCount(yearly_stats.days)
-        left_lbl = N_("day read", "days read", yearly_stats.days)
-    end
-
-    local sep = _CenterContainer:new{
-        dimen = Geom:new{ w = sep_w, h = cell_h },
-        LineWidget:new{
-            dimen      = Geom:new{ w = sep_w, h = cell_h - SZ(Screen:scaleBySize(24)) },
-            background = CLR_BLACK,
-        }
-    }
-
-    return HorizontalGroup:new{ align = "center",
-        makeCell(left_val, left_lbl, on_toggle_mode),
-        sep,
-        makeCell(_riFmtCount(yearly_stats.pages),
-                 N_("page read", "pages read", yearly_stats.pages),
-                 nil),
-    }
-end
-
-
-
 -- SZ threaded in by the caller (ctx.SZ); falls back to UI.SZ if ever called
 -- without one (identical value during a synchronous window build).
 local function _riMonthlyChart(inner_w, monthly_data, value_key, selected_year, avail_h, SZ)
@@ -1866,97 +1777,38 @@ local function _riMonthlyChart(inner_w, monthly_data, value_key, selected_year, 
     local current_year  = tonumber(os.date("%Y"))
     local current_month = os.date("%Y-%m")
 
-    -- Compute the maximum value across all months for scaling.
-    local max_val = 1
+    local peak = 1
     for _, m in ipairs(monthly_data) do
-        local v = tonumber(m[value_key]) or 0
-        if v > max_val then max_val = v end
+        peak = math.max(peak, tonumber(m[value_key]) or 0)
     end
 
-    local chart_w  = inner_w
-    -- bar_h is 12% of available height per row (2 rows); clamped for legibility.
-    local bar_h    = math.max(SZ(Screen:scaleBySize(20)),
-                        math.min(SZ(Screen:scaleBySize(60)),
-                            math.floor(avail_h * 0.12)))
-    local bar_w    = math.floor(chart_w / 6) - SZ(Screen:scaleBySize(8))
-    local bar_gap  = math.floor((chart_w - bar_w * 6) / 5)
+    -- A single row of twelve months; bar_h follows the available height, clamped for legibility.
+    local bar_h    = math.max(SZ(Screen:scaleBySize(40)),
+                        math.min(SZ(Screen:scaleBySize(90)),
+                            math.floor(avail_h * 0.14)))
+    local bar_w, bar_gap = Charts.fitBars(#monthly_data, inner_w, SZ(Screen:scaleBySize(40)))
+    if not bar_w then return VerticalGroup:new{} end
     local face_lbl = Font:getFace(SUIStyle.FACE_REGULAR, SZ(SUIStyle.FS_CAPTION - 2))
     local lbl_h    = face_lbl.size + SZ(Screen:scaleBySize(2))
 
-    local function makeBarRow(slice)
-        local bars  = HorizontalGroup:new{ align = "bottom" }
-        local lbls  = HorizontalGroup:new{ align = "top" }
-        local total_h = bar_h + lbl_h
-
-        for i, m in ipairs(slice) do
-            local val   = tonumber(m[value_key]) or 0
-            local ratio = max_val > 0 and (val / max_val) or 0
-            local bh    = math.floor(ratio * bar_h + 0.5)
-            if bh == 0 and val > 0 then bh = 1 end
-
-            local is_cur = (selected_year == current_year)
-                           and (m.month == current_month)
-            local bar_color = is_cur and SUIStyle.COLOR.text_primary
-                                      or SUIStyle.COLOR.gray
-
-            -- Value label above the bar.
-            local val_lbl = TextWidget:new{
-                text    = val > 0 and tostring(val) or "",
-                face    = face_lbl,
-                fgcolor = SUIStyle.COLOR.text_primary,
-            }
-            local col = VerticalGroup:new{ align = "center" }
-            table.insert(col, _CenterContainer:new{
-                dimen = Geom:new{ w = bar_w, h = lbl_h },
-                val_lbl,
-            })
-            if bh > 0 then
-                table.insert(col, LineWidget:new{
-                    dimen      = Geom:new{ w = bar_w, h = bh },
-                    background = bar_color,
-                })
-            end
-            table.insert(col, LineWidget:new{
-                dimen      = Geom:new{ w = bar_w, h = SZ(Screen:scaleBySize(2)) },
-                background = bar_color,
-            })
-
-            local bar_cont = BottomContainer:new{
-                dimen = Geom:new{ w = bar_w, h = total_h },
-                col,
-            }
-
-            table.insert(bars, bar_cont)
-            table.insert(lbls, _CenterContainer:new{
-                dimen = Geom:new{ w = bar_w, h = lbl_h },
-                TextWidget:new{
-                    text    = m.label:lower(),
-                    face    = face_lbl,
-                    fgcolor = SUIStyle.COLOR.text_primary,
-                },
-            })
-            if i < #slice then
-                table.insert(bars, HorizontalSpan:new{ width = bar_gap })
-                table.insert(lbls, HorizontalSpan:new{ width = bar_gap })
-            end
-        end
-
-        return VerticalGroup:new{ align = "center",
-            bars,
-            VerticalSpan:new{ width = SZ(Screen:scaleBySize(2)) },
-            lbls,
-        }
+    -- The current month of the current year is dark; every other bar is light.
+    local values, value_labels, labels, highlight = {}, {}, {}, 0
+    for i, m in ipairs(monthly_data) do
+        local val = tonumber(m[value_key]) or 0
+        values[i]       = val
+        value_labels[i] = val > 0 and tostring(val) or ""
+        labels[i]       = m.label:lower()
+        if selected_year == current_year and m.month == current_month then highlight = i end
     end
-
-    local chart = VerticalGroup:new{ align = "center" }
-    -- Row 1: Jan–Jun (indices 1–6), Row 2: Jul–Dec (indices 7–12)
-    local row1, row2 = {}, {}
-    for i = 1,  6 do table.insert(row1, monthly_data[i]) end
-    for i = 7, 12 do table.insert(row2, monthly_data[i]) end
-    table.insert(chart, makeBarRow(row1))
-    table.insert(chart, VerticalSpan:new{ width = SZ(Screen:scaleBySize(8)) })
-    table.insert(chart, makeBarRow(row2))
-    return chart
+    local bars = Charts.bars{
+        values = values, peak = peak, bar_w = bar_w, gap = bar_gap,
+        max_h = bar_h + lbl_h, avail_h = bar_h + 3 * lbl_h,
+        color = SUIStyle.accent(SUIStyle.COLOR.text_primary), highlight = highlight,
+        labels = labels, value_labels = value_labels,
+        label_face = face_lbl, label_color = SUIStyle.COLOR.text_primary,
+    }
+    if not bars then return VerticalGroup:new{} end
+    return _CenterContainer:new{ dimen = Geom:new{ w = inner_w, h = bars:getSize().h }, bars }
 end
 
 -- ---------------------------------------------------------------------------
@@ -1966,364 +1818,43 @@ end
 -- SZ threaded in by the caller (ctx.SZ); falls back to UI.SZ if ever called
 -- without one (identical value during a synchronous window build).
 -- ---------------------------------------------------------------------------
--- _riBuildStreakBoxes — the "Current streak"/"Best streak" bordered boxes,
--- for both day and week streaks. Extracted out of _buildInsightsPage2 so the
--- Streak window (sui_stats_windows.lua's showStreakManagerWindow) can reuse
--- the exact same widget recipe without also paying for _buildInsightsPage2's
--- alltime/week/month queries, which it has no use for.
+-- _riStreakCategories — the "Day streak" and "Week streak" categories (current
+-- and best streak in one card of rows each), shared by the Reading Insights and
+-- Streak windows. `compact` swaps each card of rows for a row of two tiles.
 -- ---------------------------------------------------------------------------
-local function _riBuildStreakBoxes(inner_w, streaks, SZ)
-    SZ = SZ or UI.SZ
-    _lazyLoad()
-    local Size = require("ui/size")
-
-    local CLR_BLACK  = SUIStyle.COLOR.text_primary
-    local CLR_BORDER = SUIStyle.COLOR.gray
-    local face_lbl_row  = Font:getFace(SUIStyle.FACE_REGULAR, SZ(SUIStyle.FS_BODY))
-    local face_val_row  = Font:getFace(SUIStyle.FACE_REGULAR, SZ(SUIStyle.FS_BODY))
-    local face_sub      = Font:getFace(SUIStyle.FACE_REGULAR, SZ(SUIStyle.FS_CAPTION))
-    local face_icon_row = Font:getFace(SUIStyle.FACE_ICONS, SZ(SUIStyle.FS_BODY))
-
-    local ROW_H     = SZ(Screen:scaleBySize(52))
-    local PAD_H     = Size.padding.large
-    local ICON_W    = SZ(Screen:scaleBySize(36))
-    local row_inner = inner_w - 2 * PAD_H
-
-    local function makeIconRow(icon_glyph, label, value_str, sub_label)
-        local val_w = SZ(Screen:scaleBySize(160))
-        local lbl_w = row_inner - ICON_W - val_w
-
-        local lbl_widget
-        if sub_label then
-            lbl_widget = VerticalGroup:new{
-                align = "left",
-                TextWidget:new{ text = label, face = face_lbl_row, fgcolor = CLR_BLACK, max_width = lbl_w },
-                TextWidget:new{ text = sub_label, face = face_sub, fgcolor = CLR_BLACK, max_width = lbl_w },
-            }
-        else
-            lbl_widget = TextWidget:new{ text = label, face = face_lbl_row, fgcolor = CLR_BLACK, max_width = lbl_w }
+local function _riStreakCategories(card_w, SZ, streaks, compact)
+    local function bestDates(streak)
+        if streak.best > 1 and streak.best_start > 0 then
+            return _riFmtDate(streak.best_start) .. " \xe2\x80\x93 " .. _riFmtDate(streak.best_end)
         end
-
-        local row_content = HorizontalGroup:new{
-            align = "center",
-            _CenterContainer:new{
-                dimen = Geom:new{ w = ICON_W, h = ROW_H },
-                TextWidget:new{ text = icon_glyph, face = face_icon_row, fgcolor = CLR_BLACK },
-            },
-            _LeftContainer:new{ dimen = Geom:new{ w = lbl_w, h = ROW_H }, lbl_widget },
-            _RightContainer:new{
-                dimen = Geom:new{ w = val_w, h = ROW_H },
-                TextWidget:new{
-                    text = tostring(value_str), face = face_val_row, bold = true,
-                    fgcolor = CLR_BLACK, max_width = val_w, alignment = "right",
-                },
-            },
-        }
-
-        return FrameContainer:new{
-            bordersize = 0, padding = 0,
-            padding_left = PAD_H, padding_right = PAD_H,
-            dimen = Geom:new{ w = inner_w, h = ROW_H },
-            row_content,
-        }
     end
-
-    local function makeRowSep()
-        return FrameContainer:new{
-            bordersize = 0, padding = 0,
-            padding_left = PAD_H, padding_right = PAD_H,
-            LineWidget:new{ dimen = Geom:new{ w = row_inner, h = SUIStyle.BORDER_SZ }, background = CLR_BORDER },
+    local function category(title, streak, count)
+        local items = {
+            { icon = "streak", label = _("Current streak"), value = count(streak.current) },
+            { icon = "trophy", label = _("Best streak"), sub = bestDates(streak), value = count(streak.best) },
         }
+        local frame = compact and Frames.tiles or Frames.rows
+        return { title = title, children = { frame{ w = card_w, SZ = SZ, items = items } } }
     end
-
-    local cur_streak_val = streaks.days.current
-    local cur_streak_str = string.format(N_("%d day", "%d days", cur_streak_val), cur_streak_val)
-    local best_streak_val = streaks.days.best
-    local best_streak_str = string.format(N_("%d day", "%d days", best_streak_val), best_streak_val)
-    local best_dates = nil
-    if best_streak_val > 1 and streaks.days.best_start > 0 then
-        best_dates = _riFmtDate(streaks.days.best_start) .. " \xe2\x80\x93 " .. _riFmtDate(streaks.days.best_end)
-    end
-
-    local streak_row = FrameContainer:new{
-        bordersize = SUIStyle.BORDER_SZ, color = CLR_BORDER, radius = SZ(Screen:scaleBySize(12)),
-        padding = 0, margin = 0,
-        VerticalGroup:new{
-            align = "left",
-            makeIconRow(SUIStyle.icon("calendar"), _("Current streak"), cur_streak_str),
-            makeRowSep(),
-            makeIconRow(SUIStyle.icon("trophy"), _("Best streak"), best_streak_str, best_dates),
-        },
+    return {
+        category(_("Day streak"), streaks.days, function(n)
+            return string.format(N_("%d day", "%d days", n), n)
+        end),
+        category(_("Week streak"), streaks.weeks, function(n)
+            return string.format(N_("%d week", "%d weeks", n), n)
+        end),
     }
-
-    local cur_wstreak_val = streaks.weeks.current
-    local cur_wstreak_str = string.format(N_("%d week", "%d weeks", cur_wstreak_val), cur_wstreak_val)
-    local best_wstreak_val = streaks.weeks.best
-    local best_wstreak_str = string.format(N_("%d week", "%d weeks", best_wstreak_val), best_wstreak_val)
-    local best_w_dates = nil
-    if best_wstreak_val > 1 and streaks.weeks.best_start > 0 then
-        best_w_dates = _riFmtDate(streaks.weeks.best_start) .. " \xe2\x80\x93 " .. _riFmtDate(streaks.weeks.best_end)
-    end
-
-    local wstreak_row = FrameContainer:new{
-        bordersize = SUIStyle.BORDER_SZ, color = CLR_BORDER, radius = SZ(Screen:scaleBySize(12)),
-        padding = 0, margin = 0,
-        VerticalGroup:new{
-            align = "left",
-            makeIconRow(SUIStyle.icon("calendar"), _("Current streak"), cur_wstreak_str),
-            makeRowSep(),
-            makeIconRow(SUIStyle.icon("trophy"), _("Best streak"), best_wstreak_str, best_w_dates),
-        },
-    }
-
-    return streak_row, wstreak_row
 end
 
-local function _buildInsightsPage2(inner_w, avail_h, streaks, SZ)
-    SZ = SZ or UI.SZ
-    _lazyLoad()      -- ensure _CenterContainer, _LeftContainer, etc. are loaded
-    local Size    = require("ui/size")
-    local sec_gap = math.max(SZ(Screen:scaleBySize(6)), math.floor(avail_h * 0.025))
-
-    local CLR_BLACK  = SUIStyle.COLOR.text_primary
-    local CLR_BORDER = SUIStyle.COLOR.gray
-
-    local face_val  = Font:getFace(SUIStyle.FACE_REGULAR, SZ(SUIStyle.FS_TITLE))
-    local face_lbl  = Font:getFace(SUIStyle.FACE_REGULAR, SZ(SUIStyle.FS_DETAIL))
-    local face_sub  = Font:getFace(SUIStyle.FACE_REGULAR, SZ(SUIStyle.FS_CAPTION))
-
-    local lastweek = _riGetLastWeekStats()
-    local thisweek_stats = _riGetThisWeekStats()
-    local month_stats = _riGetThisMonthStats()
-    local alltime  = _riGetAllTimeStats()
-
-    local face_c3_lbl = Font:getFace(SUIStyle.FACE_REGULAR, SZ(SUIStyle.FS_DETAIL))
-    local face_c3_val = Font:getFace(SUIStyle.FACE_REGULAR, SZ(SUIStyle.FS_TITLE))
-
-    local col_gap3    = SZ(Screen:scaleBySize(8))
-    local cell_w3     = math.floor((inner_w - 2 * col_gap3) / 3)
-    local cell_vpad3  = SZ(Screen:scaleBySize(16))
-    local icon_h3     = SZ(Screen:scaleBySize(26))
-    local lbl_h3      = face_c3_lbl.size + SZ(Screen:scaleBySize(2))
-    local val_h3      = face_c3_val.size + SZ(Screen:scaleBySize(2))
-    local cell_h3     = cell_vpad3 * 2 + icon_h3 + SZ(Screen:scaleBySize(6)) + val_h3 + SZ(Screen:scaleBySize(2)) + lbl_h3
-
-    local function make3Cell(icon_char, value, label)
-        return FrameContainer:new{
-            bordersize     = 0, padding = 0,
-            padding_top    = cell_vpad3,
-            padding_bottom = cell_vpad3,
-            dimen          = Geom:new{ w = cell_w3, h = cell_h3 },
-            VerticalGroup:new{ align = "center",
-                _CenterContainer:new{
-                    dimen = Geom:new{ w = cell_w3, h = icon_h3 },
-                    TextWidget:new{
-                        text      = icon_char,
-                        face      = Font:getFace(SUIStyle.FACE_ICONS, SZ(SUIStyle.FS_TITLE)),
-                        fgcolor   = CLR_BLACK,
-                        width     = cell_w3,
-                        alignment = "center",
-                    },
-                },
-                VerticalSpan:new{ width = SZ(Screen:scaleBySize(6)) },
-                _CenterContainer:new{
-                    dimen = Geom:new{ w = cell_w3, h = val_h3 },
-                    TextWidget:new{
-                        text      = tostring(value),
-                        face      = face_c3_val,
-                        fgcolor   = CLR_BLACK,
-                        bold      = true,
-                        width     = cell_w3,
-                        alignment = "center",
-                    },
-                },
-                VerticalSpan:new{ width = SZ(Screen:scaleBySize(2)) },
-                _CenterContainer:new{
-                    dimen = Geom:new{ w = cell_w3, h = lbl_h3 },
-                    TextWidget:new{
-                        text      = label,
-                        face      = face_c3_lbl,
-                        fgcolor   = CLR_BLACK,
-                        width     = cell_w3,
-                        alignment = "center",
-                    },
-                },
-            },
-        }
-    end
-
-    local function make3ColRow(c1, c2, c3)
-        local sep_w = SUIStyle.BORDER_SZ
-        local cw = math.floor((inner_w - 2 * sep_w) / 3)
-        return HorizontalGroup:new{
-            _CenterContainer:new{ dimen = Geom:new{ w = cw, h = cell_h3 }, c1 },
-            _CenterContainer:new{
-                dimen = Geom:new{ w = sep_w, h = cell_h3 },
-                LineWidget:new{ dimen = Geom:new{ w = sep_w, h = cell_h3 - SZ(Screen:scaleBySize(32)) }, background = CLR_BORDER }
-            },
-            _CenterContainer:new{ dimen = Geom:new{ w = cw, h = cell_h3 }, c2 },
-            _CenterContainer:new{
-                dimen = Geom:new{ w = sep_w, h = cell_h3 },
-                LineWidget:new{ dimen = Geom:new{ w = sep_w, h = cell_h3 - SZ(Screen:scaleBySize(32)) }, background = CLR_BORDER }
-            },
-            _CenterContainer:new{ dimen = Geom:new{ w = cw, h = cell_h3 }, c3 },
-        }
-    end
-
-    local alltime_row = make3ColRow(
-        make3Cell(SUIStyle.icon("clock"), _riFmtCount(alltime.hours), _("hours read")),
-        make3Cell(SUIStyle.icon("page"), _riFmtCount(alltime.pages), _("pages read")),
-        make3Cell(SUIStyle.icon("book"), _riFmtCount(alltime.book_count), _("books finished")))
-
-    local alltime_block = FrameContainer:new{
-        bordersize = SUIStyle.BORDER_SZ,
-        color      = CLR_BORDER,
-        radius     = SZ(Screen:scaleBySize(12)),
-        padding    = 0, margin = 0,
-        alltime_row,
+-- Figures of the periods the Reading Insights window shows besides today and
+-- the year: the last 7 days, this week, this month and all time.
+local function _riGetPeriodStats()
+    return {
+        lastweek = _riGetLastWeekStats(),
+        thisweek = _riGetThisWeekStats(),
+        month    = _riGetThisMonthStats(),
+        alltime  = _riGetAllTimeStats(),
     }
-
-    local avg_secs      = lastweek.avg_seconds
-    local avg_time_str  = _riFmtHours(avg_secs)
-    if avg_secs < 60 then avg_time_str = "0m" end
-    local avg_pages_val = math.floor(lastweek.avg_pages + 0.5)
-    local avg_pages_str = _riFmtCount(avg_pages_val)
-
-    local face_icon_row = Font:getFace(SUIStyle.FACE_ICONS, SZ(SUIStyle.FS_BODY))
-    local face_lbl_row  = Font:getFace(SUIStyle.FACE_REGULAR, SZ(SUIStyle.FS_BODY))
-    local face_val_row  = Font:getFace(SUIStyle.FACE_REGULAR, SZ(SUIStyle.FS_BODY))
-    local ROW_H         = SZ(Screen:scaleBySize(52))
-    local PAD_H         = Size.padding.large
-    local ICON_W        = SZ(Screen:scaleBySize(36))
-    local row_inner     = inner_w - 2 * PAD_H
-
-    local function makeIconRow(icon_glyph, label, value_str, sub_label)
-        local val_w = SZ(Screen:scaleBySize(160))
-        local lbl_w = row_inner - ICON_W - val_w
-
-        local lbl_widget
-        if sub_label then
-            lbl_widget = VerticalGroup:new{
-                align = "left",
-                TextWidget:new{
-                    text      = label,
-                    face      = face_lbl_row,
-                    fgcolor   = CLR_BLACK,
-                    max_width = lbl_w,
-                },
-                TextWidget:new{
-                    text      = sub_label,
-                    face      = face_sub,
-                    fgcolor   = CLR_BLACK,
-                    max_width = lbl_w,
-                }
-            }
-        else
-            lbl_widget = TextWidget:new{
-                text      = label,
-                face      = face_lbl_row,
-                fgcolor   = CLR_BLACK,
-                max_width = lbl_w,
-            }
-        end
-
-        local row_content = HorizontalGroup:new{
-            align = "center",
-            _CenterContainer:new{
-                dimen = Geom:new{ w = ICON_W, h = ROW_H },
-                TextWidget:new{
-                    text    = icon_glyph,
-                    face    = face_icon_row,
-                    fgcolor = CLR_BLACK,
-                },
-            },
-            _LeftContainer:new{
-                dimen = Geom:new{ w = lbl_w, h = ROW_H },
-                lbl_widget,
-            },
-            _RightContainer:new{
-                dimen = Geom:new{ w = val_w, h = ROW_H },
-                TextWidget:new{
-                    text      = tostring(value_str),
-                    face      = face_val_row,
-                    bold      = true,
-                    fgcolor   = CLR_BLACK,
-                    max_width = val_w,
-                    alignment = "right",
-                },
-            },
-        }
-
-        return FrameContainer:new{
-            bordersize    = 0, padding = 0,
-            padding_left  = PAD_H,
-            padding_right = PAD_H,
-            dimen         = Geom:new{ w = inner_w, h = ROW_H },
-            row_content,
-        }
-    end
-
-    local function makeRowSep()
-        return FrameContainer:new{
-            bordersize    = 0, padding = 0,
-            padding_left  = PAD_H,
-            padding_right = PAD_H,
-            LineWidget:new{
-                dimen      = Geom:new{ w = row_inner, h = SUIStyle.BORDER_SZ },
-                background = CLR_BORDER,
-            },
-        }
-    end
-
-    local week_row = FrameContainer:new{
-        bordersize = SUIStyle.BORDER_SZ,
-        color      = CLR_BORDER,
-        radius     = SZ(Screen:scaleBySize(12)),
-        padding    = 0, margin = 0,
-        VerticalGroup:new{
-            align = "left",
-            makeIconRow(SUIStyle.icon("clock"), _("Average per day"), avg_time_str),
-            makeRowSep(),
-            makeIconRow(SUIStyle.icon("page"), _("Pages per day"), avg_pages_str),
-        },
-    }
-
-    local thisweek_time_str = _riFmtHours(thisweek_stats.seconds)
-    if thisweek_stats.seconds < 60 then thisweek_time_str = "0m" end
-    local thisweek_pages_str = _riFmtCount(thisweek_stats.pages)
-
-    local thisweek_row = FrameContainer:new{
-        bordersize = SUIStyle.BORDER_SZ,
-        color      = CLR_BORDER,
-        radius     = SZ(Screen:scaleBySize(12)),
-        padding    = 0, margin = 0,
-        VerticalGroup:new{
-            align = "left",
-            makeIconRow(SUIStyle.icon("clock"), _("Total time"), thisweek_time_str),
-            makeRowSep(),
-            makeIconRow(SUIStyle.icon("page"), _("Pages read"), thisweek_pages_str),
-        },
-    }
-
-    local month_time_str = _riFmtHours(month_stats.seconds)
-    local month_pages_str = _riFmtCount(month_stats.pages)
-
-    local month_row = FrameContainer:new{
-        bordersize = SUIStyle.BORDER_SZ,
-        color      = CLR_BORDER,
-        radius     = SZ(Screen:scaleBySize(12)),
-        padding    = 0, margin = 0,
-        VerticalGroup:new{
-            align = "left",
-            makeIconRow(SUIStyle.icon("clock"), _("Total time"), month_time_str),
-            makeRowSep(),
-            makeIconRow(SUIStyle.icon("page"), _("Pages read"), month_pages_str),
-        },
-    }
-
-    local streak_row, wstreak_row = _riBuildStreakBoxes(inner_w, streaks, SZ)
-
-    return alltime_block, week_row, thisweek_row, month_row, streak_row, wstreak_row
 end
 
 -- (cache declarations moved above data fetchers)
@@ -2371,6 +1902,12 @@ function StatsWindows.showReadingInsightsWindow(opts)
     -- flash on first render.
     _riGetOrFetchYear(selected_year)
 
+    -- The chart data of the recent weeks (cached by the stats provider), the
+    -- same for every year shown.
+    local chart_data = _withStatsDb(nil, function(conn)
+        return require("modules/module_stats_provider").getChartData(conn)
+    end)
+
     -- -------------------------------------------------------------------
     -- The window uses a single __root__ screen whose content is rebuilt
     -- each time the year or mode changes via ctx.repaint().
@@ -2381,207 +1918,133 @@ function StatsWindows.showReadingInsightsWindow(opts)
 
     local function buildRootScreen(ctx)
         local inner_w = ctx.inner_w
+        local SZ      = ctx.SZ
         local entry   = _riGetOrFetchYear(selected_year)
         local yearly  = entry.yearly_stats
-        local monthly = entry.monthly_data
         local streaks = _ri_streaks
         local today   = _riGetTodayStats()
+        local period  = _riGetPeriodStats()
 
-        -- Estimate the available content height using the same formula as
-        -- SUIWindow._rebuildFrame, so all sections can size themselves
-        -- proportionally and the layout stays on one page on any screen.
-        local Size       = require("ui/size")
-        -- Mirrors showReadingInsightsWindow's actual height fraction below
-        -- (23/30, matching the Settings window) — must stay in sync with
-        -- that SUIWindow:new{ height = ... } value.
-        local modal_h    = math.floor((select(2, UI.getPortraitDims())) * 23 / 30)
-        local border     = Size.border.window
-        local pad_v      = Size.padding.large
-        local title_h    = ctx.SZ(Screen:scaleBySize(50))  -- conservative TitleBar estimate
-        local dot_h      = ctx.SZ(Screen:scaleBySize(28)) + ctx.SZ(Screen:scaleBySize(18))
-        local avail_h    = modal_h - 2 * border - pad_v - title_h - dot_h
+        -- Tallest content one page holds: the frames and charts size to it.
+        local avail_h = ctx.page_h
 
-        local CLR_BLACK  = SUIStyle.COLOR.text_primary
-        local CLR_BORDER = SUIStyle.COLOR.gray
+        local card_w    = Frames.cardWidth(inner_w)
+        local content_w = Frames.contentWidth(inner_w, SZ)
 
-        local face_sec    = Font:getFace(SUIStyle.FACE_REGULAR, ctx.SZ(SUIStyle.FS_DETAIL))
-
-        local function sectionLabel(text)
-            return TextWidget:new{
-                text    = type(text) == "string" and text:upper() or text,
-                face    = face_sec,
-                fgcolor = CLR_BLACK,
-                bold    = true,
-            }
+        local function timeStr(secs)
+            return secs < 60 and "0m" or _riFmtHours(secs)
         end
 
-        local today_time_str  = _riFmtHours(today.seconds)
-        if today.seconds < 60 then today_time_str = "0m" end
-        local today_pages_str = _riFmtCount(today.pages)
-
-        local today_gap = ctx.SZ(Screen:scaleBySize(12))
-        local today_card_w = math.floor((inner_w - today_gap) / 2)
-        local cell_h2 = math.max(ctx.SZ(Screen:scaleBySize(70)), math.min(ctx.SZ(Screen:scaleBySize(110)), math.floor(avail_h * 0.16)))
-        local today_card_h = cell_h2 + ctx.SZ(Screen:scaleBySize(24))
-
-        local function makeTodayCard(icon_char, value, label)
-            local face_today_val = Font:getFace(SUIStyle.FACE_REGULAR, math.floor(ctx.SZ(SUIStyle.FS_TITLE * 1.6)))
-            local face_lbl       = Font:getFace(SUIStyle.FACE_REGULAR, ctx.SZ(SUIStyle.FS_DETAIL))
-
-            local icon_w = TextWidget:new{
-                text    = icon_char,
-                face    = Font:getFace(SUIStyle.FACE_ICONS, math.floor(ctx.SZ(SUIStyle.FS_TITLE * 1.6))),
-                fgcolor = CLR_BLACK,
-            }
-
-            local text_vg = VerticalGroup:new{ align = "left",
-                TextWidget:new{
-                    text    = value,
-                    face    = face_today_val,
-                    fgcolor = CLR_BLACK,
-                    bold    = true,
-                },
-                VerticalSpan:new{ width = ctx.SZ(Screen:scaleBySize(2)) },
-                TextWidget:new{
-                    text    = label,
-                    face    = face_lbl,
-                    fgcolor = CLR_BLACK,
-                }
-            }
-
-            local hg = HorizontalGroup:new{ align = "center",
-                icon_w,
-                HorizontalSpan:new{ width = ctx.SZ(Screen:scaleBySize(12)) },
-                text_vg
-            }
-
-            return FrameContainer:new{
-                bordersize = SUIStyle.BORDER_SZ,
-                color      = CLR_BORDER,
-                radius     = ctx.SZ(Screen:scaleBySize(12)),
-                padding    = 0, margin = 0,
-                _CenterContainer:new{
-                    dimen = Geom:new{ w = today_card_w, h = today_card_h },
-                    hg,
-                }
-            }
-        end
-
-        local today_row = HorizontalGroup:new{ align = "center",
-            makeTodayCard(SUIStyle.icon("clock"), today_time_str, _("reading time")),
-            HorizontalSpan:new{ width = today_gap },
-            makeTodayCard(SUIStyle.icon("page"), today_pages_str, _("pages read")),
-        }
-
-        -- ── Section 2: year header + stats row ───────────────────────
         local function setYear(year)
             selected_year = year
             _riGetOrFetchYear(year)
             ctx.repaint()
         end
 
-        local year_header = SUIWindow.PeriodDropdown{
-            inner_w   = inner_w,
-            options   = _yearOptions(year_range.min_year, year_range.max_year),
-            selected  = selected_year,
-            on_select = setYear,
-        }
-
         local function toggleMode()
             _ri_mode_key = (_ri_mode_key == "hours") and "days" or "hours"
             ctx.repaint()
         end
 
-        local yearly_row = _riYearlyRow(inner_w, yearly, _ri_mode_key, toggleMode, avail_h, ctx.SZ)
+        local recent = InsightsCharts.sections{
+            inner_w = content_w, avail_h = avail_h, SZ = SZ, charts = chart_data, fmt_time = _riFmtHours,
+        }
 
-        -- ── Section 3: monthly chart ──────────────────────────────────
-        local value_key = _ri_mode_key == "hours" and "hours" or "days"
-        local chart     = _riMonthlyChart(inner_w, monthly, value_key, selected_year, avail_h, ctx.SZ)
-
-        -- ── Assemble into independent per-section widgets ────────────────
-        local alltime_block, week_row, thisweek_row, month_row, streak_row, wstreak_row = _buildInsightsPage2(inner_w, avail_h, streaks, ctx.SZ)
-
-        -- Each section is its own top-level item in the returned array, so
-        -- SUIWindow's real pagination (_buildPages in sui_window.lua)
-        -- measures its TRUE rendered height and packs sections onto pages
-        -- accordingly — starting a new page whenever the next section
-        -- wouldn't fit, instead of a page's content silently overflowing
-        -- past the modal's bounds.
-        --
-        -- NOTE: these blocks are deliberately NOT marked is_section. That
-        -- flag exists in _buildPages for the *bare label* case (see
-        -- SUIWindow.Section / MenuTable's is_title rows), where a lone
-        -- section-header widget is followed by its content as a SEPARATE
-        -- array item — on overflow, _buildPages pulls the already-placed
-        -- header back out and re-pairs it with the incoming item so the
-        -- header never sits orphaned at the bottom of a page.
-        -- Here, title + content are already fused into one atomic widget
-        -- (there is nothing to re-pair). Marking these is_section made
-        -- _buildPages treat the PREVIOUS already-placed section as an
-        -- orphan-prone header and glue it to the current (often much
-        -- larger, e.g. the chart-containing alltime_and_year) block on the
-        -- new page — so the new page ended up holding two full sections
-        -- instead of one, still overflowing avail_h and getting clipped.
-        -- Leaving is_section unset makes _buildPages fall back to its plain
-        -- page-break path: whichever section doesn't fit starts a fresh
-        -- page alone, with the full avail_h to itself.
-        --
-        -- Previously this screen hand-grouped sections into exactly three
-        -- FrameContainers, each forced to report height = avail_h
-        -- regardless of its child's actual size — so when the real content
-        -- (translated strings, larger fonts, etc.) ran taller than the
-        -- avail_h estimate, the excess simply painted past the frame
-        -- instead of moving to a new page.
-        local function section(title, content)
-            return VerticalGroup:new{ align = "left",
-                VerticalSpan:new{ width = ctx.SZ(Screen:scaleBySize(16)) },
-                sectionLabel(title),
-                VerticalSpan:new{ width = ctx.SZ(Screen:scaleBySize(8)) },
-                content,
-            }
+        -- Categories flow page by page: Frames.flow packs their children in order.
+        local categories = {}
+        local function category(title, children)
+            categories[#categories + 1] = { title = title, children = children }
+        end
+        local function tiles(list)
+            return Frames.tiles{ w = card_w, SZ = SZ, items = list }
+        end
+        -- A chart section the data or the width cannot draw is left out.
+        local function addChart(children, chart_section)
+            if chart_section then
+                children[#children + 1] = Frames.card{
+                    w = card_w, SZ = SZ, title = chart_section.title, icon = chart_section.icon,
+                    content = chart_section.content,
+                }
+            end
         end
 
-        local alltime_section = VerticalGroup:new{ align = "left",
-            VerticalSpan:new{ width = ctx.SZ(Screen:scaleBySize(16)) },
-            sectionLabel(_("ALL TIME")),
-            VerticalSpan:new{ width = ctx.SZ(Screen:scaleBySize(8)) },
-            alltime_block,
-        }
+        category(_("Today"), { tiles{
+            { icon = "clock", label = _("Total time"), value = timeStr(today.seconds) },
+            { icon = "page",  label = _("Pages read"), value = _riFmtCount(today.pages) },
+        } })
 
-        -- year_header already renders its own year number + year dropdown,
-        -- so it doubles as this group's title — no separate sectionLabel
-        -- needed. Split out from the old combined alltime_and_year block:
-        -- that single item bundled ALL TIME + year nav + yearly row + the
-        -- monthly chart into one ~5-widget block that, on any screen where
-        -- it ran taller than avail_h (larger fonts, longer translated
-        -- strings, landscape's reduced avail_h), had nowhere to go — a
-        -- single oversized item can only be moved whole to a fresh page,
-        -- never split further, so it kept clipping regardless of which
-        -- page it landed on. Breaking it into alltime_section and
-        -- year_chart_section gives _buildPages two much smaller atomic
-        -- units instead of one large one, so each has a real chance of
-        -- fitting standalone within avail_h, and they can land on separate
-        -- pages if needed instead of being forced to move (and overflow)
-        -- together.
-        local year_chart_section = VerticalGroup:new{ align = "left",
-            VerticalSpan:new{ width = ctx.SZ(Screen:scaleBySize(16)) },
-            year_header,
-            VerticalSpan:new{ width = ctx.SZ(Screen:scaleBySize(8)) },
-            yearly_row,
-            VerticalSpan:new{ width = ctx.SZ(Screen:scaleBySize(16)) },
-            chart,
-        }
+        for _i, streak_category in ipairs(_riStreakCategories(card_w, SZ, streaks)) do
+            category(streak_category.title, streak_category.children)
+        end
 
-        return {
-            section(_("TODAY'S SUMMARY"), today_row),
-            section(_("DAY STREAK"), streak_row),
-            section(_("WEEK STREAK"), wstreak_row),
-            section(_("LAST 7 DAYS"), week_row),
-            section(_("THIS WEEK"), thisweek_row),
-            section(_("THIS MONTH"), month_row),
-            alltime_section,
-            year_chart_section,
+        local week = {
+            tiles{
+                { icon = "clock", label = _("Total time"), value = timeStr(period.thisweek.seconds) },
+                { icon = "page",  label = _("Pages read"), value = _riFmtCount(period.thisweek.pages) },
+            },
+            tiles{
+                { icon = "clock", label = _("Average per day"), sub = _("Last 7 days"),
+                  value = timeStr(period.lastweek.avg_seconds) },
+                { icon = "page",  label = _("Pages per day"), sub = _("Last 7 days"),
+                  value = _riFmtCount(math.floor(period.lastweek.avg_pages + 0.5)) },
+            },
         }
+        addChart(week, recent.week)
+        category(_("This week"), week)
+
+        local month = { tiles{
+            { icon = "clock", label = _("Total time"), value = timeStr(period.month.seconds) },
+            { icon = "page",  label = _("Pages read"), value = _riFmtCount(period.month.pages) },
+        } }
+        addChart(month, recent.month)
+        addChart(month, recent.activity)
+        category(_("This month"), month)
+
+        local habits = {}
+        addChart(habits, recent.hours)
+        addChart(habits, recent.weekdays)
+        addChart(habits, recent.dayparts)
+        if #habits > 0 then category(_("When you read"), habits) end
+
+        category(_("All time"), { tiles{
+            { icon = "clock", label = _("Hours read"),     value = _riFmtCount(period.alltime.hours) },
+            { icon = "page",  label = _("Pages read"),     value = _riFmtCount(period.alltime.pages) },
+            { icon = "book",  label = _("Books finished"), value = _riFmtCount(period.alltime.book_count) },
+        } })
+
+        local year_left
+        if _ri_mode_key == "hours" then
+            year_left = { icon = "clock", label = _("Hours read"), value = timeStr(yearly.duration) }
+        else
+            year_left = {
+                icon = "calendar_select", value = _riFmtCount(yearly.days),
+                label = N_("Day read", "Days read", yearly.days),
+            }
+        end
+        year_left.on_tap = toggleMode
+        local year = {
+            SUIWindow.PeriodDropdown{
+                inner_w   = card_w,
+                options   = _yearOptions(year_range.min_year, year_range.max_year),
+                selected  = selected_year,
+                on_select = setYear,
+            },
+            tiles{
+                year_left,
+                { icon = "page", label = N_("Page read", "Pages read", yearly.pages), value = _riFmtCount(yearly.pages) },
+            },
+        }
+        local value_key = _ri_mode_key == "hours" and "hours" or "days"
+        local months = _riMonthlyChart(content_w, entry.monthly_data, value_key, selected_year, avail_h, SZ)
+        if months:getSize().h > 0 then
+            year[#year + 1] = Frames.card{
+                w = card_w, SZ = SZ, title = _("By month"), icon = "chart", content = months,
+            }
+        end
+        -- The dropdown picks the year of the tiles and the chart: they stay on one page.
+        category(_("By year"), { Frames.stack{ SZ = SZ, children = year } })
+
+        return Frames.flow{ inner_w = inner_w, SZ = SZ, max_h = avail_h, categories = categories }
     end
 
     local function titleFn(ctx)
@@ -2593,10 +2056,7 @@ function StatsWindows.showReadingInsightsWindow(opts)
         icon          = "chart",
         on_back       = opts.on_back,
         title         = titleFn,
-        -- Matches the Settings window's height (SUIWindow's own default,
-        -- 23/30 of portrait height, when no explicit height is passed),
-        -- rather than the slightly shorter 0.75 used before.
-        height        = math.floor((select(2, UI.getPortraitDims())) * 23 / 30),
+        height        = SUIWindow.defaultHeight(),
         position      = "bottom",
         navpager_mode = Config.isNavpagerEnabled and Config.isNavpagerEnabled() or false,
         screens       = {
@@ -2614,27 +2074,21 @@ end
 -- ===========================================================================
 -- showStreakManagerWindow
 -- ===========================================================================
--- Opens the Streak Manager window: current streak header, last-read date,
--- and a Sunday-first month calendar badging every day that counts toward
--- the streak (real activity, or — when the freeze mechanic is enabled — a
--- frozen day too, visually distinguished). Phase 4 adds a freeze-management
--- section below the calendar, conditionally, when freeze mode is on; this
--- phase's window already works correctly on its own ("Real streak only"
--- mode simply never has that section to add).
---
--- Calendar layout: day_width from inner_w/7, filler cells for out-of-month
--- padding, month dropdown selector, Sunday-first week.
+-- Opens the Streak Manager window, laid out like Reading Insights (categories
+-- of frames, paged by Frames.flow). Page 1 is the "Calendar" category alone: a
+-- Sunday-first month calendar badging every day that counts toward the streak
+-- (real activity or, in freeze mode, a frozen day). The next pages hold the last
+-- days, the day and week streaks and, in freeze mode, the freezes.
 -- ===========================================================================
 
 -- Frozen-day badge glyph: nf-fa-snowflake-o (U+F2DC), rendered in place of
--- the flame glyph (module_reading_stats.lua's _STREAK_ICON, U+F490) on days
--- covered by a spent freeze rather than real activity, so the two are always
--- visually distinguishable at a glance. Keep this in sync with itself only —
--- there is no shared constant with module_reading_stats.lua on purpose (see
--- that module's own _STREAK_ICON comment for how to change ITS icon; this
--- one is independent).
-local _SM_STREAK_ICON = "\u{F490}"  -- nf-fa-fire — same glyph/meaning as the homescreen card
-local _SM_FROZEN_ICON = "\u{F2DC}"  -- nf-fa-snowflake-o — frozen-day badge
+-- the streak flame on days covered by a spent freeze rather than real
+-- activity, so the two are always visually distinguishable at a glance.
+local _SM_STREAK_ICON = SUIStyle.icon("streak")
+local _SM_FROZEN_ICON = SUIStyle.icon("freeze")
+
+-- Days shown in the recent-days strip below the calendar.
+local SM_RECENT_DAYS = 14
 
 -- Calendar page sizing: the most week rows a month can span, and the
 -- smallest day-cell height (before scaling) the grid may be squeezed to.
@@ -2701,6 +2155,25 @@ local function _smGetMonthActiveDates(year, month)
     return set
 end
 
+-- Reading state of each of the last `count` days, oldest first: "read" (real
+-- activity), "frozen" (a spent freeze; none when the freeze mechanic is off)
+-- or "none".
+local function _smRecentDayStates(count)
+    local t = os.date("*t")
+    local dates = {}
+    for i = count - 1, 0, -1 do
+        dates[#dates + 1] = os.date("%Y-%m-%d", os.time{ year = t.year, month = t.month, day = t.day - i, hour = 12 })
+    end
+    local frozen = {}
+    for _, d in ipairs(SUIStreak.getFrozenDatesInRange(dates[1], dates[#dates])) do frozen[d] = true end
+    local states = {}
+    for i, d in ipairs(dates) do
+        local active = _smGetMonthActiveDates(tonumber(d:sub(1, 4)), tonumber(d:sub(6, 7)))
+        states[i] = active[d] and "read" or (frozen[d] and "frozen" or "none")
+    end
+    return states
+end
+
 -- ---------------------------------------------------------------------------
 -- _smBlankCell — a filler position outside the displayed month (before
 -- day 1 or after the last day). No circle at all — only real days of the
@@ -2733,12 +2206,20 @@ local function _smDayCell(SZ, cell_w, cell_h, is_counted, is_frozen, is_run)
 
     local bg, content
     if not is_counted then
+        -- With an accent set the unread dot is a faint shade of it, as in the heatmap.
+        local accent = require("infra/sui_accent").color()
+        if accent then
+            return _CenterContainer:new{
+                dimen = Geom:new{ w = cell_w, h = cell_h },
+                Charts.weekDots{ states = { "none" }, size = diameter, gap = 0, color = accent },
+            }
+        end
         bg = SUIStyle.COLOR.track
     else
-        bg = SUIStyle.COLOR.gray_strong
+        bg = SUIStyle.accent(SUIStyle.COLOR.gray_strong)
         if is_frozen or is_run then
             local icon_char = is_frozen and _SM_FROZEN_ICON or _SM_STREAK_ICON
-            local icon_clr  = is_frozen and SUIStyle.COLOR.surface or SUIStyle.COLOR.surface
+            local icon_clr  = SUIStyle.accentFg(SUIStyle.COLOR.surface)
             content = UI.makeColoredText{
                 text    = icon_char,
                 face    = face_icon,
@@ -2747,7 +2228,7 @@ local function _smDayCell(SZ, cell_w, cell_h, is_counted, is_frozen, is_run)
         end
     end
 
-    local dot = FrameContainer:new{
+    local dot = RoundedFrame:new{
         bordersize = 0,
         radius     = math.floor(diameter / 2),
         background = bg,
@@ -2772,11 +2253,9 @@ function StatsWindows.showStreakManagerWindow(opts)
     _lazyLoad()
     local SUIWindow = require("engines/sui_window")
 
-    -- Loaded once per window session. `streaks` (the full _riGetStreaks()
-    -- result — both day- and week-streak data) is a mutable upvalue, not a
-    -- plain one-time local, because "Use a freeze" changes the day streak
-    -- immediately: the top cards and the DAY STREAK box must reflect that
-    -- on the very next repaint, not just on next window open.
+    -- Loaded once per window session. `streaks` (day- and week-streak data) is a
+    -- mutable upvalue because using a freeze changes the day streak: the next
+    -- repaint must show it.
     local streaks
     local function refreshStreaks()
         streaks = _riGetStreaks()
@@ -2794,10 +2273,11 @@ function StatsWindows.showStreakManagerWindow(opts)
 
     local function buildRootScreen(ctx)
         local inner_w    = ctx.inner_w
+        local SZ         = ctx.SZ
         local CLR_BLACK  = SUIStyle.COLOR.text_primary
-        local CLR_BORDER = SUIStyle.COLOR.gray
-        local face_sub   = Font:getFace(SUIStyle.FACE_REGULAR, ctx.SZ(SUIStyle.FS_CAPTION))
-        local face_section = Font:getFace(SUIStyle.FACE_REGULAR, ctx.SZ(SUIStyle.FS_DETAIL))
+        local card_w     = Frames.cardWidth(inner_w)
+        local cal_w      = Frames.contentWidth(inner_w, SZ)
+        local calendar_title = _("Calendar")
 
         -- ── Freeze-spend eligibility (hoisted above the calendar build) ────
         -- Computed once per repaint, up here, because the calendar grid
@@ -2860,38 +2340,20 @@ function StatsWindows.showStreakManagerWindow(opts)
                 UI.Notify.toast(msg)
                 return
             end
-            local ConfirmBox = require("ui/widget/confirmbox")
-            UIManager:show(ConfirmBox:new{
+            local Dialogs = require("features/dialogs/sui_dialogs")
+            Dialogs.confirm{
                 text = string.format(_("You have %d freeze(s) available.\nUse one to cover %s?"),
                            freezes_available, _riFmtDate(os.time() - 86400)),
                 ok_text     = _("Use freeze"),
                 ok_callback = useFreeze,
-            })
+            }
         end
 
-        -- First page: a "CALENDAR" section header (same style as "DAY
-        -- STREAK" / "WEEK STREAK" / "FREEZES" further down) followed by
-        -- the calendar itself in a rounded bordered frame — the same
-        -- FrameContainer recipe (border color/size, 12px radius) used for
-        -- those boxes, so all the sections in this window share one look.
-        local top_spacer = VerticalGroup:new{ align = "left",
-            VerticalSpan:new{ width = ctx.SZ(Screen:scaleBySize(16)) },
-            TextWidget:new{ text = _("CALENDAR"), face = face_section, fgcolor = CLR_BLACK, bold = true },
-            VerticalSpan:new{ width = ctx.SZ(Screen:scaleBySize(8)) },
-        }
-        -- Small breathing-room gap between the calendar and where page 2
-        -- starts (day_section, force_new_page).
-        local after_calendar_spacer = VerticalSpan:new{ width = ctx.SZ(Screen:scaleBySize(12)) }
-
         -- ── Month calendar ───────────────────────────────────────────────
-        -- The calendar sits inside a rounded bordered frame (see
-        -- calendar_group below), so cal_w leaves room for that frame's own
-        -- left/right padding instead of spanning the full inner_w.
-        local cal_pad = ctx.SZ(Screen:scaleBySize(16))
-        local cal_w   = inner_w - 2 * cal_pad
-
+        -- Page 1 holds the "Calendar" category alone: the month dropdown above
+        -- a panel with the grid, sized so the tallest month still fits the page.
         local month_header = SUIWindow.MonthDropdown{
-            inner_w   = cal_w,
+            inner_w   = card_w,
             selected  = { year = selected_year, month = selected_month },
             first     = { year = first_year,    month = 1 },
             last      = { year = now_t.year,    month = now_t.month },
@@ -2931,7 +2393,7 @@ function StatsWindows.showStreakManagerWindow(opts)
         for i, name in ipairs(DateNames.weekdayShort()) do
             weekday_row[#weekday_row + 1] = _CenterContainer:new{
                 dimen = Geom:new{ w = cell_w, h = wd_h },
-                TextWidget:new{ text = name, face = face_wd, fgcolor = SUIStyle.COLOR.text_dim, bold = true },
+                TextWidget:new{ text = name, face = face_wd, fgcolor = SUIStyle.COLOR.text_primary, bold = true },
             }
             if i < 7 then weekday_row[#weekday_row + 1] = HorizontalSpan:new{ width = gap } end
         end
@@ -2956,11 +2418,12 @@ function StatsWindows.showStreakManagerWindow(opts)
         -- with everything above and around the grid. The cap is the same
         -- for every month, so the dots keep one size while browsing; the
         -- window itself still shrinks to the rows the month actually has.
-        local calendar_chrome_h = top_spacer:getSize().h + month_header:getSize().h
-            + ctx.SZ(Screen:scaleBySize(12))                     -- gap under the header
-            + 2 * (cal_pad + SUIStyle.BORDER_SZ)                  -- frame
+        local panel_pad = 2 * (SUIStyle.BORDER_SZ + SZ(Screen:scaleBySize(12)))
+        local calendar_chrome_h = Frames.headerHeight{ SZ = SZ, inner_w = inner_w, title = calendar_title }
+            + month_header:getSize().h
+            + SZ(Screen:scaleBySize(8))                          -- gap under the dropdown
+            + panel_pad                                           -- panel border and padding
             + wd_h + span_full                                    -- weekday row
-            + after_calendar_spacer:getSize().h
         local max_cell_h = math.floor((ctx.page_h - calendar_chrome_h
             - (CAL_MAX_WEEKS - 1) * span_full) / CAL_MAX_WEEKS)
         local cell_h = math.max(ctx.SZ(Screen:scaleBySize(CAL_MIN_CELL_H)),
@@ -3074,184 +2537,77 @@ function StatsWindows.showStreakManagerWindow(opts)
             grid,
         }
 
-        local calendar_group = VerticalGroup:new{ align = "left" }
-        calendar_group[#calendar_group + 1] = month_header
-        calendar_group[#calendar_group + 1] = VerticalSpan:new{ width = ctx.SZ(Screen:scaleBySize(12)) }
-        calendar_group[#calendar_group + 1] = grid_box
+        local calendar = Frames.stack{ SZ = SZ, children = {
+            month_header,
+            Frames.panel{ w = card_w, SZ = SZ, content = grid_box },
+        } }
 
-        -- Rounded bordered frame around the whole calendar — same recipe
-        -- (border size/color, 12px radius) as the DAY STREAK / WEEK STREAK
-        -- boxes further down, so this window's sections share one look.
-        -- cal_w already accounts for cal_pad, so the calendar content fits
-        -- the frame's interior exactly with no extra centering needed.
-        local calendar_group = FrameContainer:new{
-            bordersize     = SUIStyle.BORDER_SZ,
-            color          = CLR_BORDER,
-            radius         = ctx.SZ(Screen:scaleBySize(12)),
-            padding        = 0,
-            padding_left   = cal_pad,
-            padding_right  = cal_pad,
-            padding_top    = cal_pad,
-            padding_bottom = cal_pad,
-            margin         = 0,
-            calendar_group,
-        }
+        -- ── Last days strip ──────────────────────────────────────────────
+        -- One dot per day, oldest first: filled for reading, ring for a
+        -- frozen day. Left out when the width cannot fit them.
+        local function lastDays()
+            local d = SZ(Screen:scaleBySize(16))
+            local dot_size, dot_gap = Charts.fitDots(SM_RECENT_DAYS, cal_w, d, d)
+            if not dot_size then return end
+            return {
+                title = string.format(_("Last %d days"), SM_RECENT_DAYS),
+                children = { Frames.panel{ w = card_w, SZ = SZ, content = _CenterContainer:new{
+                    dimen = Geom:new{ w = cal_w, h = dot_size },
+                    Charts.weekDots{ states = _smRecentDayStates(SM_RECENT_DAYS), size = dot_size,
+                        gap = dot_gap, color = CLR_BLACK },
+                } } },
+            }
+        end
 
-        -- ── DAY STREAK / WEEK STREAK boxes ───────────────────────────────
-        -- Exact same widget recipe as Reading Insights' own streak boxes
-        -- (shared via _riBuildStreakBoxes) — this is deliberately the same
-        -- box the rest of the app already uses for this data, not a new
-        -- style invented for this window. Each section header is glued to
-        -- its box in one VerticalGroup so SUIWindow's automatic pagination
-        -- (see _buildPages) can never split a heading from its box across
-        -- two physical pages — they are one atomic item as far as the
-        -- window's own pagination is concerned.
-        local streak_row, wstreak_row = _riBuildStreakBoxes(inner_w, streaks, ctx.SZ)
-
-        -- day_section is deliberately the first widget on page 2: marking
-        -- it force_new_page (read by SUIWindow:_buildPages) means page 1
-        -- always ends right after the calendar, no matter how much room is
-        -- left over — the calendar page and the streak-boxes page are kept
-        -- visually separate rather than however much of DAY STREAK happens
-        -- to fit in the leftover space.
-        local day_section = VerticalGroup:new{ align = "left",
-            VerticalSpan:new{ width = ctx.SZ(Screen:scaleBySize(16)) },
-            TextWidget:new{ text = _("DAY STREAK"), face = face_section, fgcolor = CLR_BLACK, bold = true },
-            VerticalSpan:new{ width = ctx.SZ(Screen:scaleBySize(8)) },
-            streak_row,
-        }
-        day_section.force_new_page = true
-        local week_section = VerticalGroup:new{ align = "left",
-            VerticalSpan:new{ width = ctx.SZ(Screen:scaleBySize(16)) },
-            TextWidget:new{ text = _("WEEK STREAK"), face = face_section, fgcolor = CLR_BLACK, bold = true },
-            VerticalSpan:new{ width = ctx.SZ(Screen:scaleBySize(8)) },
-            wstreak_row,
-        }
-
-        -- ── Freeze section (conditional) ─────────────────────────────────
-        -- Entirely omitted, not just hidden, when freeze mode is off — the
-        -- section variable simply stays nil and is never added to the
-        -- returned items list below, so the window reflows with no gap in
-        -- "Real streak only" mode.
-        local freeze_section = nil
-        if freeze_mode_on then
-            -- Progress toward the next day-based freeze: streaks.days.current % 5
-            -- is exactly right without needing the watermark here — e.g. a
-            -- streak of 7 with a freeze already granted at 5 shows "2/5"; a
-            -- streak that just hit 10 shows "0/5" (a fresh cycle just
-            -- started, matching maybeGrantDayFreeze's watermark update).
+        -- Progress toward the next day-based freeze: streaks.days.current % interval
+        -- is exact without the watermark (a streak of 7 with a freeze granted at 5
+        -- shows 2/5; one that just hit 10 shows 0/5). Using a freeze happens by
+        -- tapping yesterday's cell, so this card only displays the count.
+        local function freezes()
             local day_progress = streaks.days.current % SUIStreak.FREEZE_DAY_INTERVAL
-
-            local time_secs = SUIStreak.getFreezeTimeProgress()
-            local time_min  = math.floor(time_secs / 60)
+            local time_min = math.floor(SUIStreak.getFreezeTimeProgress() / 60)
             local time_target_min = math.floor(SUIStreak.FREEZE_TIME_THRESHOLD_SECS / 60)
-
-            -- freezes_available itself comes from the eligibility block
-            -- hoisted above the calendar build; using a freeze is now done
-            -- by tapping yesterday's cell in the calendar (see
-            -- promptUseFreezeForYesterday), so this box is pure display.
-
-            local face_freeze_icon   = Font:getFace(SUIStyle.FACE_ICONS, math.floor(ctx.SZ(SUIStyle.FS_TITLE * 1.3)))
-            -- One step down from FS_TITLE in the type scale (SUBTITLE), and
-            -- not bold — still clearly bigger than progress_caption's
-            -- FS_CAPTION below it, just no longer shouting the count.
-            local face_freeze_txt    = Font:getFace(SUIStyle.FACE_REGULAR, math.floor(ctx.SZ(SUIStyle.FS_SUBTITLE)))
-
-            local pad_box   = ctx.SZ(Screen:scaleBySize(16))
-            local icon_box  = ctx.SZ(Screen:scaleBySize(40))
-
-            local snow_icon = _CenterContainer:new{
-                dimen = Geom:new{ w = icon_box, h = icon_box },
-                TextWidget:new{ text = _SM_FROZEN_ICON, face = face_freeze_icon, fgcolor = CLR_BLACK },
-            }
-
-            -- Single TextWidget, single face — the count and the label are
-            -- one sentence ("3 freezes available"), so there's no mixed
-            -- font-size row to baseline-align in the first place.
-            local avail_text = TextWidget:new{
-                text    = string.format(N_("%d freeze available", "%d freezes available", freezes_available),
-                              freezes_available),
-                face    = face_freeze_txt,
-                fgcolor = CLR_BLACK,
-            }
-
-            -- Sits directly under avail_text now (see label_col below),
-            -- same role/text it always had, just repositioned.
-            local progress_caption = TextWidget:new{
-                text    = string.format(_("%d/%d days · %d/%d min to next freeze"),
-                              day_progress, SUIStreak.FREEZE_DAY_INTERVAL, time_min, time_target_min),
-                face    = face_sub,
-                fgcolor = CLR_BLACK,
-            }
-
-            -- label_col: avail_text ("X freezes available") with
-            -- progress_caption ("…to next freeze") stacked directly under
-            -- it — the same icon/label/sub-label recipe _riBuildStreakBoxes'
-            -- makeIconRow uses for "Best streak".
-            local gap = ctx.SZ(Screen:scaleBySize(10))
-            local label_col = VerticalGroup:new{ align = "left",
-                avail_text,
-                VerticalSpan:new{ width = ctx.SZ(Screen:scaleBySize(4)) },
-                progress_caption,
-            }
-
-            local box_inner_w = inner_w - 2 * pad_box
-
-            -- Icon + label, centered horizontally inside the full box
-            -- width. No tap target here anymore — using a freeze now
-            -- happens by tapping yesterday's cell in the calendar above,
-            -- so this box is purely informational (count + progress).
-            local content_natural = HorizontalGroup:new{ align = "center",
-                snow_icon,
-                HorizontalSpan:new{ width = gap },
-                label_col,
-            }
-            local content_row = _CenterContainer:new{
-                dimen = Geom:new{ w = box_inner_w, h = content_natural:getSize().h },
-                content_natural,
-            }
-
-            local freeze_box = FrameContainer:new{
-                bordersize     = 0,
-                -- Same background as _makeDateCard's "date started / date
-                -- finished" card in the Books Finished window, per request.
-                background     = SUIStyle.COLOR.surface_flat,
-                radius         = ctx.SZ(Screen:scaleBySize(12)),
-                padding        = 0,
-                padding_left   = pad_box,
-                padding_right  = pad_box,
-                padding_top    = pad_box,
-                padding_bottom = pad_box,
-                dimen          = Geom:new{ w = inner_w, h = content_row:getSize().h + 2 * pad_box },
-                content_row,
-            }
-
-            freeze_section = VerticalGroup:new{ align = "left",
-                VerticalSpan:new{ width = ctx.SZ(Screen:scaleBySize(16)) },
-                TextWidget:new{ text = _("FREEZES"), face = face_section, fgcolor = CLR_BLACK, bold = true },
-                VerticalSpan:new{ width = ctx.SZ(Screen:scaleBySize(8)) },
-                freeze_box,
-                -- Small breathing-room gap below the freeze box, matching
-                -- after_calendar_spacer's role at the end of page 1 — page 2
-                -- would otherwise end flush against freeze_box with no
-                -- bottom margin at all.
-                VerticalSpan:new{ width = ctx.SZ(Screen:scaleBySize(12)) },
+            return {
+                title = _("Freezes"),
+                children = { Frames.rows{ w = card_w, SZ = SZ, items = { {
+                    icon  = "freeze",
+                    label = N_("Freeze available", "Freezes available", freezes_available),
+                    sub   = string.format(_("%d/%d days · %d/%d min to next freeze"),
+                        day_progress, SUIStreak.FREEZE_DAY_INTERVAL, time_min, time_target_min),
+                    value = tostring(freezes_available),
+                } } } },
             }
         end
 
-        -- The calendar page is one indivisible item, so pagination can never
-        -- separate the heading, the calendar and the gap below it.
-        local calendar_section = VerticalGroup:new{ align = "left",
-            top_spacer,
-            calendar_group,
-            after_calendar_spacer,
-        }
-
-        local items = { calendar_section, day_section, week_section }
-        if freeze_section then
-            items[#items + 1] = freeze_section
+        -- Everything after the calendar should share page 2: try the full layout,
+        -- then streaks as tiles, then without the last days; the last attempt
+        -- stands even if it still overflows.
+        local function restBlocks(compact, with_last_days)
+            local categories = {}
+            local last_days = with_last_days and lastDays()
+            if last_days then categories[#categories + 1] = last_days end
+            for _i, streak_category in ipairs(_riStreakCategories(card_w, SZ, streaks, compact)) do
+                categories[#categories + 1] = streak_category
+            end
+            if freeze_mode_on then categories[#categories + 1] = freezes() end
+            return Frames.flow{ inner_w = inner_w, SZ = SZ, max_h = ctx.page_h, categories = categories }
         end
-        return items
+        local function onOnePage(blocks)
+            for i = 2, #blocks do
+                if blocks[i].force_new_page then return false end
+            end
+            return true
+        end
+        local rest = restBlocks(false, true)
+        if not onOnePage(rest) then rest = restBlocks(true, true) end
+        if not onOnePage(rest) then rest = restBlocks(true, false) end
+
+        -- Page 1 is the calendar alone: the rest starts a new page whatever room is left.
+        local pages = Frames.flow{ inner_w = inner_w, SZ = SZ, max_h = ctx.page_h,
+            categories = { { title = calendar_title, children = { calendar } } } }
+        rest[1].force_new_page = true
+        for _i, block in ipairs(rest) do pages[#pages + 1] = block end
+        return pages
     end
 
     local win = SUIWindow:new{
@@ -3259,12 +2615,7 @@ function StatsWindows.showStreakManagerWindow(opts)
         icon          = "streak",
         on_back       = opts.on_back,
         title         = function() return _("Streak") end,
-        -- height is now the max ceiling, not the fixed size: auto_height_per_page
-        -- shrinks each page (calendar-only page 1, streak-boxes page 2) to its
-        -- own content, clamped to this same 23/30-of-portrait-height value that
-        -- used to be the fixed height — same reasoning as Reading Insights.
-        height        = math.floor((select(2, UI.getPortraitDims())) * 23 / 30),
-        auto_height_per_page = true,
+        height        = SUIWindow.defaultHeight(),
         position      = "bottom",
         navpager_mode = Config.isNavpagerEnabled and Config.isNavpagerEnabled() or false,
         screens       = {
@@ -3393,7 +2744,7 @@ function StatsWindows.showBookStatsFromFile(opts)
                     alignment = "center",
                 },
             }
-            return FrameContainer:new{
+            return RoundedFrame:new{
                 bordersize = SUIStyle.BORDER_SZ, color = CLR_BORDER,
                 radius     = ctx.SZ(Screen:scaleBySize(12)),
                 padding    = 0, margin = 0,
@@ -3509,7 +2860,7 @@ function StatsWindows.showBookStatsFromFile(opts)
                 align = "center",
                 _CenterContainer:new{
                     dimen = Geom:new{ w = ICON_W, h = ROW_H },
-                    TextWidget:new{ text = icon_glyph, face = icon_face, fgcolor = CLR_BLACK },
+                    UI.makeAccentText({ text = icon_glyph, face = icon_face }, CLR_BLACK),
                 },
                 _LeftContainer:new{
                     dimen = Geom:new{ w = lbl_w, h = ROW_H },
@@ -3571,7 +2922,7 @@ function StatsWindows.showBookStatsFromFile(opts)
                     align = "center",
                     _CenterContainer:new{
                         dimen = Geom:new{ w = ICON_W, h = ROW_H },
-                        TextWidget:new{ text = icon_glyph, face = icon_face, fgcolor = CLR_BLACK },
+                        UI.makeAccentText({ text = icon_glyph, face = icon_face }, CLR_BLACK),
                     },
                     _LeftContainer:new{
                         dimen = Geom:new{ w = lbl_w, h = ROW_H },
@@ -3635,7 +2986,7 @@ function StatsWindows.showBookStatsFromFile(opts)
             }
         end
 
-        local rows_block = FrameContainer:new{
+        local rows_block = RoundedFrame:new{
             bordersize = SUIStyle.BORDER_SZ,
             color      = CLR_BORDER,
             radius     = ctx.SZ(Screen:scaleBySize(12)),

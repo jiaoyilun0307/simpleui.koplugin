@@ -25,6 +25,7 @@ local _ = require("infra/sui_i18n").translate
 local N_ = require("infra/sui_i18n").ngettext
 local logger          = require("logger")
 local Config          = require("infra/sui_config")
+local Bento           = require("infra/sui_bento")
 local SectionLabel    = require("engines/sui_section_label")
 local AAPaint         = require("infra/sui_aa_paint")
 
@@ -37,7 +38,6 @@ local Chrome       = require("features/sui_module_chrome")
 local PAD          = UI.PAD
 local PAD2         = UI.PAD2
 local LABEL_H      = UI.LABEL_H
-local CLR_TEXT_SUB = UI.CLR_TEXT_SUB
 
 -- Colours
 
@@ -265,25 +265,18 @@ local function _measureLblW(labels, face, bold, floor_w)
     return math.max(max_w, floor_w)
 end
 
-local function _buildInnerCompact(inner_w, lbl_w, pct_w, label_str, pct, pct_str, detail_str, cd, clr_sub, clr_blk)
+local function _buildInnerCompact(inner_w, lbl_w, pct_w, detail_w, label_str, pct, pct_str, detail_str, cd, ink)
     local ROW_H          = cd.row_h
     local LBL_BAR_GAP    = cd.col_gap
     local BAR_PCT_GAP    = cd.col_gap
     local PCT_DETAIL_GAP = cd.col_gap
-    -- right_w must be at least pct_w + gap + a minimum detail column.
-    local MIN_DETAIL_W = Screen:scaleBySize(32)
-    local right_w = math.max(
-        math.floor(inner_w * 0.28),
-        pct_w + PCT_DETAIL_GAP + MIN_DETAIL_W)
-    local available = inner_w - lbl_w - LBL_BAR_GAP - BAR_PCT_GAP - right_w
-    if available < Screen:scaleBySize(40) then
-        -- lbl_w grew — shrink right_w before the bar goes below minimum
-        available = Screen:scaleBySize(40)
-        right_w = math.max(0, inner_w - lbl_w - LBL_BAR_GAP - BAR_PCT_GAP - available)
-    end
-    local bar_w    = available
-    local PCT_W    = pct_w
-    local DETAIL_W = math.max(0, right_w - PCT_W - PCT_DETAIL_GAP)
+    local PCT_W          = pct_w
+    -- The detail column is as wide as its measured text; the bar takes the rest.
+    local fixed     = lbl_w + LBL_BAR_GAP + BAR_PCT_GAP + PCT_W + PCT_DETAIL_GAP
+    local min_bar_w = Screen:scaleBySize(40)
+    local bar_w     = math.max(min_bar_w, inner_w - fixed - detail_w)
+    -- When the bar is at its minimum the detail text is ellipsized to what is left.
+    local DETAIL_W  = math.max(0, math.min(detail_w, inner_w - fixed - bar_w))
 
     local function vcenter_left(child, col_w)
         return LeftContainer:new{ dimen = Geom:new{ w = col_w, h = ROW_H }, child }
@@ -292,35 +285,33 @@ local function _buildInnerCompact(inner_w, lbl_w, pct_w, label_str, pct, pct_str
         return RightContainer:new{ dimen = Geom:new{ w = col_w, h = ROW_H }, child }
     end
 
-    local eff_blk = clr_blk or SUIStyle.COLOR.text_primary
     return HorizontalGroup:new{
         align = "center",
         vcenter_left(UI.makeColoredText{
             text    = label_str,
             face    = cd.face_lbl,
             bold    = cd.bold_lbl,
-            fgcolor = eff_blk,
+            fgcolor = ink.blk,
             width   = lbl_w,
         }, lbl_w),
         HorizontalSpan:new{ width = LBL_BAR_GAP },
-        vcenter_left(UI.progressBar(bar_w, pct, cd.bar_h), bar_w),
+        vcenter_left(UI.progressBar(bar_w, pct, cd.bar_h, ink.bar_fg, ink.bar_bg), bar_w),
         HorizontalSpan:new{ width = BAR_PCT_GAP },
         vcenter_left(UI.makeColoredText{
             text    = pct_str,
             face    = cd.face_pct,
             bold    = cd.bold_pct,
-            fgcolor = eff_blk,
+            fgcolor = ink.blk,
             width   = PCT_W,
         }, PCT_W),
         HorizontalSpan:new{ width = PCT_DETAIL_GAP },
-        vcenter_right(UI.makeColoredText{
+        DETAIL_W > 0 and vcenter_right(UI.makeColoredText{
             text      = detail_str,
             face      = cd.face_det,
             bold      = cd.bold_det,
-            fgcolor   = clr_sub or CLR_TEXT_SUB,
-            width     = DETAIL_W,
-            alignment = "right",
-        }, DETAIL_W),
+            fgcolor   = ink.sub,
+            max_width = DETAIL_W,
+        }, DETAIL_W) or HorizontalSpan:new{ width = 0 },
     }
 end
 
@@ -349,22 +340,40 @@ end
 -- Builds a single inline row: Label [bar] XX%  detail
 -- Used by the Compact layout. All elements are horizontally laid out and vertically centred.
 -- lbl_w is pre-computed by _measureLblW so both rows share the same column width.
-local function buildCompactGoalRow(inner_w, lbl_w, pct_w, label_str, pct, pct_str, detail_str, on_tap, cd, clr_sub, clr_blk)
-    local row = _buildInnerCompact(inner_w, lbl_w, pct_w, label_str, pct, pct_str, detail_str, cd, clr_sub, clr_blk)
-
+local function buildCompactGoalRow(inner_w, lbl_w, pct_w, group, label_str, pct, pct_str, detail_str, on_tap, cd, ink)
+    local state = { pct = pct, pct_str = pct_str, detail = detail_str }
     local frame = FrameContainer:new{
         bordersize = 0, padding = 0,
         dimen      = Geom:new{ w = inner_w, h = cd.row_h },
-        row,
     }
+    local function rebuild()
+        frame[1] = _buildInnerCompact(inner_w, lbl_w, pct_w, group.detail_w, label_str,
+            state.pct, state.pct_str, state.detail, cd, ink)
+    end
+    rebuild()
+    group.rows[#group.rows + 1] = { state = state, rebuild = rebuild }
+
+    -- The detail column is shared: when the widest detail changes, every row
+    -- is rebuilt so the bars stay aligned.
     local update_fn = function(new_pct, new_pct_str, new_detail_str)
-        frame[1] = _buildInnerCompact(inner_w, lbl_w, pct_w, label_str, new_pct, new_pct_str, new_detail_str, cd, clr_sub, clr_blk)
+        state.pct, state.pct_str, state.detail = new_pct, new_pct_str, new_detail_str
+        local details = {}
+        for _, r in ipairs(group.rows) do
+            if r.state.detail ~= "" then details[#details + 1] = r.state.detail end
+        end
+        local w = _measureLblW(details, cd.face_det, cd.bold_det, 0)
+        if w ~= group.detail_w then
+            group.detail_w = w
+            for _, r in ipairs(group.rows) do r.rebuild() end
+        else
+            rebuild()
+        end
     end
 
     return _wrapTappable(frame, inner_w, cd.row_h, on_tap), update_fn
 end
 
-local function _buildInnerDefault(inner_w, label_str, pct, pct_str, detail_str, d, clr_sub_eff, clr_blk_eff)
+local function _buildInnerDefault(inner_w, label_str, pct, pct_str, detail_str, d, ink)
     local PCT_W       = _measureLblW({ pct_str }, d.face_pct, d.bold_pct, d.pct_w)
     local LBL_BAR_GAP = d.col_gap
     local BAR_PCT_GAP = d.col_gap
@@ -382,17 +391,17 @@ local function _buildInnerDefault(inner_w, label_str, pct, pct_str, detail_str, 
                 text    = label_str,
                 face    = d.face_lbl,
                 bold    = d.bold_lbl,
-                fgcolor = clr_blk_eff,
+                fgcolor = ink.blk,
                 width   = d.lbl_w,
             },
             HorizontalSpan:new{ width = LBL_BAR_GAP },
-        UI.progressBar(bar_w, pct, d.bar_h),
+        UI.progressBar(bar_w, pct, d.bar_h, ink.bar_fg, ink.bar_bg),
             HorizontalSpan:new{ width = BAR_PCT_GAP },
             UI.makeColoredText{
                 text      = pct_str,
                 face      = d.face_pct,
                 bold      = d.bold_pct,
-                fgcolor   = clr_blk_eff,
+                fgcolor   = ink.blk,
                 width     = PCT_W,
                 alignment = "right",
             },
@@ -402,7 +411,7 @@ local function _buildInnerDefault(inner_w, label_str, pct, pct_str, detail_str, 
             text    = detail_str,
             face    = d.face_det,
             bold    = d.bold_det,
-            fgcolor = clr_sub_eff,
+            fgcolor = ink.sub,
             width   = inner_w,
         },
     }
@@ -410,10 +419,8 @@ end
 
 -- Builds a two-line goal row: label + bar + pct on the first line, detail text below.
 -- Used by the Default layout. Accepts a pre-computed dims table from _scaledDims.
-local function buildGoalRow(inner_w, label_str, pct, pct_str, detail_str, on_tap, d, clr_sub_eff, clr_blk_eff)
-    clr_sub_eff = clr_sub_eff or CLR_TEXT_SUB
-    clr_blk_eff = clr_blk_eff or SUIStyle.COLOR.text_primary
-    local block = _buildInnerDefault(inner_w, label_str, pct, pct_str, detail_str, d, clr_sub_eff, clr_blk_eff)
+local function buildGoalRow(inner_w, label_str, pct, pct_str, detail_str, on_tap, d, ink)
+    local block = _buildInnerDefault(inner_w, label_str, pct, pct_str, detail_str, d, ink)
 
     local frame = FrameContainer:new{
         bordersize     = 0,
@@ -422,7 +429,7 @@ local function buildGoalRow(inner_w, label_str, pct, pct_str, detail_str, on_tap
         block,
     }
     local update_fn = function(new_pct, new_pct_str, new_detail_str)
-        frame[1] = _buildInnerDefault(inner_w, label_str, new_pct, new_pct_str, new_detail_str, d, clr_sub_eff, clr_blk_eff)
+        frame[1] = _buildInnerDefault(inner_w, label_str, new_pct, new_pct_str, new_detail_str, d, ink)
     end
 
     return _wrapTappable(frame, inner_w, d.goal_row_h, on_tap), update_fn
@@ -504,7 +511,7 @@ end
 -- flat (default): solid track + fill matching UI.progressBar flat colours
 --                 (COLOR.track / COLOR.gray), no translucent background stroke.
 -- transparent:    legacy single-colour alpha-mask stroke (fg_color).
-local function _buildRingWidget(diameter, fraction, thickness, fg_color)
+local function _buildRingWidget(diameter, fraction, thickness, ink)
     if diameter < 4 then return nil end
     local outer_r = diameter / 2 - 0.5
     local thick = thickness
@@ -519,7 +526,7 @@ local function _buildRingWidget(diameter, fraction, thickness, fg_color)
     widget.dimen = Geom:new{ w = diameter, h = diameter }
     widget._fraction = fraction or 0
     widget._thick = thick
-    widget._fg = fg_color
+    widget._ink = ink
     widget._style = style
 
     function widget:getSize()
@@ -533,15 +540,15 @@ local function _buildRingWidget(diameter, fraction, thickness, fg_color)
 
         if self._style == "transparent" then
             -- Progress and translucent track in one single-colour mask.
-            bb:colorblitFromRGB32(AAPaint.ringMask(d, t, frac), x, y, 0, 0, d, d, self._fg)
+            bb:colorblitFromRGB32(AAPaint.ringMask(d, t, frac), x, y, 0, 0, d, d, self._ink.blk)
             return
         end
 
-        -- Flat: opaque track (COLOR.track) then progress arc (COLOR.gray),
-        -- the same pair UI.progressBar uses for style "flat".
-        bb:colorblitFromRGB32(AAPaint.ringMask(d, t, 0, 1), x, y, 0, 0, d, d, SUIStyle.COLOR.track)
+        -- Flat: opaque track (COLOR.track) then progress arc (accent colour
+        -- or COLOR.gray), the same pair UI.progressBar uses for style "flat".
+        bb:colorblitFromRGB32(AAPaint.ringMask(d, t, 0, 1), x, y, 0, 0, d, d, self._ink.bar_bg or SUIStyle.COLOR.track)
         if frac > 0 then
-            bb:colorblitFromRGB32(AAPaint.ringMask(d, t, frac, 0), x, y, 0, 0, d, d, SUIStyle.COLOR.gray)
+            bb:colorblitFromRGB32(AAPaint.ringMask(d, t, frac, 0), x, y, 0, 0, d, d, self._ink.bar_fg or SUIStyle.accent(SUIStyle.COLOR.gray))
         end
     end
 
@@ -552,13 +559,13 @@ end
 --   "inside"  (default) — detail shares the ring hole with the percentage.
 --   "outside" — only the percentage sits in the hole (grows into the freed
 --               space); detail is drawn below the ring, above the label.
-local function _buildGoalCardInner(card_w, _card_h, label_str, pct, pct_str, detail_str, d, clr_blk, clr_sub, ring_content)
+local function _buildGoalCardInner(card_w, _card_h, label_str, pct, pct_str, detail_str, d, ink, ring_content)
     local ring_d = math.max(24, card_w)
     if ring_d % 2 == 1 then ring_d = ring_d - 1 end
 
     local ring_frac = _ringFraction(pct, pct_str)
     local thick = math.max(2, math.floor((ring_d / 2) * _RING_THICK_FRAC))
-    local ring = _buildRingWidget(ring_d, ring_frac, thick, clr_blk)
+    local ring = _buildRingWidget(ring_d, ring_frac, thick, ink)
 
     local center_txt = pct_str
     if not center_txt or center_txt == "" then center_txt = "—" end
@@ -582,7 +589,7 @@ local function _buildGoalCardInner(card_w, _card_h, label_str, pct, pct_str, det
         text    = center_txt,
         face    = face_pct,
         bold    = bold_pct,
-        fgcolor = clr_blk,
+        fgcolor = ink.blk,
         max_width = content_w,
         truncate_with_ellipsis = true,
     }
@@ -596,7 +603,7 @@ local function _buildGoalCardInner(card_w, _card_h, label_str, pct, pct_str, det
             text    = detail_str,
             face    = face_det,
             bold    = bold_det,
-            fgcolor = clr_sub,
+            fgcolor = ink.sub,
             max_width = content_w,
             truncate_with_ellipsis = true,
         }
@@ -626,7 +633,7 @@ local function _buildGoalCardInner(card_w, _card_h, label_str, pct, pct_str, det
             text    = detail_str,
             face    = d.face_det,
             bold    = d.bold_det,
-            fgcolor = clr_sub,
+            fgcolor = ink.sub,
             max_width = ring_d,
             truncate_with_ellipsis = true,
         }
@@ -639,7 +646,7 @@ local function _buildGoalCardInner(card_w, _card_h, label_str, pct, pct_str, det
             text    = label_str,
             face    = d.face_lbl,
             bold    = d.bold_lbl,
-            fgcolor = clr_blk,
+            fgcolor = ink.blk,
             max_width = ring_d,
             truncate_with_ellipsis = true,
         }
@@ -671,15 +678,13 @@ local function _ringTopGap(scale)
     return math.max(6, math.floor(_RING_TOP_GAP_BASE * scale))
 end
 
-local function buildGoalCardWidget(card_w, _card_h, label_str, pct, pct_str, detail_str, on_tap, d, clr_sub, clr_blk, ring_content)
-    clr_sub = clr_sub or CLR_TEXT_SUB
-    clr_blk = clr_blk or SUIStyle.COLOR.text_primary
+local function buildGoalCardWidget(card_w, _card_h, label_str, pct, pct_str, detail_str, on_tap, d, ink, ring_content)
     local host = WidgetContainer:new{}
     local ring_ref
     local side_w, side_h = card_w, card_w
     local function set_inner(p, ps, det)
         local inner, ring, ring_d, total_h = _buildGoalCardInner(
-            card_w, card_w, label_str, p, ps, det, d, clr_blk, clr_sub, ring_content)
+            card_w, card_w, label_str, p, ps, det, d, ink, ring_content)
         if ring_ref and ring_ref.free then ring_ref:free() end
         ring_ref = ring
         side_w = ring_d or card_w
@@ -803,6 +808,15 @@ M.enabled_key = "reading_goals_enabled"
 M.default_on  = true
 M.text_elems  = TEXT_ELEMS
 
+-- Layout-editor summary: the visible goals, in order.
+function M.getSummary(_id, pfx)
+    local names = {}
+    for _i, kind in ipairs(_getElemOrder(pfx)) do
+        if isGoalShown(kind) then names[#names + 1] = Goals.label(kind) end
+    end
+    return #names > 0 and table.concat(names, "  ·  ") or nil
+end
+
 -- Delegate cache invalidation to StatsProvider (shared with reading_stats).
 function M.invalidateCache()
     local SP = package.loaded["modules/module_stats_provider"]
@@ -841,8 +855,8 @@ function M.build(w, ctx)
     local show_rows = { annual = show_ann, monthly = show_mon, daily = show_day }
 
     local rg_update_funcs = {}
-    local CLR_TEXT_BLK_EFF = SUIStyle.COLOR.text_primary
-    local CLR_TEXT_SUB_EFF = CLR_TEXT_SUB
+    -- Content colours over the module fill.
+    local ink = ctx.ink or Chrome.PLAIN_INK
 
     if layout == "rings" then
         local active = {}
@@ -882,7 +896,7 @@ function M.build(w, ctx)
             end
             local card_widget, card_update_fn = buildGoalCardWidget(
                 card_w, card_h, label, pct, pct_str, detail, on_tap, cd,
-                CLR_TEXT_SUB_EFF, CLR_TEXT_BLK_EFF, ring_content)
+                ink, ring_content)
             row[#row + 1] = card_widget
             if k == "annual" then
                 table.insert(rg_update_funcs, { cat = cat, fn = function(books_r, _today_s, _month_s)
@@ -923,6 +937,9 @@ function M.build(w, ctx)
         local month_str = _getMonthStr()
         local rows, pct_w = _collectRowData(show_rows, books_read, month_secs, today_secs,
             cd.face_pct, cd.bold_pct, Screen:scaleBySize(28))
+        local details = {}
+        for _id, r in pairs(rows) do if r.detail ~= "" then details[#details+1] = r.detail end end
+        local group = { detail_w = _measureLblW(details, cd.face_det, cd.bold_det, 0), rows = {} }
         local rendered_count = 0
         for _i, k in ipairs(_getElemOrder(ctx.pfx)) do
             if k == "annual" and show_ann then
@@ -930,8 +947,8 @@ function M.build(w, ctx)
                 local lbl_w = _measureLblW({ year_str }, cd.face_lbl, cd.bold_lbl, cd.lbl_w)
                 cd.lbl_w = lbl_w
                 local row_widget, row_update_fn = buildCompactGoalRow(
-                    inner_w, lbl_w, pct_w, year_str, rows.annual.pct, rows.annual.pct_str, rows.annual.detail,
-                    _openFinishedBooks, cd, CLR_TEXT_SUB_EFF, CLR_TEXT_BLK_EFF)
+                    inner_w, lbl_w, pct_w, group, year_str, rows.annual.pct, rows.annual.pct_str, rows.annual.detail,
+                    _openFinishedBooks, cd, ink)
                 rows_children[#rows_children+1] = row_widget
                 table.insert(rg_update_funcs, { cat = "books", fn = function(books_r, _today_s, _month_s)
                     local n_pct, n_str, n_det = _annualData(books_r)
@@ -943,8 +960,8 @@ function M.build(w, ctx)
                 local lbl_w = _measureLblW({ month_str }, cd.face_lbl, cd.bold_lbl, cd.lbl_w)
                 cd.lbl_w = lbl_w
                 local row_widget, row_update_fn = buildCompactGoalRow(
-                    inner_w, lbl_w, pct_w, month_str, rows.monthly.pct, rows.monthly.pct_str, rows.monthly.detail,
-                    function() Goals.showDialog("monthly") end, cd, CLR_TEXT_SUB_EFF, CLR_TEXT_BLK_EFF)
+                    inner_w, lbl_w, pct_w, group, month_str, rows.monthly.pct, rows.monthly.pct_str, rows.monthly.detail,
+                    function() Goals.showDialog("monthly") end, cd, ink)
                 rows_children[#rows_children+1] = row_widget
                 table.insert(rg_update_funcs, { cat = "timeseries", fn = function(_books_r, _today_s, month_s)
                     local n_pct, n_str, n_det = _monthlyData(month_s)
@@ -955,8 +972,8 @@ function M.build(w, ctx)
                 if rendered_count > 0 then rows_children[#rows_children+1] = VerticalSpan:new{ width = cd.row_gap } end
                 local lbl_w = _measureLblW({ _("Today") }, cd.face_lbl, cd.bold_lbl, cd.lbl_w)
                 local row_widget, row_update_fn = buildCompactGoalRow(
-                    inner_w, lbl_w, pct_w, _("Today"), rows.daily.pct, rows.daily.pct_str, rows.daily.detail,
-                    function() Goals.showDialog("daily") end, cd, CLR_TEXT_SUB_EFF, CLR_TEXT_BLK_EFF)
+                    inner_w, lbl_w, pct_w, group, _("Today"), rows.daily.pct, rows.daily.pct_str, rows.daily.detail,
+                    function() Goals.showDialog("daily") end, cd, ink)
                 rows_children[#rows_children+1] = row_widget
                 table.insert(rg_update_funcs, { cat = "timeseries", fn = function(_books_r, today_s, _month_s)
                     local n_pct, n_str, n_det = _dailyData(today_s)
@@ -981,7 +998,7 @@ function M.build(w, ctx)
                 d.lbl_w = ann_lbl_w
                 local row_widget, row_update_fn = buildGoalRow(
                     inner_w, year_str, rows.annual.pct, rows.annual.pct_str, rows.annual.detail,
-                    _openFinishedBooks, d, CLR_TEXT_SUB_EFF, CLR_TEXT_BLK_EFF)
+                    _openFinishedBooks, d, ink)
                 rows_children[#rows_children+1] = row_widget
                 table.insert(rg_update_funcs, { cat = "books", fn = function(books_r, _today_s, _month_s)
                     local n_pct, n_str, n_det = _annualData(books_r)
@@ -994,7 +1011,7 @@ function M.build(w, ctx)
                 d.lbl_w = mon_lbl_w
                 local row_widget, row_update_fn = buildGoalRow(
                     inner_w, month_str, rows.monthly.pct, rows.monthly.pct_str, rows.monthly.detail,
-                    function() Goals.showDialog("monthly") end, d, CLR_TEXT_SUB_EFF, CLR_TEXT_BLK_EFF)
+                    function() Goals.showDialog("monthly") end, d, ink)
                 rows_children[#rows_children+1] = row_widget
                 table.insert(rg_update_funcs, { cat = "timeseries", fn = function(_books_r, _today_s, month_s)
                     local n_pct, n_str, n_det = _monthlyData(month_s)
@@ -1007,7 +1024,7 @@ function M.build(w, ctx)
                 d.lbl_w = day_lbl_w
                 local row_widget, row_update_fn = buildGoalRow(
                     inner_w, _("Today"), rows.daily.pct, rows.daily.pct_str, rows.daily.detail,
-                    function() Goals.showDialog("daily") end, d, CLR_TEXT_SUB_EFF, CLR_TEXT_BLK_EFF)
+                    function() Goals.showDialog("daily") end, d, ink)
                 rows_children[#rows_children+1] = row_widget
                 table.insert(rg_update_funcs, { cat = "timeseries", fn = function(_books_r, today_s, _month_s)
                     local n_pct, n_str, n_det = _dailyData(today_s)
@@ -1036,7 +1053,7 @@ function M.build(w, ctx)
             height_adjust = true,
             height_overflow_show_ellipsis = true,
             alignment = "center",
-            fgcolor   = SUIStyle.COLOR.text_primary,
+            fgcolor   = (ctx.ink or Chrome.PLAIN_INK).blk,
         }
 
         return CenterContainer:new{
@@ -1085,13 +1102,13 @@ function M.getHeight(_ctx)
         -- Approximate column width when the module is in a bento column so
         -- height tracks the same ring size build() will use.
         local approx_inner
-        local bw = Config.getBentoWidth("reading_goals", pfx)
-        if bw < 100 then
+        local span = Config.getBentoSpan("reading_goals", pfx)
+        if span < Bento.FULL then
             local content_w = UI.getInnerW()
             if UI.isLandscape() then
                 content_w = UI.getSpreadColWidth(content_w)
             end
-            approx_inner = math.max(1, math.floor(content_w * bw / 100))
+            approx_inner = math.max(1, math.floor(content_w * span / Bento.ROW))
         end
         local card_w, _, cd = _ringsCardW(scale, approx_inner, n, pfx, styles)
         h = top_gap + _ringCardApproxHeight(card_w, cd, getRingContent(pfx))
@@ -1291,6 +1308,7 @@ function M.getMenuItems(ctx_menu)
                     _lc          = _lc,
                 },
                 Config.makeLabelToggleItem("reading_goals", refresh, _lc),
+                Config.makeLabelPlacementItem("reading_goals", refresh, _lc),
                                             },
         },
         {

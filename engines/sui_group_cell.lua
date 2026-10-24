@@ -34,7 +34,10 @@
 --                              group, offered by the cover picker
 --   set_cover_text string?     label of the cover picker action
 --   extra_actions  function?   () -> { { text, sui_icon?, callback }, ... } rows
---                              added to the long-press sheet
+--                              added to the long-press sheet, drawn with a chevron.
+--                              The sheet stays open when a row is tapped and is
+--                              passed to `callback`, which shows a page on it or
+--                              closes it.
 --
 -- Public API
 -- ----------
@@ -66,6 +69,7 @@ local _               = require("infra/sui_i18n").translate
 local Config         = require("infra/sui_config")
 local SUISettings    = require("infra/sui_store")
 local UI             = require("infra/sui_core")
+local Chrome         = require("features/sui_module_chrome")
 local SUIStyle       = require("features/sui_style")
 local CoverOverrides = require("features/library/sui_cover_overrides")
 local CoverWidgets   = require("features/library/sui_cover_widgets")
@@ -167,8 +171,9 @@ function GroupCell.makeSettings(opts)
     function s.badgePosition(pfx) return read(pfx, "badge_position", "top") end
     function s.setBadgePosition(pfx, v) write(pfx, "badge_position", v) end
 
-    -- "dark": black background and white text; "light": the opposite.
-    function s.badgeColor(pfx) return read(pfx, "badge_color", "dark") end
+    -- "dark": black background and white text; "light": the opposite;
+    -- "accent" (default) / "secondary": the palette colour (see SUIStyle.badgeColors).
+    function s.badgeColor(pfx) return SUIStyle.badgeChoice(read(pfx, "badge_color", "accent"), "accent") end
     function s.setBadgeColor(pfx, v) write(pfx, "badge_color", v) end
 
     function s.badgeScalePct(pfx) return Config.getScalePctByKey(keyFor(pfx, "badge_scale")) end
@@ -297,11 +302,8 @@ function GroupCell.makeMenuItems(ctx_menu, settings)
         refresh = refresh,
     })
     Config.appendRadioItems(badge_items, {
-        options = {
-            { value = "dark",  label = _lc("Dark") },
-            { value = "light", label = _lc("Light") },
-        },
-        get     = function() return settings.badgeColor(pfx) end,
+        options = SUIStyle.badgeColorOptions(_lc),
+        get     = function() return SUIStyle.badgeChoiceShown(settings.badgeColor(pfx)) end,
         set     = function(v) settings.setBadgeColor(pfx, v) end,
         refresh = refresh,
     })
@@ -439,9 +441,7 @@ local function wrapBackingAndBadge(content, count, d, settings, pfx, label)
 
     if settings.badgeHidden(pfx) then return group end
 
-    local dark     = settings.badgeColor(pfx) == "dark"
-    local bg_color = dark and SUIStyle.COLOR.text_primary or SUIStyle.COLOR.surface
-    local fg_color = dark and SUIStyle.COLOR.surface or SUIStyle.COLOR.text_primary
+    local bg_color, fg_color = SUIStyle.badgeColors(settings.badgeColor(pfx))
 
     local badge_text = UI.makeColoredText{
         text    = tostring(math.min(count, 99)),
@@ -573,13 +573,17 @@ end
 local function showGroupDialog(group, style, owner_id, ctx)
     local ActionSheet = require("engines/sui_action_sheet")
 
+    local sheet
     local items = {}
     if style == STYLE_SINGLE and group.cover_key and group.books then
         items[#items + 1] = {
-            text     = group.set_cover_text or _("Set cover"),
-            sui_icon = "cover",
-            callback = function()
+            text      = group.set_cover_text or _("Set cover"),
+            sui_icon  = "cover",
+            keep_open = true,
+            chevron   = true,
+            callback  = function()
                 GroupActions.openCoverPicker{
+                    parent        = sheet,
                     title         = string.format(_("Cover for \"%s\""), group.name),
                     override_key  = group.cover_key,
                     items         = group.books(),
@@ -590,7 +594,13 @@ local function showGroupDialog(group, style, owner_id, ctx)
         }
     end
     for _i, action in ipairs(group.extra_actions and group.extra_actions() or {}) do
-        items[#items + 1] = { text = action.text, sui_icon = action.sui_icon, callback = action.callback }
+        items[#items + 1] = {
+            text      = action.text,
+            sui_icon  = action.sui_icon,
+            keep_open = true,
+            chevron   = true,
+            callback  = function() action.callback(sheet) end,
+        }
     end
     items[#items + 1] = {
         text     = _("Open Module Settings"),
@@ -600,10 +610,11 @@ local function showGroupDialog(group, style, owner_id, ctx)
         end,
     }
 
-    ActionSheet.show{
+    sheet = ActionSheet.show{
         name       = "sui_win_group_actions",
         title      = group.name,
         icon       = "folder",
+        flow       = true,
         auto_close = true,
         sections   = { ActionSheet.list(items) },
     }
@@ -611,7 +622,8 @@ end
 
 -- Wraps `content` in a widget reacting to tap and, when the owner module
 -- opens a dialog on long press, to hold. The tap event id is one of the
--- gestures the navigation bar overrides.
+-- gestures the navigation bar overrides. With ctx.kbStops it is also a D-pad
+-- focus stop.
 local function makeTappable(content, group, style, owner_id, ctx, cell_w, cell_h)
     local tappable = InputContainer:new{
         dimen = Geom:new{ w = cell_w, h = cell_h },
@@ -624,6 +636,7 @@ local function makeTappable(content, group, style, owner_id, ctx, cell_w, cell_h
         group.open()
         return true
     end
+    if ctx.kbStops then UI.makeFocusable(tappable, tappable.onTapColl) end
 
     if Config.getCoverHoldMode(owner_id, ctx.pfx) == "book_dialog" then
         tappable.ges_events.HoldColl = { GestureRange:new{ ges = "hold", range = range } }
@@ -684,7 +697,7 @@ function GroupCell.new(opts)
                 text                   = group.name,
                 face                   = label_face,
                 bold                   = label_bold,
-                fgcolor                = UI.CLR_TEXT_SUB,
+                fgcolor                = (ctx.ink or Chrome.PLAIN_INK).sub,
                 max_width              = d.cover_w,
                 truncate_with_ellipsis = true,
                 alignment              = "center",

@@ -203,7 +203,9 @@ function SimpleUIPlugin:init()
                         ), 6)
                 end)
             end
-            SUISettings:set("simpleui_loaded_version", current_version)
+            if prev_version ~= current_version then
+                SUISettings:set("simpleui_loaded_version", current_version)
+            end
         end
 
         -- -------------------------------------------------------------------
@@ -236,12 +238,12 @@ function SimpleUIPlugin:init()
 
                 if plugin_root then
                     -- Copy files from src/ to dst/ (never overwrite existing).
-                    local function copyDirContents(src, dst)
-                        if lfs.attributes(src, "mode") ~= "directory" then return end
-                        for fname in lfs.dir(src) do
+                    local function copyDirContents(from_dir, to_dir)
+                        if lfs.attributes(from_dir, "mode") ~= "directory" then return end
+                        for fname in lfs.dir(from_dir) do
                             if fname ~= "." and fname ~= ".." then
-                                local src_f = src .. "/" .. fname
-                                local dst_f = dst .. "/" .. fname
+                                local src_f = from_dir .. "/" .. fname
+                                local dst_f = to_dir .. "/" .. fname
                                 if lfs.attributes(src_f, "mode") == "file"
                                     and lfs.attributes(dst_f, "mode") ~= "file" then
                                     ffiutil.copyFile(src_f, dst_f)
@@ -934,6 +936,35 @@ function SimpleUIPlugin:init()
         end
         -- -------------------------------------------------------------------
 
+        -- Settings migration v12:
+        -- Library badge settings move to the cover elements registry: the
+        -- combined visibility/variant enums split into `show` + variant and
+        -- the keys gain the "simpleui_style_badge_" prefix.
+        if not SUISettings:isTrue("simpleui_settings_migrated_v12") then
+            pcall(function()
+                require("features/sui_cover_elements").migrateLegacyBadges()
+            end)
+            SUISettings:set("simpleui_settings_migrated_v12", true)
+            SUISettings:flush()
+        end
+        -- -------------------------------------------------------------------
+
+        -- Settings migration v13:
+        -- Folder cover settings move to the cover elements registry (the name
+        -- visibility enums merge into `show`, the stack's `hide` becomes
+        -- `show`) and the library caption flags to the captions keys.
+        if not SUISettings:isTrue("simpleui_settings_migrated_v13") then
+            pcall(function()
+                require("features/sui_cover_elements").migrateLegacyFolder()
+            end)
+            pcall(function()
+                require("features/library/sui_foldercovers").migrateLegacyCaptions()
+            end)
+            SUISettings:set("simpleui_settings_migrated_v13", true)
+            SUISettings:flush()
+        end
+        -- -------------------------------------------------------------------
+
         Config.applyFirstRunDefaults()
         Config.migrateOldCustomSlots()
         -- Always run sanitizeQASlots: it cleans both custom QA slot references
@@ -1016,7 +1047,7 @@ function SimpleUIPlugin:init()
 
         if SUISettings:nilOrTrue("simpleui_enabled") then
             Patches.installAll(self)
-            
+
             pcall(function() QSBar.install() end)
             -- Register the TBR button in the Library hold dialog (single book).
             -- addFileDialogButtons is the official KOReader API for this.
@@ -1482,6 +1513,10 @@ function SimpleUIPlugin:onTeardown()
         self._topbar_timer = nil
     end
     Patches.teardownAll(self)
+    -- Hand the UI font slots back to the system font before the module cache
+    -- is cleared.
+    local style = package.loaded["features/sui_style"]
+    if style and style.restoreUIFont then pcall(style.restoreUIFont) end
     pcall(function() QSBar.uninstall() end)
     I18n.uninstall()
     -- Give modules with internal caches and scheduled work a chance to
@@ -1598,6 +1633,9 @@ end
 
 function SimpleUIPlugin:onSuspend()
     self._simpleui_suspended = true
+    self._suspended_at = os.time()
+    -- Windows opened over a screen do not outlive the suspend.
+    pcall(function() require("engines/sui_window").closeAll() end)
     -- Snapshot whether the reader was open at the moment of suspend.
     -- We cannot rely on RUI.instance being intact by the time onResume fires
     -- (e.g. autosuspend can race with a reader teardown on some Kobo builds),
@@ -1620,6 +1658,12 @@ end
 
 function SimpleUIPlugin:onResume()
     self._simpleui_suspended = false
+    -- Time asleep is not reading time.
+    local session = self._critter_session
+    if session and self._suspended_at then
+        session.paused = (session.paused or 0) + math.max(0, os.time() - self._suspended_at)
+    end
+    self._suspended_at = nil
     if SUISettings:nilOrTrue("simpleui_topbar_enabled") then
         -- Small delay to let the wakeup transition finish before refreshing
         -- the topbar. Avoids a race with ScreenWidget:onResume() and
@@ -1696,7 +1740,26 @@ function SimpleUIPlugin:onResume()
     end
 end
 
+-- Reading session of a book that is being reloaded, handed to the reader that replaces it.
+local _carried_session
+
 function SimpleUIPlugin:onReaderReady()
+    -- Start of the reading session, which the critter reacts to when the book closes;
+    -- a reload of the same book continues the session it interrupted.
+    local doc_settings = self.ui and self.ui.doc_settings
+    local book_summary = doc_settings and doc_settings:readSetting("summary")
+    local file = self.ui and self.ui.document and self.ui.document.file
+    local carried = _carried_session
+    _carried_session = nil
+    if carried and file and carried.file == file then
+        self._critter_session = carried
+    else
+        self._critter_session = {
+            at = os.time(), file = file, paused = 0,
+            status = book_summary and book_summary.status or nil,
+        }
+    end
+
     -- Warm the sidecar cache for the opened book from the reader's own
     -- in-memory settings, so that onCloseDocument has access to its
     -- pre-session summary state even if the file browser didn't scan it
@@ -1719,6 +1782,31 @@ function SimpleUIPlugin:onReaderReady()
     })
 end
 
+-- Makes the critter react to what the reading session that ends now left behind:
+-- a book finished and the session itself, and notes the session for the day's
+-- challenge. Does nothing without a session.
+function SimpleUIPlugin:_recordCritterReactions()
+    local session = self._critter_session
+    self._critter_session = nil
+    local doc_settings = self.ui and self.ui.doc_settings
+    if not (session and doc_settings) then return end
+    local summary = doc_settings:readSetting("summary")
+    local props = doc_settings:readSetting("doc_props")
+    local ok, err = pcall(function()
+        local Reactions = require("modules/critter/reactions")
+        for _i, reaction in ipairs(Reactions.closeReactions(
+                session, summary and summary.status, props and props.title, os.time())) do
+            Reactions.record(reaction.kind, reaction.data)
+        end
+        -- A session started in time may meet a deadline challenge.
+        local Challenge = require("modules/critter/challenge")
+        local state = Challenge.read()
+        local updated = Challenge.sessionStarted(state, session.at)
+        if updated ~= state then Challenge.write(updated) end
+    end)
+    if not ok then logger.warn("simpleui: critter reactions failed: " .. tostring(err)) end
+end
+
 function SimpleUIPlugin:onCloseDocument()
     -- Consume _closing_via_gesture unconditionally before any early return,
     -- so the flag never leaks to a subsequent close if this handler bails out
@@ -1738,9 +1826,16 @@ function SimpleUIPlugin:onCloseDocument()
     local is_reload = self._suppress_closing_notice
     self._suppress_closing_notice = nil
 
+    if is_reload then
+        _carried_session = self._critter_session
+    end
     if self._simpleui_suspended then return end
+    if not is_reload then self:_recordCritterReactions() end
     local ScreenEngine = package.loaded["engines/sui_screen_engine"]
     if not ScreenEngine then return end
+
+    local Perf = require("infra/sui_perf")
+    if not is_reload then Perf.begin("onCloseDocument") end
 
     -- Filepath of the book that just closed. readhistory.hist[1] is still the
     -- closing book at this point (the reader has not yet handed control back
@@ -1760,7 +1855,6 @@ function SimpleUIPlugin:onCloseDocument()
     -- silently falls through to the ordinary text notice further down.
     local cover_shown = false
     if not is_reload then
-        local Patches = package.loaded["infra/sui_patches"]
         if Patches and Patches.CoverTransition and Patches.CoverTransition.isCloseEnabled() then
             local orig_show = WindowHooks.origShow()
             local live_doc  = self.ui and self.ui.document
@@ -1870,10 +1964,8 @@ function SimpleUIPlugin:onCloseDocument()
     -- once per screen here, then reused by every block below instead of each
     -- block re-deciding activity against a single hardcoded pfx.
     local mod_rg   = Registry.get("reading_goals")
-    local mod_rs   = Registry.get("reading_stats")
     local mod_cr   = Registry.get("currently")
     local mod_cd   = Registry.get("coverdeck")
-    local all_mods = Registry.list()
 
     local stats_active_for     = {}
     local currently_active_for = {}
@@ -1886,15 +1978,7 @@ function SimpleUIPlugin:onCloseDocument()
         local pfx = ScreenEngine.getPfx(id)
 
         local s_active = (mod_rg and Registry.isEnabled(mod_rg, pfx))
-            or (mod_rs and mod_rs.isEnabled and mod_rs.isEnabled(pfx))
-        if not s_active then
-            for _, mod in ipairs(all_mods) do
-                if mod.needs and mod.needs.stats and Registry.isEnabled(mod, pfx) then
-                    s_active = true
-                    break
-                end
-            end
-        end
+            or Registry.wantsData(pfx, "stats")
         stats_active_for[id] = s_active
         any_stats_active = any_stats_active or s_active
 
@@ -2081,6 +2165,7 @@ function SimpleUIPlugin:onCloseDocument()
         end
     end
 
+    Perf.mark("onCloseDocument invalidation done")
     if not any_needs_refresh then return end
 
     -- Invalidate the sidecar mtime-cache entry for the closed book once, if

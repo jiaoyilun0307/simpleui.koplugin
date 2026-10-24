@@ -7,7 +7,9 @@
 --               0    transparent — nothing is painted
 --               1–99 scrim — the tone blended over what is already there
 --               100  solid
---   tone      "white" or "gray": the colour of the fill
+--   tone      "white" or "gray": the colour of the fill; "accent" or
+--             "secondary" on the surfaces whose content follows the fill (see
+--             SURFACE_DEFAULT)
 --   frame     whether a border is drawn around the surface
 --
 -- This module provides:
@@ -18,7 +20,8 @@
 --   * the painters: paintBackdrop (anti-aliased fill), paintFrame
 --     (anti-aliased border), paintSurface (a resolved box surface) and
 --     paintBar (a resolved full-width bar);
---   * BackdropFill, a background-layer widget built on the painters.
+--   * BackdropFill, a background-layer widget built on the painters;
+--   * RoundedFrame, a container with an anti-aliased fill and border.
 --
 -- It knows nothing about the wallpaper itself. Deciding whether a backdrop
 -- applies (for instance, only while a wallpaper is active) is left to callers.
@@ -27,8 +30,10 @@ local Device      = require("device")
 local Screen      = Device.screen
 local Geom        = require("ui/geometry")
 local Widget      = require("ui/widget/widget")
+local WidgetContainer = require("ui/widget/container/widgetcontainer")
 local AA          = require("infra/sui_aa_paint")
 local SUISettings = require("infra/sui_store")
+local Accent      = require("infra/sui_accent")
 local translate   = require("infra/sui_i18n").translate
 
 local M = {}
@@ -81,14 +86,16 @@ end
 -- Tones
 -- ---------------------------------------------------------------------------
 
-M.TONE = { WHITE = "white", GRAY = "gray" }
+M.TONE = { WHITE = "white", GRAY = "gray", ACCENT = "accent", SECONDARY = "secondary" }
 M.TONE_IDS = { M.TONE.WHITE, M.TONE.GRAY }
 local WHITE, GRAY = M.TONE.WHITE, M.TONE.GRAY
 
--- Colour token of each tone in the style catalogue.
-local TONE_TOKEN = { [WHITE] = "surface", [GRAY] = "surface_flat" }
+-- Colour token of each plain tone in the style catalogue. The accent and
+-- secondary tones have no token: their colour is the user's palette colour (see
+-- _look).
+local TONE_TOKEN = { [WHITE] = "surface", [GRAY] = "surface_gray" }
 
--- Fill colour of a tone; white for an unknown tone.
+-- Fill colour of a plain tone; white for any other tone.
 function M.toneColor(tone)
     return _style().COLOR[TONE_TOKEN[tone] or TONE_TOKEN[WHITE]]
 end
@@ -97,29 +104,41 @@ end
 -- Surfaces
 -- ---------------------------------------------------------------------------
 
--- Semantic defaults of every kind of surface, as { strength, tone, frame }.
--- Bars keep the solid look of a plain UI; the navigation bar starts with its
--- frame on (a rule along its top edge, or a border while floating). Cards,
--- buttons, the cover strip and tab bars start solid; modules start
--- transparent over the wallpaper.
+-- Semantic defaults of every kind of surface, as { strength, tone, frame,
+-- tinted }. Bars keep the solid look of a plain UI; the navigation bar starts
+-- with its frame on (a rule along its top edge, or a border while floating).
+-- Cards, buttons, the cover strip and tab bars start solid; modules start
+-- transparent over the wallpaper. `tinted` marks the kinds whose content takes
+-- the text colour of the fill (see `foreground` in M.resolve), so only those
+-- can be given the accent or secondary tone.
 M.SURFACE_DEFAULT = {
-    statusbar      = { strength = 100, tone = WHITE, frame = false },
-    navbar         = { strength = 100, tone = WHITE, frame = true  },
-    pagination     = { strength = 100, tone = WHITE, frame = false },
-    titlebar       = { strength = 100, tone = WHITE, frame = false },
-    module         = { strength = 0,   tone = WHITE, frame = false },
-    tab_bar        = { strength = 100, tone = WHITE, frame = true  },
-    cover_strip    = { strength = 100, tone = WHITE, frame = false },
+    statusbar      = { strength = 100, tone = WHITE, frame = false, tinted = true },
+    navbar         = { strength = 100, tone = WHITE, frame = true,  tinted = true },
+    pagination     = { strength = 100, tone = WHITE, frame = false, tinted = true },
+    titlebar       = { strength = 100, tone = WHITE, frame = false, tinted = true },
+    module         = { strength = 0,   tone = WHITE, frame = false, tinted = true },
+    tab_bar        = { strength = 100, tone = WHITE, frame = true,  tinted = true },
+    cover_strip    = { strength = 100, tone = WHITE, frame = false, tinted = true },
     folder_label   = { strength = 75,  tone = WHITE, frame = false },
-    card           = { strength = 100, tone = WHITE, frame = true  },
-    button         = { strength = 100, tone = WHITE, frame = true  },
-    quick_settings = { strength = 100, tone = GRAY,  frame = false },
+    card           = { strength = 100, tone = WHITE, frame = true,  tinted = true },
+    button         = { strength = 100, tone = WHITE, frame = true,  tinted = true },
+    quick_settings = { strength = 100, tone = GRAY,  frame = false, tinted = true },
 }
+
+-- Whether a surface can take a palette tone (accent or secondary).
+function M.supportsTint(surface)
+    return surface.defaults.tinted == true
+end
 
 -- Describes a surface of `kind` (a SURFACE_DEFAULT entry). Its settings live
 -- under `key`: <key>_tone, <key>_show_frame and, unless `strength_key` names
 -- another setting, <key>_backdrop.
+-- Tone settings of surfaces whose default tone is gray, collected as the
+-- surfaces are created (see M.adoptSecondary).
+local _gray_default_keys = {}
+
 function M.surface(kind, key, strength_key)
+    if M.SURFACE_DEFAULT[kind].tone == GRAY then _gray_default_keys[key .. "_tone"] = true end
     return {
         defaults = M.SURFACE_DEFAULT[kind],
         keys = {
@@ -138,13 +157,52 @@ function M.saveStrength(surface, n)
     return M.saveBackdropStrength(surface.keys.strength, n)
 end
 
+-- Whether `tone` is one the surface accepts.
+local function _validTone(surface, tone)
+    return TONE_TOKEN[tone] ~= nil or (_style().isPaletteChoice(tone) and M.supportsTint(surface))
+end
+
+-- Stored tone, or the surface's default when none is stored, it is unknown, or
+-- it is a palette colour that is not on screen. The stored choice is kept, so it
+-- applies again once that colour is set.
 function M.readTone(surface)
     local stored = SUISettings:readSetting(surface.keys.tone)
-    return TONE_TOKEN[stored] and stored or surface.defaults.tone
+    if _validTone(surface, stored)
+        and (TONE_TOKEN[stored] or _style().paletteChoiceAvailable(stored)) then
+        return stored
+    end
+    return surface.defaults.tone
 end
 
 function M.saveTone(surface, tone)
-    if TONE_TOKEN[tone] then SUISettings:saveSetting(surface.keys.tone, tone) end
+    if _validTone(surface, tone) then SUISettings:saveSetting(surface.keys.tone, tone) end
+end
+
+-- Whether any surface stores `tone`: tells whether a change of that colour
+-- has surfaces to redraw.
+function M.usesTone(tone)
+    for key, value in SUISettings:iterateKeys() do
+        if value == tone and type(key) == "string" and key:sub(-5) == "_tone" then return true end
+    end
+    return false
+end
+
+-- Moves every surface showing the gray tone, stored or by default, to the
+-- secondary tone, and returns whether any moved. Run when the accent is first
+-- set, so the surfaces take the new soft tone; the gray stays a choice.
+function M.adoptSecondary()
+    local keys = {}
+    for key in pairs(_gray_default_keys) do
+        if SUISettings:get(key) == nil then keys[#keys + 1] = key end
+    end
+    for key, value in SUISettings:iterateKeys() do
+        if value == GRAY and type(key) == "string"
+            and (key:sub(-5) == "_tone" or key:sub(-11) == "_tab_active") then
+            keys[#keys + 1] = key
+        end
+    end
+    for _, key in ipairs(keys) do SUISettings:saveSetting(key, M.TONE.SECONDARY) end
+    return #keys > 0
 end
 
 function M.readFrame(surface)
@@ -157,17 +215,58 @@ function M.saveFrame(surface, on)
     SUISettings:saveSetting(surface.keys.frame, on and true or false)
 end
 
--- Look of a surface: { strength, tone, color, frame, border_sz }, with
--- border_sz 0 while the frame is off. Painters take it as it is and never
--- choose colours.
+-- Look of a surface: { strength, tone, color, foreground, frame, border_sz },
+-- with border_sz 0 while the frame is off. Painters take it as it is and never
+-- choose colours. A palette tone (accent or secondary) gives its colour as
+-- `color` and the text colour that reads on it, at this strength, as
+-- `foreground`; `tone` is one that is on screen (see M.readTone). Both follow the
+-- palette and night mode at the time of the call, so a look is resolved again
+-- whenever they change.
 local function _look(strength, tone, frame)
+    local style = _style()
+    local tinted = style.resolveColor(tone)
     return {
-        strength  = strength,
-        tone      = tone,
-        color     = M.toneColor(tone),
-        frame     = frame,
-        border_sz = frame and _style().BORDER_SZ or 0,
+        strength   = strength,
+        tone       = tone,
+        color      = tinted or M.toneColor(tone),
+        foreground = tinted and strength > STRENGTH_MIN and style.resolveForeground(tone, strength) or nil,
+        frame      = frame,
+        border_sz  = frame and _style().BORDER_SZ or 0,
     }
+end
+
+-- Primary and inactive colours of content drawn on a resolved surface. Over a
+-- tinted fill they follow its `foreground` (a light inactive colour under light
+-- text); otherwise they are the plain UI colours. `dim` replaces the plain
+-- UI's inactive colour.
+function M.contentColors(surface, dim)
+    local COLOR = _style().COLOR
+    dim = dim or COLOR.text_dim
+    local foreground = surface.foreground
+    if not foreground then return COLOR.text_primary, dim end
+    return foreground, foreground == COLOR.text_primary and dim or COLOR.text_dim_inverse
+end
+
+-- Accent colour for marks drawn on a resolved surface: the accent where it stands
+-- out from a tinted fill (any plain fill takes it), else nil. nil too while no
+-- accent is on screen.
+function M.accentOn(surface)
+    local accent = Accent.color()
+    if accent and surface.foreground and not Accent.contrastsWith(surface.color, surface.strength) then
+        return nil
+    end
+    return accent
+end
+
+-- Palette colour `choice` ("accent" | "secondary") for text drawn on a resolved
+-- surface: the colour where it stands out from the surface's fill, else nil.
+-- The accent is kept whenever the fill does not tint (see M.accentOn); the
+-- secondary, a soft tone, must always contrast with the fill.
+function M.paletteOn(surface, choice)
+    if choice == "accent" then return M.accentOn(surface) end
+    local color = _style().resolveColor(choice)
+    if color and Accent.contrastsWith(surface.color, surface.strength, color) then return color end
+    return nil
 end
 
 -- Look of a described surface (see M.surface). `strength` replaces the stored
@@ -362,6 +461,72 @@ function M.BackdropFill:paintTo(bb, x, y)
     local w, h = self.width, self.height
     if w <= 0 or h <= 0 then return end
     M.paintSurface(bb, x, y, w, h, self.surface or self, self.radius)
+end
+
+-- Container that draws an anti-aliased rounded frame around its content. It
+-- takes the layout fields of FrameContainer and is a drop-in for it wherever
+-- the frame has rounded corners: the native container draws them without
+-- anti-aliasing.
+--   margin                   space outside the border (default 0)
+--   bordersize               border thickness (default 0: none)
+--   color                    border colour (default: black)
+--   background               fill colour (default: none)
+--   radius                   corner radius (default 0)
+--   padding                  space between border and content (default 0)
+--   padding_top/_bottom/_left/_right   override `padding` per side
+--   width, height            fixed outer size; the content is not centred
+--   invert                   paints the frame with its colours inverted
+-- Sets `dimen` to the painted area, like FrameContainer.
+M.RoundedFrame = WidgetContainer:extend{
+    margin     = 0,
+    bordersize = 0,
+    padding    = 0,
+    radius     = 0,
+    color      = nil,
+    background = nil,
+    width      = nil,
+    height     = nil,
+}
+
+-- Distance from the outer edge to the content on each side.
+function M.RoundedFrame:_insets()
+    local inset = self.margin + self.bordersize
+    return inset + (self.padding_left   or self.padding),
+           inset + (self.padding_top    or self.padding),
+           inset + (self.padding_right  or self.padding),
+           inset + (self.padding_bottom or self.padding)
+end
+
+function M.RoundedFrame:getSize()
+    local left, top, right, bottom = self:_insets()
+    local content = self[1]:getSize()
+    return Geom:new{
+        w = self.width  or (content.w + left + right),
+        h = self.height or (content.h + top + bottom),
+    }
+end
+
+function M.RoundedFrame:paintTo(bb, x, y)
+    x, y = math.floor(x), math.floor(y)
+    local size = self:getSize()
+    self.dimen = Geom:new{ x = x, y = y, w = size.w, h = size.h }
+
+    local style = _style()
+    M.paintSurface(bb,
+        x + self.margin, y + self.margin,
+        size.w - 2 * self.margin, size.h - 2 * self.margin,
+        {
+            strength     = self.background and STRENGTH_MAX or STRENGTH_MIN,
+            color        = self.background,
+            border_sz    = self.bordersize,
+            border_color = self.color or style.COLOR.text_primary,
+        },
+        self.radius)
+
+    local left, top = self:_insets()
+    self[1]:paintTo(bb, x + left, y + top)
+
+    if self.invert then bb:invertRect(x, y, size.w, size.h) end
 end
 
 return M

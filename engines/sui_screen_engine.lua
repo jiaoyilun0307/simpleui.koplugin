@@ -23,7 +23,6 @@
 -- it, not wrapping it — see that file's header) for every existing
 -- require("screens/sui_homescreen") elsewhere in the codebase.
 
-local Blitbuffer       = require("ffi/blitbuffer")
 local BD               = require("ui/bidi")
 local BottomContainer  = require("ui/widget/container/bottomcontainer")
 local Button           = require("ui/widget/button")
@@ -45,10 +44,11 @@ local VerticalGroup    = require("ui/widget/verticalgroup")
 local VerticalSpan     = require("ui/widget/verticalspan")
 local logger           = require("logger")
 local _                = require("infra/sui_i18n").translate
-local N_               = require("infra/sui_i18n").ngettext
 local T                = require("ffi/util").template
 local Config           = require("infra/sui_config")
+local Bento            = require("infra/sui_bento")
 local Memory           = require("infra/sui_memory")
+local Perf             = require("infra/sui_perf")
 local Registry         = require("modules/moduleregistry")
 local SUISettings = require("infra/sui_store")
 local Event            = require("ui/event")
@@ -57,7 +57,6 @@ local UI               = require("infra/sui_core")
 local Bottombar        = require("screens/sui_bottombar")
 local SUIStyle         = require("features/sui_style")
 local SectionLabel     = require("engines/sui_section_label")
-local ImageWidget      = require("ui/widget/imagewidget")
 local lfs              = require("libs/libkoreader-lfs")
 local VirtualPaths     = require("infra/sui_virtual_paths")
 local SUIWallpaper     = require("features/sui_wallpaper")
@@ -125,10 +124,6 @@ local MOD_GAP            = UI.MOD_GAP
 
 -- Static color defaults.
 
-local function _getTextMid()
-    return SUIStyle.COLOR.text_dim
-end
-
 local function _getDotInactive()
     return SUIStyle.COLOR.text_dim
 end
@@ -156,8 +151,7 @@ end
 -- Pill behind the dots, in the surface of the pagination bar (tone, opacity and
 -- frame), so the dots stay legible over a wallpaper. Each end cap is centred on
 -- the first or last dot.
-function DotWidget:_paintPill(bb, x, y)
-    local surface = SUIWallpaper.resolveBar("pagination")
+function DotWidget:_paintPill(bb, x, y, surface)
     if surface.strength <= 0 and surface.border_sz <= 0 then return end
     local pill_x = x + math.floor((self.touch_w - self.pill_h) / 2)
     local pill_y = y + math.floor((self.bar_h - self.pill_h) / 2)
@@ -166,16 +160,19 @@ function DotWidget:_paintPill(bb, x, y)
 end
 
 function DotWidget:paintTo(bb, x, y)
-    self:_paintPill(bb, x, y)
+    local surface = SUIWallpaper.resolveBar("pagination")
+    self:_paintPill(bb, x, y, surface)
+    local active, inactive = Backdrop.contentColors(surface, _getDotInactive())
+    active = Backdrop.accentOn(surface) or active
     local dot_r = math.floor(self.dot_size / 2)
     local cy    = y + math.floor(self.bar_h / 2)
     local tw    = self.touch_w
     for i = 1, self.total_pages do
         local cx = x + (i - 1) * tw + math.floor(tw / 2)
         if i == self.current_page then
-            bb:paintCircle(cx, cy, dot_r, SUIStyle.COLOR.text_primary)
+            bb:paintCircle(cx, cy, dot_r, active)
         else
-            bb:paintCircle(cx, cy, dot_r, _getDotInactive())
+            bb:paintCircle(cx, cy, dot_r, inactive)
         end
     end
 end
@@ -257,7 +254,6 @@ end
 -- Pre-computed empty-state pixel constants (computed once at load time).
 -- ---------------------------------------------------------------------------
 local _EMPTY_H        = Screen:scaleBySize(80)
-local _EMPTY_TITLE_H  = Screen:scaleBySize(30)
 local _EMPTY_GAP        = Screen:scaleBySize(12)
 local _face_empty_title = Font:getFace(SUIStyle.FACE_REGULAR,    SUIStyle.FS_TITLE)     -- FS_TITLE (22)
 local _face_empty_sub   = Font:getFace(SUIStyle.FACE_REGULAR,  SUIStyle.FS_SUBTITLE)  -- FS_SUBTITLE (20)
@@ -281,7 +277,7 @@ local function buildEmptyState(w, h)
                 UI.makeColoredText{
                     text    = _("Open a book to get started"),
                     face    = _face_empty_sub,  -- x_smallinfofont: 20pt
-                    fgcolor = _getTextMid(),
+                    fgcolor = SUIStyle.COLOR.text_primary,
                 },
             },
         },
@@ -586,12 +582,12 @@ local function openBook(filepath, pos0, page)
         end
     end
     if G_reader_settings:isTrue("file_ask_to_open") then
-        local ConfirmBox = require("ui/widget/confirmbox")
-        UIManager:show(ConfirmBox:new{
+        local Dialogs = require("features/dialogs/sui_dialogs")
+        Dialogs.confirm{
             text = _("Open this file?") .. "\n\n" .. BD.filename(filepath:match("([^/]+)$")),
             ok_text = _("Open"),
             ok_callback = doOpen,
-        })
+        }
     else
         doOpen()
     end
@@ -936,9 +932,9 @@ function ScreenWidget:init()
     self._vspan_pool         = {}
     self._wrapper_pool       = {}
     self._book_mod_refresh_n = {}  -- mod_id -> count of "ui" (non-flashing) refreshes since the last "flashui"; see _refreshBookModSlot
-    self._kb_focus_idx       = nil
-    self._kb_first_rec_idx   = nil
-    self._kb_book_items_fp   = nil
+    self._kb_rows            = {}
+    self._kb_row_by_key      = {}
+    self._kb_stop            = nil
     self._db_conn            = nil
     self._cover_poll_timer   = nil
     self._cover_mod_slots    = nil
@@ -1265,82 +1261,151 @@ end
 -- Physical D-pad navigation (Kindle and similar devices)
 -- ---------------------------------------------------------------------------
 
--- Moves keyboard focus off the screen into the navbar. `restore_idx` is the
--- book focus re-applied when focus returns from the navbar.
-function ScreenWidget:_focusNavbar(restore_idx)
-    self._kb_focus_idx = nil
-    self:_refresh(true)
+-- Focus rows, top to bottom: the rows of stops that modules register through
+-- ctx.kbStops (a tab strip, a row of quick actions, the cells of a grid row,
+-- a page indicator, ...). Inside a row, Left/Right move between its stops and
+-- Press runs the stop's action; Up/Down move to the row above or below, at the
+-- same column when it has one.
+
+-- Sets the row `key` to `stops`, a list of { id, widget } from left to right
+-- whose widgets come from UI.makeFocusable. The row is replaced when it
+-- exists (a module rebuilt on its own), else added after the others. A row
+-- with no stops keeps its place and is skipped by the navigation, so a module
+-- can reserve its position ahead of the rows it fills in later. The stop that
+-- holds the focus is framed; when its id is gone the focus moves to the stop
+-- at the same position.
+function ScreenWidget:_kbSetRow(key, stops)
+    local row = self._kb_row_by_key[key]
+    if row then
+        row.stops = stops
+    else
+        row = { key = key, stops = stops }
+        self._kb_rows[#self._kb_rows + 1] = row
+        self._kb_row_by_key[key] = row
+    end
+    local focus = self._kb_stop
+    if not (focus and focus.key == key) then return end
+    local col
+    for i, stop in ipairs(stops) do
+        if stop.id == focus.id then col = i; break end
+    end
+    col = col or math.min(focus.col, #stops)
+    if col < 1 then
+        self._kb_stop = nil
+        return
+    end
+    focus.id, focus.col = stops[col].id, col
+    stops[col].widget._kb_focused = true
+end
+
+-- Returns the row and the stop that hold the stop focus; nil when none does.
+function ScreenWidget:_kbFocusedStop()
+    local focus = self._kb_stop
+    local row   = focus and self._kb_row_by_key[focus.key]
+    local stop  = row and row.stops[focus.col]
+    if not stop then
+        self._kb_stop = nil
+        return nil
+    end
+    return row, stop
+end
+
+-- Lists the rows that have stops, top to bottom.
+function ScreenWidget:_kbActiveRows()
+    local rows = {}
+    for _i, row in ipairs(self._kb_rows) do
+        if #row.stops > 0 then rows[#rows + 1] = row end
+    end
+    return rows
+end
+
+-- Index in `rows` of the row that holds the focus; nil when none does.
+function ScreenWidget:_kbRowIndex(rows)
+    local row = self:_kbFocusedStop()
+    for i, candidate in ipairs(rows) do
+        if candidate == row then return i end
+    end
+end
+
+-- Moves the stop focus to column `col` of `row`, repainting only the two
+-- stops involved.
+function ScreenWidget:_kbSetStop(row, col)
+    local _, old = self:_kbFocusedStop()
+    local new = row.stops[col]
+    if old then old.widget:handleEvent(Event:new("Unfocus")) end
+    self._kb_stop = { key = row.key, id = new.id, col = col }
+    new.widget:handleEvent(Event:new("Focus"))
+    if old then UIManager:setDirty(self, "ui", old.widget.dimen) end
+    UIManager:setDirty(self, "ui", new.widget.dimen)
+end
+
+-- Moves the focus into `row`, at column `col` (clamped).
+function ScreenWidget:_kbEnterRow(row, col)
+    self:_kbSetStop(row, math.min(col or 1, #row.stops))
+    return true
+end
+
+-- Drops the stop focus, repainting the stop that held it.
+function ScreenWidget:_kbClearStop()
+    local _, stop = self:_kbFocusedStop()
+    self._kb_stop = nil
+    if not stop then return end
+    stop.widget:handleEvent(Event:new("Unfocus"))
+    UIManager:setDirty(self, "ui", stop.widget.dimen)
+end
+
+-- Moves keyboard focus off the screen into the navbar. `restore_stop` is the
+-- stop focus re-applied when focus returns from the navbar.
+function ScreenWidget:_focusNavbar(restore_stop)
+    self:_kbClearStop()
     require("infra/sui_patches").enterNavbarKbFocus(function()
-        self._kb_focus_idx = restore_idx
-        self:_refresh(true)
+        local row = restore_stop and self._kb_row_by_key[restore_stop.key]
+        if row and row.stops[restore_stop.col] then self:_kbSetStop(row, restore_stop.col) end
     end)
     return true
 end
 
 function ScreenWidget:onScreenFocusUp()
-    local books = self._kb_book_items_fp
-    if not books or #books == 0 then return end
-    local frec = self._kb_first_rec_idx
-    if self._kb_focus_idx == nil then
-        self._kb_focus_idx = frec or 1
-    elseif frec and self._kb_focus_idx >= frec then
-        self._kb_focus_idx = 1
-    else
-        self._kb_focus_idx = frec or 1
-    end
-    self:_refresh(true)
+    local rows = self:_kbActiveRows()
+    if #rows == 0 then return end
+    local cur = self:_kbRowIndex(rows)
+    if not cur then return self:_kbEnterRow(rows[#rows], 1) end
+    if cur > 1 then self:_kbEnterRow(rows[cur - 1], self._kb_stop.col) end
     return true
 end
 
 function ScreenWidget:onScreenFocusDown()
-    local frec = self._kb_first_rec_idx
-    if frec and self._kb_focus_idx and self._kb_focus_idx >= frec then
-        return self:_focusNavbar(frec)
+    local rows = self:_kbActiveRows()
+    local cur  = self:_kbRowIndex(rows)
+    if not cur then
+        if #rows == 0 then return self:_focusNavbar() end
+        return self:_kbEnterRow(rows[1], 1)
     end
-    if self._kb_focus_idx == nil then
-        self._kb_focus_idx = 1
-    elseif frec then
-        self._kb_focus_idx = frec
-    else
-        return self:_focusNavbar(1)
-    end
-    self:_refresh(true)
+    if rows[cur + 1] then return self:_kbEnterRow(rows[cur + 1], self._kb_stop.col) end
+    return self:_focusNavbar(self._kb_stop)
+end
+
+-- Moves the focus `step` stops along its row; stays at either end.
+function ScreenWidget:_kbMoveStop(step)
+    local row = self:_kbFocusedStop()
+    if not row then return end
+    local col = self._kb_stop.col + step
+    if row.stops[col] then self:_kbSetStop(row, col) end
     return true
 end
 
 function ScreenWidget:onScreenFocusLeft()
-    local frec = self._kb_first_rec_idx
-    if not frec or not self._kb_focus_idx then return end
-    if self._kb_focus_idx < frec then return end
-    if self._kb_focus_idx > frec then
-        self._kb_focus_idx = self._kb_focus_idx - 1
-        self:_refresh(true)
-    end
-    return true
+    return self:_kbMoveStop(-1)
 end
 
 function ScreenWidget:onScreenFocusRight()
-    local frec  = self._kb_first_rec_idx
-    local books = self._kb_book_items_fp
-    if not frec or not self._kb_focus_idx or not books then return end
-    if self._kb_focus_idx < frec then return end
-    if self._kb_focus_idx < #books then
-        self._kb_focus_idx = self._kb_focus_idx + 1
-        self:_refresh(true)
-    end
-    return true
+    return self:_kbMoveStop(1)
 end
 
 function ScreenWidget:onScreenKbPress()
-    if self._kb_focus_idx == nil then return end
-    local books = self._kb_book_items_fp
-    if not books then return end
-    local fp = books[self._kb_focus_idx]
-    if fp then
-        self._kb_focus_idx = nil
-        local open_fn = self._ctx_cache and self._ctx_cache.open_fn
-        if open_fn then open_fn(fp) end
-    end
+    local _, stop = self:_kbFocusedStop()
+    if not stop then return end
+    stop.widget:onTapSelect()
     return true
 end
 
@@ -1395,7 +1460,6 @@ end
 -- ---------------------------------------------------------------------------
 function ScreenWidget:_initLayout()
     local sw        = Screen:getWidth()
-    local sh        = Screen:getHeight()
     -- Defensive fallback: UI.getContentHeight() (infra/sui_core.lua) is the
     -- same bar-aware value UI.applyNavbarState() would set into
     -- self._navbar_content_h during navbar injection. Using it here instead
@@ -1540,8 +1604,6 @@ end
 -- _buildCtx — constructs the module build context for the current render.
 -- ---------------------------------------------------------------------------
 function ScreenWidget:_buildCtx()
-    local inner_w = self._layout_inner_w or UI.getInnerW()
-
     -- Provisional; _updatePage() overwrites it with the column-width-derived
     -- factor before modules build. 1 in portrait.
     local landscape_factor = UI.isLandscape() and UI.getLandscapeFactor() or 1
@@ -1560,6 +1622,7 @@ function ScreenWidget:_buildCtx()
                 lbl_scale   = Config.getItemLabelScale("currently", self._pfx),
                 bar_style   = SUISettings:readSetting(self._pfx .. "currently_bar_style"),
                 stats_style = SUISettings:readSetting(self._pfx .. "currently_stats_style"),
+                stats_icon  = SUISettings:nilOrTrue(self._pfx .. "currently_stats_icon"),
                 layout      = SUISettings:readSetting(self._pfx .. "currently_layout") == "dynamic" and "dynamic" or "default",
                 main_order  = SUISettings:readSetting(self._pfx .. "currently_main_order"),
                 stats_order = SUISettings:readSetting(self._pfx .. "currently_stats_order"),
@@ -1633,25 +1696,12 @@ function ScreenWidget:_buildCtx()
 
     local bs          = self._cached_books_state
     local mod_rg      = Registry.get("reading_goals")
-    local mod_rs      = Registry.get("reading_stats")
-    local wants_stats = (mod_rg and Registry.isEnabled(mod_rg, self._pfx))
-        or (mod_rs and mod_rs.isEnabled and mod_rs.isEnabled(self._pfx))
+    local rg_active   = mod_rg and Registry.isEnabled(mod_rg, self._pfx)
 
-    -- Scan external modules that declare M.needs = { db=true, stats=true, books=true }.
-    -- Built-ins have their requirements encoded in the explicit checks below; this
-    -- loop only fires for modules not in the MODULES list (zero cost when no
-    -- external modules are registered).
-    local ext_needs_db    = false
-    local ext_needs_stats = false
-    local ext_needs_books = false
-    for _, mod in ipairs(Registry.list()) do
-        if mod.needs and Registry.isEnabled(mod, self._pfx) then
-            if mod.needs.db    then ext_needs_db    = true end
-            if mod.needs.stats then ext_needs_stats = true end
-            if mod.needs.books then ext_needs_books = true end
-        end
-    end
-    if ext_needs_stats then wants_stats = true end
+    -- Data the enabled modules ask for through M.needs (every instance of a
+    -- module counts), see Registry.wantsData.
+    local needs_db    = Registry.wantsData(self._pfx, "db")
+    local wants_stats = rg_active or Registry.wantsData(self._pfx, "stats")
 
     -- Determine whether the coverdeck needs DB access (i.e. at least one stat
     -- beyond "percent" is visible).  "percent" comes from prefetched metadata
@@ -1667,7 +1717,7 @@ function ScreenWidget:_buildCtx()
 
     -- "currently" always needs the DB when active (all its stats are DB-backed).
     -- The "recent" module shows no DB-backed stats, so it is excluded.
-    local wants_db = show_c or coverdeck_needs_db or wants_stats or ext_needs_db
+    local wants_db = show_c or coverdeck_needs_db or wants_stats or needs_db
 
     if wants_db and not self._db_conn and not self._defer_stats then
         -- openStatsDB returns nil while a Statistics cloud sync is in progress.
@@ -1675,32 +1725,30 @@ function ScreenWidget:_buildCtx()
     end
 
     -- Pre-fetch numeric stats via the shared provider (a few window-bounded queries).
-    -- needs_books: true only when reading_goals is active, OR reading_stats is
-    -- active and "total_books" is among the selected stat items.  When false,
-    -- SP.get() skips the sidecar scan (up to 200 DS.open calls) entirely.
-    -- External modules that declare M.needs.books = true also trigger this.
-    local needs_books = ext_needs_books
-    if mod_rg and Registry.isEnabled(mod_rg, self._pfx) then
-        needs_books = true
-    elseif mod_rs and mod_rs.isEnabled and mod_rs.isEnabled(self._pfx) then
-        -- mod_rs.getItems(self._pfx) applies the same default { "total_books",
-        -- "today_time", "streak" } fallback module_reading_stats itself uses
-        -- when the user has never customized their stat cards, so the check
-        -- below reflects the cards actually rendered rather than the raw
-        -- "reading_stats_items" setting (nil/{} on a fresh install).
-        local rs_items = mod_rs.getItems and mod_rs.getItems(self._pfx) or {}
-        for _, id in ipairs(rs_items) do
-            if id == "total_books" then needs_books = true; break end
-        end
-    end
+    -- needs_books: true only when reading_goals is active or a module asks for
+    -- the finished-books ledger (e.g. a Reading Stats instance with the
+    -- "total_books" stat on its first page).  When false, SP.get() skips the
+    -- sidecar scan (up to 200 DS.open calls) entirely.
+    local needs_books = rg_active or Registry.wantsData(self._pfx, "books")
 
     -- Status counts (unread/reading/finished/abandoned across the whole
     -- library) are a separate, more expensive walk than needs_books above
     -- (sui_library_scan + one sidecar read per book not already cached), so
-    -- they get their own gate — only computed when reading_stats actually
-    -- has a status_* card selected, same "don't pay for what isn't shown"
-    -- principle as needs_books.
-    local needs_status = mod_rs and mod_rs.usesStatusCounts and mod_rs.usesStatusCounts(self._pfx)
+    -- they get their own gate — only computed when a module asks for them,
+    -- same "don't pay for what isn't shown" principle as needs_books.
+    local needs_status = Registry.wantsData(self._pfx, "status")
+
+    -- Reading-session records (longest/average session, pages per hour,
+    -- session count) come from one on-demand query, gated the same way.
+    local needs_records = Registry.wantsData(self._pfx, "records")
+
+    -- Year data (seconds read per month): one more on-demand query, gated the
+    -- same way.
+    local needs_year = Registry.wantsData(self._pfx, "year")
+
+    -- Chart data (this week per day, reading per hour of the day): one more
+    -- on-demand query, gated the same way.
+    local needs_charts = Registry.wantsData(self._pfx, "charts")
 
     -- Compute once here; reused by SP.get and stored in ctx so the async
     -- refresh tick (scheduleIn 50ms) does not need a second os.date call.
@@ -1732,6 +1780,26 @@ function ScreenWidget:_buildCtx()
     if needs_status and not self._defer_stats then
         local SP = _getStatsProvider()
         if SP and SP.getStatusCounts then status_counts = SP.getStatusCounts() end
+    end
+
+    -- Session records: DB-backed, so skipped on a deferred render as well; the
+    -- async refresh tick fills them in.
+    local session_records = nil
+    if needs_records and not self._defer_stats then
+        local SP = _getStatsProvider()
+        if SP and SP.getSessionRecords then session_records = SP.getSessionRecords(self._db_conn) end
+    end
+
+    local year_data = nil
+    if needs_year and not self._defer_stats then
+        local SP = _getStatsProvider()
+        if SP and SP.getYearData then year_data = SP.getYearData(self._db_conn) end
+    end
+
+    local stat_charts = nil
+    if needs_charts and not self._defer_stats then
+        local SP = _getStatsProvider()
+        if SP and SP.getChartData then stat_charts = SP.getChartData(self._db_conn) end
     end
 
     -- Pre-compute coverdeck book stats for the current centre cover so
@@ -1781,6 +1849,9 @@ function ScreenWidget:_buildCtx()
     return {
         _needs_books           = needs_books,
         _needs_status           = needs_status,
+        _needs_records         = needs_records,
+        _needs_year            = needs_year,
+        _needs_charts          = needs_charts,
         year_str               = year_str,   -- cached once per render; re-used by async tick
         landscape_factor       = landscape_factor,
         pfx                    = self._pfx,
@@ -1789,16 +1860,22 @@ function ScreenWidget:_buildCtx()
         open_fn                = function(fp, pos0, page) openBook(fp, pos0, page) end,
         hold_fn                = function(fp, mod_id) self_ref:_showBookHoldDialog(fp, mod_id) end,
         refresh_fn             = function() self_ref:_refreshImmediate(true) end,
+        dirty_region_fn        = function(dimen) UIManager:setDirty(self_ref, function() return "ui", dimen end) end,
         open_settings_fn       = function(mod_id)
             local m = mod_id and Registry.get(mod_id)
             if m then self_ref:_openModuleSettingsFor(m) end
         end,
         on_qa_tap              = function(aid) if self_ref._on_qa_tap then self_ref._on_qa_tap(aid) end end,
         on_goal_tap            = function() if self_ref._on_goal_tap then self_ref._on_goal_tap() end end,
+        kbStops                = Device:hasDPad() and function(key, stops) self_ref:_kbSetRow(key, stops) end or nil,
         db_conn                = wants_db and self._db_conn or nil,
         db_conn_fatal          = false,
         stats                  = stats_data,
+        stats_stale            = self._defer_stats == true,
         status_counts           = status_counts,
+        session_records        = session_records,
+        year_data              = year_data,
+        stat_charts            = stat_charts,
         coverdeck_center_stats = coverdeck_center_stats,
         currently_book_stats   = currently_book_stats,
         vspan_pool             = self._vspan_pool,
@@ -1981,15 +2058,56 @@ function ScreenWidget:_openModuleSettingsFor(mod)
             return mod.name or mod.id
         end
 
-        local win = SUIWindow:new{
+        -- The layout sheet only applies to a module placed on a page.
+        local Layout = require("infra/sui_layout")
+        local placed = Layout.findPage(Layout.load(self._pfx, self._layout_key), mod.id) ~= nil
+
+        local win
+        win = SUIWindow:new{
             name           = "sui_win_context",
             title          = titleFn,
             screens        = SUIWindow.makeSettingsScreens(buildRoot),
             navpager_mode  = Config.isNavpagerEnabled(),
             position       = "bottom",
             has_settings_btn = true,
+            left_btn       = placed and {
+                glyph  = SUIStyle.icon("layout"),
+                label  = function()
+                    local span = Config.getBentoSpan(mod.id, self._pfx)
+                    return span == Bento.FULL and _("Full Width") or Config.bentoSpanLabel(span)
+                end,
+                on_tap = function(ctx)
+                    screen:_openBentoSheet(mod, function() win:close() end, ctx.repaint)
+                end,
+            } or nil,
         }
         win:show()
+end
+
+-- ---------------------------------------------------------------------------
+-- _openBentoSheet — shows the layout sheet of a module (width and position in
+-- the bento grid). Changes are saved and repainted as they are made;
+-- close_window closes the window the sheet was opened from, once the module
+-- has been removed from its page or the page editor takes over; on_changed
+-- runs after every saved change.
+-- ---------------------------------------------------------------------------
+function ScreenWidget:_openBentoSheet(mod, close_window, on_changed)
+    local pfx = self._pfx
+    require("features/dialogs/sui_bento_sheet").show{
+        mod_id     = mod.id,
+        pfx        = pfx,
+        on_removed = close_window,
+        on_changed = on_changed,
+        rows       = {
+            {
+                text = _("Edit Home Screen page"), sui_icon = "edit", chevron = true,
+                callback = function()
+                    if close_window then close_window() end
+                    require("screens/sui_settings_window"):showPageEditor(pfx, mod.id)
+                end,
+            },
+        },
+    }
 end
 
 -- ---------------------------------------------------------------------------
@@ -2014,10 +2132,14 @@ end
 -- in-place on subsequent page turns (zero new allocations).
 -- ---------------------------------------------------------------------------
 -- Returns the chrome-wrapped widget to mount and the module's own widget as
--- returned by mod.build() (the one per-module updaters operate on). On a build
--- error returns nil plus the error message. A module with `owns_chrome` is
--- built at the full column width and mounted as it is: it draws its own boxes.
-function ScreenWidget:_buildModWidget(mod, col_w, ctx)
+-- returned by mod.build() (the one per-module updaters operate on) and whether
+-- the section label sits inside the box (see Config.isLabelOutside); the
+-- caller then must not add it above. On a build error returns nil plus the
+-- error message. `ctx.ink` carries the content colours over the module fill
+-- (see ModuleChrome.ink). A module with `owns_chrome` is built at the full
+-- column width and mounted as it is: it draws its own boxes. `min_h` is the
+-- least height of the box (the row's tallest column, see _pack_bento).
+function ScreenWidget:_buildModWidget(mod, col_w, ctx, min_h)
     local ModuleChrome = require("features/sui_module_chrome")
     local chrome, build_w
     if mod.owns_chrome then
@@ -2033,7 +2155,10 @@ function ScreenWidget:_buildModWidget(mod, col_w, ctx)
     -- background.
     if ctx then
         ctx.col_w      = col_w
+        ctx.grow_h     = self._grow_h and self._grow_h[mod.id]
         ctx.text_alpha = ctx.has_wallpaper or (chrome ~= nil and ModuleChrome.hasFill(chrome))
+        ctx.ink        = chrome and ModuleChrome.ink(chrome) or nil
+        ctx.palette    = ModuleChrome.palette(chrome)
     end
     local ok_w, widget = pcall(mod.build, build_w, ctx)
     if not ok_w then
@@ -2041,7 +2166,32 @@ function ScreenWidget:_buildModWidget(mod, col_w, ctx)
     end
     if not widget then return nil end
     if not chrome then return widget, widget end
-    return ModuleChrome.wrap(widget, chrome, col_w, (ctx and ctx.landscape_factor) or 1), widget
+
+    -- The label joins the box content only when a fill or frame is drawn;
+    -- without one the two placements look the same.
+    local content, label_inside = widget, false
+    if ctx and ModuleChrome.hasChrome(chrome) and not Config.isLabelOutside(mod.id) then
+        local inside = {
+            ink     = chrome.foreground and ctx.ink or nil,
+            palette = ModuleChrome.palette(chrome),
+        }
+        local label  = self:_labelFor(mod, build_w, ctx, inside)
+        if label then
+            content = VerticalGroup:new{ align = "left", label, widget }
+            label_inside = true
+            if mod.is_book_mod and self._book_mod_label_slots then
+                self._book_mod_label_slots[mod.id] = {
+                    parent = content,
+                    index  = 1,
+                    mod    = mod,
+                    col_w  = build_w,
+                    inside = inside,
+                }
+            end
+        end
+    end
+    return ModuleChrome.wrap(content, chrome, col_w, (ctx and ctx.landscape_factor) or 1, widget, min_h),
+        widget, label_inside
 end
 
 function ScreenWidget:_makeModWrapper(mod, widget, inner_w)
@@ -2125,12 +2275,12 @@ function ScreenWidget:_updatePage(keep_cache, books_only, stats_only)
     -- Module list cache — rebuilt whenever layout changes.
     local layout = SUISettings:readSetting(self._layout_key)
     local raw_order = Registry.loadOrder(self._pfx)
-    
+
     local layout_fingerprint = ""
     local pages_by_id = {}
-    
-    -- Column widths come from per-module settings (bento grid), not the layout.
-    local mod_col_width = {}
+
+    -- Column spans come from per-module settings (bento grid), not the layout.
+    local mod_col_span = {}
     if layout and type(layout.pages) == "table" then
         for _, page in ipairs(layout.pages) do
             local page_ids = {}
@@ -2147,9 +2297,9 @@ function ScreenWidget:_updatePage(keep_cache, books_only, stats_only)
                 end
                 if mod_id then
                     table.insert(page_ids, mod_id)
-                    local bw = Config.getBentoWidth(mod_id, self._pfx)
-                    mod_col_width[mod_id] = bw
-                    layout_fingerprint = layout_fingerprint .. mod_id .. ":" .. tostring(bw) .. ","
+                    local span = Config.getBentoSpan(mod_id, self._pfx)
+                    mod_col_span[mod_id] = span
+                    layout_fingerprint = layout_fingerprint .. mod_id .. ":" .. tostring(span) .. ","
                 end
             end
             layout_fingerprint = layout_fingerprint .. "|"
@@ -2159,9 +2309,9 @@ function ScreenWidget:_updatePage(keep_cache, books_only, stats_only)
         pages_by_id = splitOrderIntoPages(raw_order)
         for _, mod_id in ipairs(raw_order) do
             if mod_id ~= "__page_break__" then
-                local bw = Config.getBentoWidth(mod_id, self._pfx)
-                mod_col_width[mod_id] = bw
-                layout_fingerprint = layout_fingerprint .. mod_id .. ":" .. tostring(bw) .. ","
+                local span = Config.getBentoSpan(mod_id, self._pfx)
+                mod_col_span[mod_id] = span
+                layout_fingerprint = layout_fingerprint .. mod_id .. ":" .. tostring(span) .. ","
             else
                 layout_fingerprint = layout_fingerprint .. "|"
             end
@@ -2240,7 +2390,6 @@ function ScreenWidget:_updatePage(keep_cache, books_only, stats_only)
             layout_fingerprint = layout_fingerprint,
         }
     end
-    local enabled_mods  = self._enabled_mods_cache.mods
     local has_book_mod  = self._enabled_mods_cache.has_book_mod
     local total_pages   = self._enabled_mods_cache.total_pages
     local mod_gaps      = self._enabled_mods_cache.mod_gaps
@@ -2264,6 +2413,8 @@ function ScreenWidget:_updatePage(keep_cache, books_only, stats_only)
     body:clear()
 
     self._clock_body_idx    = nil
+    self._clock_min_h       = nil
+    self._grow_h            = {}
     self._clock_live        = nil
     self._clock_body_ref    = body
     self._stats_mod_slots   = {}
@@ -2281,51 +2432,32 @@ function ScreenWidget:_updatePage(keep_cache, books_only, stats_only)
         Config._cover_extract_pending = {}
     end
 
-    -- Rebuild keyboard navigation book index.
-    local _kb_books = {}
-    self._kb_first_rec_idx = nil
-    ctx.kb_currently_focused = nil
-    ctx.kb_recent_focus_idx  = nil
-    if ctx.current_fp then
-        _kb_books[#_kb_books + 1] = ctx.current_fp
-        ctx.kb_currently_focused = (self._kb_focus_idx == #_kb_books) or nil
-    end
-    if ctx.recent_fps and #ctx.recent_fps > 0 then
-        local first_rec_idx = #_kb_books + 1
-        self._kb_first_rec_idx = first_rec_idx
-        for ri = 1, #ctx.recent_fps do
-            _kb_books[#_kb_books + 1] = ctx.recent_fps[ri]
-        end
-        if self._kb_focus_idx and self._kb_focus_idx >= first_rec_idx
-                and self._kb_focus_idx <= #_kb_books then
-            ctx.kb_recent_focus_idx = self._kb_focus_idx - first_rec_idx + 1
-        end
-    end
-    self._kb_book_items_fp = _kb_books
+    -- The modules register their rows of focus stops again as they build.
+    self._kb_rows       = {}
+    self._kb_row_by_key = {}
 
     local cur_page_mods  = pages_of_mods[self._current_page] or {}
     local first_mod      = true
     local page_has_covers = false
 
-    -- Bento packing (portrait and landscape):
-    --   • width < 100% → column of that share of the row
-    --   • consecutive modules whose widths fit (sum ≤ 100) sit side by side
-    --   • when a module no longer fits horizontally, it stacks into an
-    --     existing column that has the same width (same % only); otherwise
-    --     a new row starts
-    --   • 100% (default) always takes a full-width row of its own
-    --   • rows whose columns sum to < 100% are centred in the container
+    -- Bento packing (portrait and landscape), see infra/sui_bento:
+    --   • a module takes 1/3, 1/2, 2/3 or the full width of the row
+    --   • consecutive modules whose spans fit in a row sit side by side
+    --   • a full-width module always takes a row of its own
+    --   • rows that do not fill the container are centred in it
     -- In landscape the same rules apply inside each spread column.
     do
-        -- Shared horizontal gap: bento columns and landscape page split.
+        -- Horizontal gap of the landscape page split.
         local H_COL_GAP = 1
-        mod_col_width = mod_col_width or {}
 
         -- Builds label + hold-wrapper cell. Slot registration happens in
         -- _register_cell once the cell's real parent is known.
         local function _emit_mod(mod, col_w)
             if mod.has_covers then page_has_covers = true end
-            local widget, content = self:_buildModWidget(mod, col_w, ctx)
+            -- The page chevrons of the label come before the rows of the
+            -- module, but need the page count its build sets.
+            if mod.is_book_mod and ctx.kbStops then ctx.kbStops(mod.id .. ":label", {}) end
+            local widget, content, label_inside = self:_buildModWidget(mod, col_w, ctx)
             if not widget then
                 if content then
                     logger.warn("simpleui: screen (" .. tostring(self._id) .. "): build failed for "
@@ -2335,7 +2467,7 @@ function ScreenWidget:_updatePage(keep_cache, books_only, stats_only)
             end
 
             local cell = VerticalGroup:new{ align = "left" }
-            local label = self:_labelFor(mod, col_w, ctx)
+            local label = not label_inside and self:_labelFor(mod, col_w, ctx)
             if label then
                 cell[#cell+1] = label
                 if mod.is_book_mod then
@@ -2395,122 +2527,130 @@ function ScreenWidget:_updatePage(keep_cache, books_only, stats_only)
         end
 
         -- Packs mods into parent_body. container_w is the full available
-        -- width for a 100% module. first is a one-element table cleared once
-        -- a row has been placed.
+        -- width for a full-width module. first is a one-element table cleared
+        -- once a row has been placed.
         local function _pack_bento(mods, parent_body, container_w, first)
-            local function _flush_row(row_cols)
-                if not row_cols or #row_cols == 0 then return end
-                local lead_mod = row_cols[1].mods[1]
-                local gap_px = mod_gaps[lead_mod.id] or MOD_GAP
+            local ids, by_id = {}, {}
+            for i, mod in ipairs(mods) do
+                ids[i] = mod.id
+                by_id[mod.id] = mod
+            end
+
+            -- Boxes of a row sit GUTTER apart. Every column keeps its own
+            -- lateral inset (ModuleChrome.outerMargin), but the empty insets
+            -- of neighbouring columns overlap, so the full inset only shows at
+            -- the ends of the row.
+            local ModuleChrome = require("features/sui_module_chrome")
+            local inset  = ModuleChrome.outerMargin()
+            local gutter = ModuleChrome.GUTTER
+            local mirrored = BD.mirroredUILayout()
+
+            local function _flush_row(row)
+                local n = #row.ids
+                local gap_px = mod_gaps[row.ids[1]] or MOD_GAP
                 first[1] = false
                 parent_body[#parent_body+1] = self:_vspan(gap_px)
 
-                local n = #row_cols
-                local gaps_w = (n - 1) * H_COL_GAP
-                local avail = math.max(1, container_w - gaps_w)
-
-                local sum_pct = 0
-                for _, col in ipairs(row_cols) do sum_pct = sum_pct + col.width end
-
-                local target = {}
+                -- Box widths in sixths of the row; the last box takes the
+                -- rounding remainder.
+                local boxes_w = math.max(1, container_w - 2 * inset - (n - 1) * gutter)
+                local box = {}
                 local allocated = 0
-                for i, col in ipairs(row_cols) do
+                for i, id in ipairs(row.ids) do
                     if i == n then
-                        local row_pixels = math.max(1, math.floor(avail * sum_pct / 100))
-                        target[i] = math.max(1, row_pixels - allocated)
+                        local row_pixels = math.max(1, math.floor(boxes_w * row.sum / Bento.ROW))
+                        box[i] = math.max(1, row_pixels - allocated)
                     else
-                        target[i] = math.max(1, math.floor(avail * col.width / 100))
-                        allocated = allocated + target[i]
+                        box[i] = math.max(1, math.floor(boxes_w * (mod_col_span[id] or Bento.FULL) / Bento.ROW))
+                        allocated = allocated + box[i]
                     end
                 end
 
-                -- Build columns first so shorter ones can be vertically
-                -- centred against the tallest column in the row.
+                -- A row that does not fill the container is centred in it.
+                local row_w = (n - 1) * gutter
+                for i = 1, n do row_w = row_w + box[i] end
+                local x = math.max(0, math.floor((container_w - 2 * inset - row_w) / 2))
+
+                -- Build columns first: the box of every shorter column is
+                -- then stretched to the tallest one (see ModuleChrome.stretch);
+                -- a column without a box is centred against it.
                 local built = {}
                 local max_h = 0
-                for i, col in ipairs(row_cols) do
-                    local slot_w = target[i]
+                for i, id in ipairs(row.ids) do
+                    local slot_w = box[i] + 2 * inset
                     local v_col = VerticalGroup:new{ align = "left" }
-                    for mi, mod in ipairs(col.mods) do
-                        if mi > 1 then
-                            v_col[#v_col+1] = self:_vspan(mod_gaps[mod.id] or MOD_GAP)
-                        end
-                        local cell = _emit_mod(mod, slot_w)
-                        if cell then
-                            _register_cell(cell)
-                            v_col[#v_col+1] = cell
-                        end
+                    local cell = _emit_mod(by_id[id], slot_w)
+                    local wrapped
+                    if cell then
+                        wrapped = cell._sui_widget
+                        _register_cell(cell)
+                        v_col[#v_col+1] = cell
                     end
                     local col_h = v_col:getSize().h
                     if col_h > max_h then max_h = col_h end
-                    built[#built+1] = { v_col = v_col, slot_w = slot_w, col_h = col_h }
+                    built[#built+1] = {
+                        v_col = v_col, cell = cell, wrapped = wrapped, id = id,
+                        slot_w = slot_w, col_h = col_h, x = x,
+                    }
+                    x = x + box[i] + gutter
                 end
 
-                local h_row = HorizontalGroup:new{ align = "center" }
-                for i, b in ipairs(built) do
+                for _, b in ipairs(built) do
+                    -- A module that can use the row's extra height is built
+                    -- again with it.
+                    local mod = by_id[b.id]
+                    if b.wrapped and b.col_h < max_h and mod.fills_row_height then
+                        self._grow_h[b.id] = max_h - b.col_h
+                        local cell = _emit_mod(mod, b.slot_w)
+                        if cell then
+                            local v_col = VerticalGroup:new{ align = "left", cell }
+                            b.wrapped, b.cell, b.v_col = cell._sui_widget, cell, v_col
+                            _register_cell(cell)
+                            b.col_h = v_col:getSize().h
+                        end
+                    end
+                    if b.wrapped and b.col_h < max_h then
+                        local wrapper = b.cell[#b.cell]
+                        local box_h = ModuleChrome.stretch(b.wrapped, b.wrapped:getSize().h + max_h - b.col_h)
+                        if box_h then
+                            wrapper.dimen.h = box_h
+                            b.cell:resetLayout()
+                            b.v_col:resetLayout()
+                            b.col_h = b.v_col:getSize().h
+                            local book_slot = self._book_mod_slots[b.id]
+                            if book_slot then book_slot.min_h = box_h end
+                            if b.id == "clock" then self._clock_min_h = box_h end
+                        end
+                    end
+                end
+
+                -- Offsets are mirrored here rather than by the group, which
+                -- rewrites them on every paint.
+                local row_group = OverlapGroup:new{
+                    dimen           = Geom:new{ w = container_w, h = max_h },
+                    allow_mirroring = false,
+                }
+                for _, b in ipairs(built) do
                     -- Stretch every column to max_h and centre its content.
                     -- LeftContainer pins the slot width so a narrow child does
                     -- not shrink the column.
-                    h_row[#h_row+1] = CenterContainer:new{
+                    local col = CenterContainer:new{
                         dimen = Geom:new{ w = b.slot_w, h = max_h },
                         LeftContainer:new{
                             dimen = Geom:new{ w = b.slot_w, h = b.col_h },
                             b.v_col,
                         },
                     }
-                    if i < n then
-                        h_row[#h_row+1] = HorizontalSpan:new{ width = H_COL_GAP }
-                    end
+                    local off = mirrored and (container_w - b.slot_w - b.x) or b.x
+                    col.overlap_offset = { off, 0 }
+                    row_group[#row_group+1] = col
                 end
-
-                -- Centre when the row does not consume the full container.
-                local content_w = gaps_w
-                for i = 1, n do content_w = content_w + target[i] end
-                local leftover = container_w - content_w
-                if leftover > 1 then
-                    local left_pad = math.floor(leftover / 2)
-                    parent_body[#parent_body+1] = HorizontalGroup:new{
-                        align = "center",
-                        HorizontalSpan:new{ width = left_pad },
-                        h_row,
-                        HorizontalSpan:new{ width = leftover - left_pad },
-                    }
-                else
-                    parent_body[#parent_body+1] = h_row
-                end
+                parent_body[#parent_body+1] = row_group
             end
 
-            local row_cols = {}
-            local row_sum = 0
-            for _, mod in ipairs(mods) do
-                -- Width already clamped by Config.getBentoWidth.
-                local w = mod_col_width[mod.id] or 100
-
-                if w >= 100 then
-                    _flush_row(row_cols)
-                    row_cols, row_sum = {}, 0
-                    _flush_row({ { width = 100, mods = { mod } } })
-                elseif row_sum + w <= 100 then
-                    row_cols[#row_cols+1] = { width = w, mods = { mod } }
-                    row_sum = row_sum + w
-                else
-                    -- Stack only onto a column with the same width %.
-                    local stacked = false
-                    for _, col in ipairs(row_cols) do
-                        if col.width == w then
-                            col.mods[#col.mods+1] = mod
-                            stacked = true
-                            break
-                        end
-                    end
-                    if not stacked then
-                        _flush_row(row_cols)
-                        row_cols = { { width = w, mods = { mod } } }
-                        row_sum = w
-                    end
-                end
+            for _, row in ipairs(Bento.pack(ids, mod_col_span)) do
+                _flush_row(row)
             end
-            _flush_row(row_cols)
         end
 
         if is_landscape then
@@ -2521,20 +2661,24 @@ function ScreenWidget:_updatePage(keep_cache, books_only, stats_only)
             self._clock_landscape_factor = _landscape_factor
 
             -- Spread: left = current page, right = next page.
-            -- Solo (odd total, last page): split this page's modules in half.
+            -- Solo (odd total, last page): split this page's bento rows in
+            -- half, so a row is never cut between the two columns.
             local right_page_mods = pages_of_mods[self._current_page + 1]
             local left_mods, right_mods
             if right_page_mods then
                 left_mods, right_mods = cur_page_mods, right_page_mods
             else
                 left_mods, right_mods = {}, {}
-                local split_at = math.ceil(#cur_page_mods / 2)
-                for i, mod in ipairs(cur_page_mods) do
-                    if i <= split_at then
-                        left_mods[#left_mods + 1] = mod
-                    else
-                        right_mods[#right_mods + 1] = mod
-                    end
+                local ids = {}
+                for i, mod in ipairs(cur_page_mods) do ids[i] = mod.id end
+                local row_of, rows = {}, Bento.pack(ids, mod_col_span)
+                for r, row in ipairs(rows) do
+                    for _, id in ipairs(row.ids) do row_of[id] = r end
+                end
+                local split_row = math.ceil(#rows / 2)
+                for _, mod in ipairs(cur_page_mods) do
+                    local side = (row_of[mod.id] <= split_row) and left_mods or right_mods
+                    side[#side + 1] = mod
                 end
             end
 
@@ -2710,9 +2854,11 @@ function ScreenWidget:_scheduleDataRefresh(stats_only)
         local books_fresh = self._books_fresh
         self._books_fresh = nil
 
+        Perf.mark("data refresh start")
         if not self._db_conn then
             self._db_conn = Config.openStatsDB()
         end
+        Perf.mark("data refresh: db opened")
 
         if self._ctx_cache then
             -- 1. Get new book metadata (prefetchBooks). Skipped when
@@ -2763,21 +2909,29 @@ function ScreenWidget:_scheduleDataRefresh(stats_only)
             -- exist. Cheap to check unconditionally: just an
             -- iteration over the small set of registered modules.
             do
+                -- Slots only exist for the modules of the displayed page(s)
+                -- (two in a landscape spread), so only those are checked.
                 local missing_slot = false
-                for _, mod in ipairs(Registry.list()) do
-                    if mod.is_book_mod
-                       and not self._book_mod_slots[mod.id]
-                       and Registry.isEnabled(mod, self._pfx) then
-                        missing_slot = true
-                        break
+                local pages = self._enabled_mods_cache and self._enabled_mods_cache.pages_of_mods or {}
+                local shown = { pages[self._current_page] }
+                if _isLandscape() then shown[2] = pages[self._current_page + 1] end
+                for _, page_mods in pairs(shown) do
+                    for _, mod in ipairs(page_mods) do
+                        if mod.is_book_mod and not self._book_mod_slots[mod.id] then
+                            missing_slot = mod.id
+                            break
+                        end
                     end
+                    if missing_slot then break end
                 end
                 if missing_slot then
+                    Perf.mark("screen data refresh: full rebuild, no slot for " .. missing_slot)
                     self:_updatePage(false)
                     UIManager:setDirty(self, "ui")
                 end
             end
 
+            Perf.mark("data refresh: books resolved")
             -- 2. Get new global stats
             local SP = _getStatsProvider()
             if SP then
@@ -2786,8 +2940,22 @@ function ScreenWidget:_scheduleDataRefresh(stats_only)
                 if self._ctx_cache._needs_status and SP.getStatusCounts then
                     self._ctx_cache.status_counts = SP.getStatusCounts()
                 end
+                Perf.mark("data refresh: status counts done")
+                if self._ctx_cache._needs_records and SP.getSessionRecords then
+                    self._ctx_cache.session_records = SP.getSessionRecords(self._db_conn)
+                end
+                Perf.mark("data refresh: session records done")
+                if self._ctx_cache._needs_year and SP.getYearData then
+                    self._ctx_cache.year_data = SP.getYearData(self._db_conn)
+                end
+                Perf.mark("data refresh: year data done")
+                if self._ctx_cache._needs_charts and SP.getChartData then
+                    self._ctx_cache.stat_charts = SP.getChartData(self._db_conn)
+                end
+                Perf.mark("data refresh: chart data done")
             end
 
+            Perf.mark("data refresh: global stats done")
             local MC = package.loaded["modules/module_currently"]
             if MC and MC.fetchBookStatsForCtx and self._ctx_cache.current_fp then
                 local pe = self._ctx_cache.prefetched and self._ctx_cache.prefetched[self._ctx_cache.current_fp]
@@ -2815,6 +2983,7 @@ function ScreenWidget:_scheduleDataRefresh(stats_only)
                 end
             end
 
+            Perf.mark("data refresh: book stats done")
             -- 3. Update Book Modules
             -- Try updateStats in-place first (O(1), zero alloc).
             -- Only rebuilds the full widget if the module doesn't have updateStats
@@ -2827,6 +2996,8 @@ function ScreenWidget:_scheduleDataRefresh(stats_only)
                         updated_in_place = ok and result
                     end
 
+                    Perf.mark("data refresh: book module " .. id
+                        .. (updated_in_place and " updated in place" or " rebuilt"))
                     if updated_in_place then
                         self:_setSlotDirty(id, slot)
                         -- An in-place update can shift npages without the
@@ -2844,16 +3015,24 @@ function ScreenWidget:_scheduleDataRefresh(stats_only)
                 end
             end
 
+            Perf.mark("data refresh: book modules done")
             -- 4. Update Stats Modules
             -- Each slot uses setDirty targeted at its own dimen,
             -- avoiding a global repaint of the entire screen.
             -- updateStats() returns false when _changed flags show none of the
             -- module's fields were re-fetched — skip setDirty entirely in that case.
             for id, slot in pairs(self._stats_mod_slots or {}) do
-                if slot.mod.updateStats(slot.content, self._ctx_cache) then
-                    self:_setSlotDirty(id, slot)
+                -- Book modules were already updated above, unless this pass is stats-only.
+                if pending_stats_only or not (self._book_mod_slots and self._book_mod_slots[id]) then
+                    local ok, changed = pcall(slot.mod.updateStats, slot.content, self._ctx_cache)
+                    if not ok then
+                        logger.warn("simpleui: updateStats failed for " .. tostring(id) .. ": " .. tostring(changed))
+                    elseif changed then
+                        self:_setSlotDirty(id, slot)
+                    end
                 end
             end
+            Perf.finish("screen data refresh done")
         end
     end)
 end
@@ -2977,15 +3156,19 @@ end
 -- the two. The widgets are cached per screen instance (self._label_cache):
 -- their chevrons call back into this instance, so they must not outlive it.
 -- ---------------------------------------------------------------------------
-function ScreenWidget:_labelFor(mod, col_w, ctx)
+-- `inside` is nil for a label above the module's box, or the descriptor of
+-- one inside it (see SectionLabel.get); `col_w` is the width the label spans.
+function ScreenWidget:_labelFor(mod, col_w, ctx, inside)
     local desc = SectionLabel.describe(mod, ctx)
     if not desc then return nil end
     self._label_cache = self._label_cache or {}
     self._turn_page_fn = self._turn_page_fn or function(mod_id, delta)
         return self:_turnBookModPage(mod_id, delta)
     end
-    return SectionLabel.get(self._label_cache, mod.id, desc, col_w,
-        ctx.landscape_factor, ctx.has_wallpaper, self._turn_page_fn)
+    local label, stops = SectionLabel.get(self._label_cache, mod.id, desc, col_w,
+        ctx.landscape_factor, self._turn_page_fn, ctx.kbStops ~= nil, inside)
+    if mod.is_book_mod and ctx.kbStops then ctx.kbStops(mod.id .. ":label", stops) end
+    return label
 end
 
 -- Surgical repaint of a paginated book module's section title: the "x/y"
@@ -3001,7 +3184,7 @@ function ScreenWidget:_syncBookModLabel(mod_id)
     local slot = self._book_mod_label_slots and self._book_mod_label_slots[mod_id]
     local ctx  = self._ctx_cache
     if not (slot and slot.parent and ctx) then return end
-    local new_label = self:_labelFor(slot.mod, slot.col_w, ctx)
+    local new_label = self:_labelFor(slot.mod, slot.col_w, ctx, slot.inside)
     if not new_label or new_label == slot.parent[slot.index] then return end
     slot.parent[slot.index] = new_label
     if new_label.dimen then
@@ -3016,7 +3199,7 @@ function ScreenWidget:_refreshBookModSlot(mod_id)
     local slot = self._book_mod_slots[mod_id]
     if not slot or not slot.mod or type(slot.mod.build) ~= "function" then return false end
 
-    local new_widget, new_content = self:_buildModWidget(slot.mod, slot.col_w, self._ctx_cache)
+    local new_widget, new_content = self:_buildModWidget(slot.mod, slot.col_w, self._ctx_cache, slot.min_h)
     if not new_widget then return false end
 
     if slot.has_menu then
@@ -3038,6 +3221,9 @@ function ScreenWidget:_refreshBookModSlot(mod_id)
         local rtype = self:_bookModRefreshType(mod_id)
         UIManager:setDirty(self, function() return rtype, new_widget.dimen, true end)
     end
+    -- The stats updater patches the widget now mounted, not the replaced one.
+    local stats_slot = self._stats_mod_slots and self._stats_mod_slots[mod_id]
+    if stats_slot then stats_slot.content = new_content end
     -- Point the cover-poll slot at the currently visible widget, so covers
     -- still pending extraction get swapped into it rather than into the old,
     -- now-orphaned widget. The poll drops a slot once its module is resolved,
@@ -3161,7 +3347,6 @@ function ScreenWidget:_scheduleCoverPoll()
             return
         end
 
-        local any_updated = false
         local any_pending = false
 
         for mod_id, slot in pairs(slots) do
@@ -3174,7 +3359,6 @@ function ScreenWidget:_scheduleCoverPoll()
                         UIManager:setDirty(self_ref, function()
                             return "ui", dimen, true
                         end)
-                        any_updated = true
                     end
                     if all_done then
                         slots[mod_id] = nil
@@ -3337,14 +3521,16 @@ function ScreenWidget:onShow()
         if need_async and not is_app_cold_boot then
             self._defer_stats = true
         end
-        
+
+        Perf.mark("screen onShow build start")
         self:_updatePage(true)
         UIManager:setDirty(self, "ui")
+        Perf.mark("screen first paint queued")
         local ClockMod = Registry.get("clock")
         if ClockMod and Registry.isEnabled(ClockMod, self._pfx) and ClockMod.scheduleRefresh then
             ClockMod.scheduleRefresh(self)
         end
-        
+
         if need_async and not is_app_cold_boot then
             self._defer_stats = false
             self:_scheduleDataRefresh(false)
@@ -3635,6 +3821,7 @@ function ScreenWidget:onCloseWidget()
     self:free()
 
     -- Header chevrons call back into this instance; drop them with it.
+    if self._label_cache then SectionLabel.release(self._label_cache) end
     self._label_cache  = nil
     self._turn_page_fn = nil
 
@@ -3683,9 +3870,9 @@ function ScreenWidget:onCloseWidget()
     self._layout_sw          = nil
     self._layout_content_h   = nil
     self._layout_inner_w     = nil
-    self._kb_book_items_fp   = nil
-    self._kb_focus_idx       = nil
-    self._kb_first_rec_idx   = nil
+    self._kb_rows            = {}
+    self._kb_row_by_key      = {}
+    self._kb_stop            = nil
     self._parked              = nil -- defensive: real close always ends any park
 
     local ClockMod = Registry.get("clock")
@@ -3701,12 +3888,6 @@ function ScreenWidget:onCloseWidget()
     -- Consumes the "file browser visited" marker; the series grouping module
     -- reads it to decide when to flush its folder cover lookups.
     ScreenEngine._library_was_visited = nil
-
-    -- Free header module quotes if the header is not in quote mode.
-    local ok_mh, MH = pcall(require, "modules/module_header")
-    if ok_mh and MH and type(MH.freeQuotesIfUnused) == "function" then
-        MH.freeQuotesIfUnused()
-    end
 
     -- The tree freed above leaves native buffers waiting for the GC; collect
     -- once the UI is idle so the reader/homescreen transition is not delayed.

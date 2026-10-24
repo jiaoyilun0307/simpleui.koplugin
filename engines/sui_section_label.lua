@@ -13,19 +13,22 @@
 -- Widgets reference nothing but the descriptor and the callbacks handed to
 -- M.get, so a cache owned by one screen instance never outlives the callbacks
 -- it holds.
+--
+-- A label is drawn either above its module's box (the default of M.get) or
+-- inside it: `inside` then drops the lateral padding, since the box already
+-- insets its content, and may carry the `ink` of a tinted fill.
 
 local CenterContainer = require("ui/widget/container/centercontainer")
-local Font            = require("ui/font")
 local FrameContainer  = require("ui/widget/container/framecontainer")
 local Geom            = require("ui/geometry")
 local HorizontalGroup = require("ui/widget/horizontalgroup")
 local HorizontalSpan  = require("ui/widget/horizontalspan")
 local LeftContainer   = require("ui/widget/container/leftcontainer")
 
-local Config    = require("infra/sui_config")
-local PageNav   = require("engines/sui_page_nav")
-local SUIStyle  = require("features/sui_style")
-local UI        = require("infra/sui_core")
+local Config     = require("infra/sui_config")
+local LabelStyle = require("features/sui_label_style")
+local PageNav    = require("engines/sui_page_nav")
+local UI         = require("infra/sui_core")
 
 local PAD = UI.PAD
 
@@ -109,17 +112,27 @@ end
 
 -- Title row with the right-aligned text and, when `turn_page` is given,
 -- chevrons on both sides of it. All three share one row height so they
--- centre on a single line.
-local function buildTitleRow(desc, avail_w, face, scale, turn_page, has_wallpaper)
-    local face_right = Font:getFace(SUIStyle.FACE_REGULAR, math.max(8, math.floor(SUIStyle.FS_DETAIL * scale)))
-    local right_widget = UI.makeColoredText{ text = desc.right_text, face = face_right, bold = false }
-    local title_widget = UI.makeColoredText{ text = desc.text, face = face, bold = true }
+-- centre on a single line. Returns the row and the D-pad focus stops of the
+-- chevrons (see PageNav.buildPager), empty when `focusable` is not set.
+-- `inside` carries the ink of a tinted surface (see ModuleChrome.ink) and the
+-- palette colours that read on it.
+local function buildTitleRow(desc, avail_w, scale, turn_page, focusable, inside)
+    local ink = inside and inside.ink or nil
+    local fg = ink and ink.blk or nil
+    local title_fg = LabelStyle.color(inside) or fg
+    local face_right = PageNav.indicatorFace(scale)
+    local right_widget = UI.makeColoredText{ text = desc.right_text, face = face_right, bold = false, fgcolor = fg }
+    local title_widget = LabelStyle.makeText{
+        text = desc.text, fgcolor = title_fg, scale = scale,
+        max_width = math.max(1, avail_w - right_widget:getSize().w - PAD),
+    }
     local row_h = math.max(title_widget:getSize().h, right_widget:getSize().h)
     local gap   = PAD
 
     local right
+    local stops = {}
     if turn_page then
-        right = PageNav.buildPager(desc.page, desc.npages, row_h, right_widget, gap, turn_page, has_wallpaper)
+        right, stops = PageNav.buildPager(desc.page, desc.npages, row_h, right_widget, gap, turn_page, focusable, ink)
     else
         right = CenterContainer:new{
             dimen = Geom:new{ w = right_widget:getSize().w, h = row_h },
@@ -136,25 +149,30 @@ local function buildTitleRow(desc, avail_w, face, scale, turn_page, has_wallpape
     }
     row[#row + 1] = HorizontalSpan:new{ width = gap }
     row[#row + 1] = right
-    return row
+    return row, stops
 end
 
-local function buildWidget(desc, w, scale, turn_page, has_wallpaper)
-    local face    = Font:getFace(SUIStyle.FACE_REGULAR, math.max(8, math.floor(SUIStyle.FS_BODY * scale)))
-    local avail_w = w - PAD * 2
+local function buildWidget(desc, w, scale, turn_page, focusable, inside)
+    local side    = inside and 0 or PAD
+    local ink     = inside and inside.ink or nil
+    local avail_w = w - side * 2
     local content
+    local stops = {}
     if desc.right_text then
-        content = buildTitleRow(desc, avail_w, face, scale,
-            desc.npages > 1 and turn_page or nil, has_wallpaper)
+        content, stops = buildTitleRow(desc, avail_w, scale, desc.npages > 1 and turn_page or nil, focusable, inside)
     else
-        content = UI.makeColoredText{ text = desc.text, face = face, bold = true, width = avail_w }
+        content = LabelStyle.makeText{
+            text = desc.text, scale = scale, max_width = avail_w,
+            fgcolor = LabelStyle.color(inside) or (ink and ink.blk or nil),
+        }
     end
     return FrameContainer:new{
         bordersize = 0, padding = 0,
-        padding_left = PAD, padding_right = PAD,
-        padding_bottom = UI.LABEL_PAD_BOT,
+        padding_left = side, padding_right = side,
+        -- The caps style leaves a little more room before the content.
+        padding_bottom = UI.LABEL_PAD_BOT + LabelStyle.extraGap(scale),
         content,
-    }
+    }, stops
 end
 
 -- Returns the label widget for module `id`, reusing the one in `cache` while
@@ -163,24 +181,46 @@ end
 --   desc             descriptor (see M.describe)
 --   w                column width the label spans
 --   landscape_factor label scale multiplier (default 1)
---   has_wallpaper    chevrons paint transparently over the wallpaper
 --   turn_page        function(id, delta) invoked by the chevrons
-function M.get(cache, id, desc, w, landscape_factor, has_wallpaper, turn_page)
+--   focusable        the chevrons are D-pad focus stops
+--   inside           nil for a label above the module's box; a table for one
+--                    inside it: { ink = colours of a tinted fill | nil,
+--                    palette = ModuleChrome.palette of the box | nil }
+-- Returns the widget and its focus stops, { id, widget } from left to right.
+function M.get(cache, id, desc, w, landscape_factor, turn_page, focusable, inside)
     local scale  = Config.getLabelScale() * (landscape_factor or 1)
     local paged  = desc.right_text ~= nil and desc.npages > 1
+    local ink    = inside and inside.ink
     local key = table.concat({
         desc.text, w, scale, desc.right_text or "",
         paged and desc.page or 0, paged and desc.npages or 0,
-        paged and tostring(has_wallpaper) or "",
+        inside and 1 or 0, ink and tostring(ink.blk) or "",
+        tostring(LabelStyle.color(inside)),
+        LabelStyle.signature(),
     }, "|")
 
     local entry = cache[id]
-    if entry and entry.key == key then return entry.widget end
+    if entry and entry.key == key then return entry.widget, entry.stops end
 
     local nav = paged and turn_page and function(delta) turn_page(id, delta) end or nil
-    local widget = buildWidget(desc, w, scale, nav, has_wallpaper)
-    cache[id] = { key = key, widget = widget }
-    return widget
+    local widget, stops = buildWidget(desc, w, scale, nav, focusable, inside)
+
+    -- A cached label is mounted in one tree after another, and a replaced tree
+    -- is freed: a freed label would draw nothing. The tree's free is ignored;
+    -- M.release frees the label together with the cache.
+    local free = widget.free
+    widget.free = function() end
+    cache[id] = { key = key, widget = widget, stops = stops, release = function() free(widget) end }
+    return widget, stops
+end
+
+-- Frees every widget of `cache` and empties it; to be called once the screen
+-- that owns the cache is closed.
+function M.release(cache)
+    for id, entry in pairs(cache) do
+        entry.release()
+        cache[id] = nil
+    end
 end
 
 return M

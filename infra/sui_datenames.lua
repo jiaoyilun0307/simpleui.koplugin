@@ -1,5 +1,6 @@
 -- sui_datenames.lua — Simple UI
--- Localised calendar names: months and weekdays, in short and full form.
+-- Localised calendar names: months and weekdays, in short and full form, and
+-- the parts of the day.
 --
 -- Each list is built on first use, so _() runs after the user's locale is
 -- applied, and is reused afterwards. Indices follow os.date("*t"): months
@@ -10,6 +11,7 @@
 --   DateNames.monthFull()      { "January", "February", ... }
 --   DateNames.weekdayShort()   { "Sun", "Mon", ... }
 --   DateNames.weekdayFull()    { "Sunday", "Monday", ... }
+--   DateNames.dayParts()       { "Morning", "Afternoon", "Evening", "Night" }
 
 local _ = require("infra/sui_i18n").translate
 
@@ -48,6 +50,11 @@ DateNames.weekdayFull = lazyList(function()
         _("Sunday"), _("Monday"), _("Tuesday"), _("Wednesday"),
         _("Thursday"), _("Friday"), _("Saturday"),
     }
+end)
+
+-- Same order as HD.PART_HOURS in engines/sui_heatmap_data.
+DateNames.dayParts = lazyList(function()
+    return { _("Morning"), _("Afternoon"), _("Evening"), _("Night") }
 end)
 
 return DateNames

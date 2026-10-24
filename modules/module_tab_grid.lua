@@ -87,6 +87,7 @@ local PageNav      = require("engines/sui_page_nav")
 local SectionLabel = require("engines/sui_section_label")
 local SourceMenu   = require("features/sui_source_menu")
 local Sources      = require("engines/sui_book_sources")
+local Backdrop     = require("infra/sui_backdrop")
 local SUISettings  = require("infra/sui_store")
 local SUIStyle     = require("features/sui_style")
 local TabStrip     = require("engines/sui_tab_strip")
@@ -365,8 +366,7 @@ local function tabFace(ctx, inst_id)
 end
 
 local function pagerFace(ctx)
-    local scale = Config.getLabelScale() * GridRenderer.landscapeFactor(ctx)
-    return Font:getFace(SUIStyle.FACE_REGULAR, math.max(8, math.floor(SUIStyle.FS_DETAIL * scale)))
+    return PageNav.indicatorFace(Config.getLabelScale() * GridRenderer.landscapeFactor(ctx))
 end
 
 -- Id the tab bar's frame and background settings are stored under.
@@ -382,15 +382,46 @@ local function tabStyle(pfx, inst_id)
     return Config.readChoice(styleKey(pfx, inst_id), STYLES, STYLE_ROUND)
 end
 
+-- Colour of the active tab, as a background tone. Unset, it is the accent, or
+-- the text colour over a tinted bar, where the accent would blend into it.
+local ACTIVE_TONES = {
+    Backdrop.TONE.WHITE, Backdrop.TONE.GRAY, Backdrop.TONE.ACCENT, Backdrop.TONE.SECONDARY,
+}
+
+local function activeKey(pfx, inst_id)
+    return pfx .. inst_id .. "_tab_active"
+end
+
+-- Stored tone of the active tab, nil when unset or when it is a palette colour
+-- that is not on screen.
+local function activeTone(pfx, inst_id)
+    local tone = Config.readChoice(activeKey(pfx, inst_id), ACTIVE_TONES, nil)
+    if SUIStyle.isPaletteChoice(tone) and not SUIStyle.paletteChoiceAvailable(tone) then return nil end
+    return tone
+end
+
+-- Active tab indicator { color, fg } for the TabStrip, or nil for the accent.
+local function activeIndicator(pfx, inst_id, surface)
+    local tone = activeTone(pfx, inst_id)
+    if tone then
+        local plain = tone == Backdrop.TONE.WHITE or tone == Backdrop.TONE.GRAY
+        local color = plain and Backdrop.toneColor(tone) or SUIStyle.resolveColor(tone)
+        return { color = color, fg = SUIStyle.resolveForeground(tone) or SUIStyle.COLOR.text_primary }
+    end
+    if surface.foreground then return { color = surface.foreground, fg = surface.color } end
+end
+
 -- Look of the tab bar: its style and the TabStrip options that follow from it.
 -- The tabs style draws neither frame nor background.
 local function barLook(pfx, inst_id)
-    local shape  = tabStyle(pfx, inst_id)
+    local shape   = tabStyle(pfx, inst_id)
+    local surface = shape == STYLE_TABS and ModuleChrome.NO_CHROME
+        or ModuleChrome.resolve(pfx, barId(inst_id), BAR_KIND)
     return {
-        shape   = shape,
-        style   = STRIP_STYLE[shape],
-        surface = shape == STYLE_TABS and ModuleChrome.NO_CHROME
-            or ModuleChrome.resolve(pfx, barId(inst_id), BAR_KIND),
+        shape     = shape,
+        style     = STRIP_STYLE[shape],
+        surface   = surface,
+        indicator = activeIndicator(pfx, inst_id, surface),
     }
 end
 
@@ -406,7 +437,7 @@ local PROGRESS_BAR_H = 6
 -- Height of the row of the page indicator `pager`.
 local function pagerRowHeight(ctx, pager)
     if pager.style == PAGER_BAR then return Screen:scaleBySize(PROGRESS_BAR_H) end
-    return math.max(SUIStyle.faceHeight(pagerFace(ctx)), Screen:scaleBySize(PageNav.ICON_SIZE))
+    return PageNav.rowHeight(pagerFace(ctx))
 end
 
 -- Space between the cells and a bottom pager row, under covers alone and under
@@ -477,26 +508,29 @@ end
 
 -- Page indicator `pager` aligned in a `w` wide row (the chevron icon, not its
 -- padding, meets the right edge); an empty row of the same height while there
--- is a single page.
-local function buildPager(w, ctx, inst_id, pager)
+-- is a single page. The page chevrons are D-pad focus stops.
+-- `ink` is set only over a tinted fill (see ModuleChrome.ink).
+local function buildPager(w, ctx, inst_id, pager, ink)
     local page, npages = PageState.get(ctx, inst_id)
     local row_h = pagerRowHeight(ctx, pager)
-    if npages <= 1 then return VerticalSpan:new{ width = row_h } end
-
+    local stops = {}
     local indicator
-    if pager.style == PAGER_BAR then
-        indicator = PageNav.buildProgressBar(page, npages, Screen:scaleBySize(PROGRESS_BAR_W), row_h)
-    else
-        indicator = PageNav.buildPager(page, npages, row_h,
+    if npages > 1 and pager.style == PAGER_BAR then
+        indicator = PageNav.buildProgressBar(page, npages, Screen:scaleBySize(PROGRESS_BAR_W), row_h, ink)
+    elseif npages > 1 then
+        indicator, stops = PageNav.buildPager(page, npages, row_h,
             UI.makeColoredText{
                 text = string.format("%d/%d", page, npages),
                 face = pagerFace(ctx),
                 bold = false,
+                fgcolor = ink and ink.blk,
             },
             PAD2,
             function(delta) GridRenderer.requestPageTurn(ctx, inst_id, delta) end,
-            ctx.has_wallpaper)
+            ctx.kbStops ~= nil, ink)
     end
+    if ctx.kbStops then ctx.kbStops(inst_id .. ":pager", stops) end
+    if not indicator then return VerticalSpan:new{ width = row_h } end
     local overhang = pager.align == "right" and Size.padding.button or 0
     return ALIGN_CONTAINER[pager.align]:new{
         dimen = Geom:new{ w = w + overhang, h = row_h },
@@ -527,6 +561,117 @@ local function compose(w, h, ctx, inst_id, content)
         dimen           = Geom:new{ w = w, h = h },
         GridRenderer.makeEraser(w, h, ModuleChrome.NO_CHROME),
         content,
+    }
+end
+
+-- ---------------------------------------------------------------------------
+-- Menus
+-- ---------------------------------------------------------------------------
+
+-- Pagination submenu: style, position and, for the page numbers,
+-- alignment. Position and alignment apply only where they have an effect.
+local function pagerMenuItem(inst_id, ctx_menu)
+    local _lc     = ctx_menu._
+    local refresh = ctx_menu.refresh
+    local pfx     = ctx_menu.pfx
+    local function setter(field)
+        return function(v) SUISettings:saveSetting(pagerKey(pfx, inst_id, field), v) end
+    end
+    return {
+        text      = _lc("Pagination"),
+        sub_item_table = {
+            Config.makeRadioSubmenuItem{
+                text    = _lc("Style"),
+                options = {
+                    { value = PAGER_NUMBERS, label = _lc("Numbers") },
+                    { value = PAGER_BAR,     label = _lc("Swipe Bar") },
+                    { value = PAGER_OFF,     label = _lc("Hidden") },
+                },
+                get     = function() return pagerStyle(pfx, inst_id) end,
+                set     = setter("style"),
+                refresh = refresh,
+            },
+            Config.makeRadioSubmenuItem{
+                text         = _lc("Position"),
+                options      = {
+                    { value = POSITION_TOP,    label = _lc("Top") },
+                    { value = POSITION_BOTTOM, label = _lc("Bottom") },
+                },
+                get          = function() return pagerPosition(pfx, inst_id) end,
+                set          = setter("position"),
+                enabled_func = function() return pagerStyle(pfx, inst_id) ~= PAGER_OFF end,
+                refresh      = refresh,
+            },
+            Config.makeAlignmentItem{
+                key          = pagerKey(pfx, inst_id, "align"),
+                values       = PAGER_ALIGNS,
+                default      = DEFAULT_ALIGN,
+                enabled_func = function() return pagerStyle(pfx, inst_id) == PAGER_NUMBERS end,
+                refresh      = refresh,
+                _lc          = _lc,
+            },
+        },
+    }
+end
+
+-- Tab Bar submenu: style, text and background. The tabs style has neither
+-- frame nor background, so that entry is disabled while it is selected.
+local function tabBarMenuItem(inst_id, ctx_menu)
+    local _lc     = ctx_menu._
+    local refresh = ctx_menu.refresh
+    local pfx     = ctx_menu.pfx
+
+    local background = ModuleChrome.makeBackgroundItem(pfx, barId(inst_id), refresh, _lc, BAR_KIND)
+    background.enabled_func = function() return tabStyle(pfx, inst_id) ~= STYLE_TABS end
+
+    return {
+        text      = _lc("Tab Bar"),
+        sub_item_table = {
+            Config.makeRadioSubmenuItem{
+                text    = _lc("Style"),
+                options = {
+                    { value = STYLE_ROUND,  label = _lc("Round Pill") },
+                    { value = STYLE_SQUARE, label = _lc("Square Pill") },
+                    { value = STYLE_TABS,   label = _lc("Tabs") },
+                },
+                get     = function() return tabStyle(pfx, inst_id) end,
+                set     = function(v) SUISettings:saveSetting(styleKey(pfx, inst_id), v) end,
+                refresh = refresh,
+            },
+            Config.makeRadioSubmenuItem{
+                text    = _lc("Active Tab Color"),
+                options = function()
+                    local options = {
+                        { value = nil,                  label = _lc("Default") },
+                        { value = Backdrop.TONE.WHITE,  label = _lc("White") },
+                        { value = Backdrop.TONE.GRAY,   label = _lc("Gray") },
+                    }
+                    for _i, option in ipairs(SUIStyle.paletteOptions(_lc)) do
+                        options[#options + 1] = option
+                    end
+                    return options
+                end,
+                get     = function() return activeTone(pfx, inst_id) end,
+                set     = function(v)
+                    if v == nil then
+                        SUISettings:del(activeKey(pfx, inst_id))
+                    else
+                        SUISettings:saveSetting(activeKey(pfx, inst_id), v)
+                    end
+                end,
+                refresh = refresh,
+            },
+            Config.makeTextStyleItem{
+                mod_id  = inst_id,
+                elem    = TAB_TEXT_ELEM,
+                title   = _lc("Text"),
+                info    = _lc("Size of the tab labels.\n100% matches the homescreen section labels."),
+                pfx     = pfx,
+                refresh = refresh,
+                _lc     = _lc,
+            },
+            background,
+        },
     }
 end
 
@@ -610,9 +755,10 @@ local function makeInstance(inst_id)
             tabs          = entries,
             style         = bar.style,
             visible_count = VISIBLE_TABS,
-            has_wallpaper = ctx.has_wallpaper,
             radius        = bar.shape == STYLE_SQUARE and ModuleChrome.frameRadius(layout.scale) or nil,
             surface       = bar.surface,
+            indicator     = bar.indicator,
+            fgcolor       = bar.surface.foreground,
             active        = active.id,
             first         = state.first,
             on_select     = function(id)
@@ -628,95 +774,12 @@ local function makeInstance(inst_id)
                 repaint(ctx)
             end,
         }
+        if ctx.kbStops then ctx.kbStops(inst_id .. ":tabs", strip:getStops()) end
         return FrameContainer:new{
             bordersize     = 0,
             padding        = 0,
             padding_bottom = TAB_BAR_GAP,
             ModuleChrome.inset(strip, col_w, layout.scale),
-        }
-    end
-
-    -- Pagination submenu: style, position and, for the page numbers,
-    -- alignment. Position and alignment apply only where they have an effect.
-    local function pagerMenuItem(ctx_menu)
-        local _lc     = ctx_menu._
-        local refresh = ctx_menu.refresh
-        local pfx     = ctx_menu.pfx
-        local function setter(field)
-            return function(v) SUISettings:saveSetting(pagerKey(pfx, inst_id, field), v) end
-        end
-        return {
-            text      = _lc("Pagination"),
-            sub_item_table = {
-                Config.makeRadioSubmenuItem{
-                    text    = _lc("Style"),
-                    options = {
-                        { value = PAGER_NUMBERS, label = _lc("Numbers") },
-                        { value = PAGER_BAR,     label = _lc("Swipe Bar") },
-                        { value = PAGER_OFF,     label = _lc("Hidden") },
-                    },
-                    get     = function() return pagerStyle(pfx, inst_id) end,
-                    set     = setter("style"),
-                    refresh = refresh,
-                },
-                Config.makeRadioSubmenuItem{
-                    text         = _lc("Position"),
-                    options      = {
-                        { value = POSITION_TOP,    label = _lc("Top") },
-                        { value = POSITION_BOTTOM, label = _lc("Bottom") },
-                    },
-                    get          = function() return pagerPosition(pfx, inst_id) end,
-                    set          = setter("position"),
-                    enabled_func = function() return pagerStyle(pfx, inst_id) ~= PAGER_OFF end,
-                    refresh      = refresh,
-                },
-                Config.makeAlignmentItem{
-                    key          = pagerKey(pfx, inst_id, "align"),
-                    values       = PAGER_ALIGNS,
-                    default      = DEFAULT_ALIGN,
-                    enabled_func = function() return pagerStyle(pfx, inst_id) == PAGER_NUMBERS end,
-                    refresh      = refresh,
-                    _lc          = _lc,
-                },
-            },
-        }
-    end
-
-    -- Tab Bar submenu: style, text and background. The tabs style has neither
-    -- frame nor background, so that entry is disabled while it is selected.
-    local function tabBarMenuItem(ctx_menu)
-        local _lc     = ctx_menu._
-        local refresh = ctx_menu.refresh
-        local pfx     = ctx_menu.pfx
-
-        local background = ModuleChrome.makeBackgroundItem(pfx, barId(inst_id), refresh, _lc, BAR_KIND)
-        background.enabled_func = function() return tabStyle(pfx, inst_id) ~= STYLE_TABS end
-
-        return {
-            text      = _lc("Tab Bar"),
-            sub_item_table = {
-                Config.makeRadioSubmenuItem{
-                    text    = _lc("Style"),
-                    options = {
-                        { value = STYLE_ROUND,  label = _lc("Round Pill") },
-                        { value = STYLE_SQUARE, label = _lc("Square Pill") },
-                        { value = STYLE_TABS,   label = _lc("Tabs") },
-                    },
-                    get     = function() return tabStyle(pfx, inst_id) end,
-                    set     = function(v) SUISettings:saveSetting(styleKey(pfx, inst_id), v) end,
-                    refresh = refresh,
-                },
-                Config.makeTextStyleItem{
-                    mod_id  = inst_id,
-                    elem    = TAB_TEXT_ELEM,
-                    title   = _lc("Text"),
-                    info    = _lc("Size of the tab labels.\n100% matches the homescreen section labels."),
-                    pfx     = pfx,
-                    refresh = refresh,
-                    _lc     = _lc,
-                },
-                background,
-            },
         }
     end
 
@@ -896,7 +959,11 @@ local function makeInstance(inst_id)
         end,
         extra_menu_items_before = tabsMenuItems,
         extra_appearance_items  = function(ctx_menu)
-            return { tabBarMenuItem(ctx_menu), pagerMenuItem(ctx_menu), groupCoversMenuItem(ctx_menu) }
+            return {
+                tabBarMenuItem(inst_id, ctx_menu),
+                pagerMenuItem(inst_id, ctx_menu),
+                groupCoversMenuItem(ctx_menu),
+            }
         end,
 
         badges         = { pages = "off", series = "off", new = "off" },
@@ -973,6 +1040,15 @@ local function makeInstance(inst_id)
         local active  = selectActiveTab(ctx, pfx, tabs)
         local pager   = layout.pager
         local grid_w  = ModuleChrome.contentWidth(col_w, layout.chrome)
+        -- The rows of D-pad stops follow the visual order: tab bar, top
+        -- pager (built after the grid, which sets the page count), grid
+        -- rows, bottom pager.
+        local tab_bar = buildTabBar(col_w, ctx, tabs, active, layout)
+        if ctx.kbStops and pager.position == POSITION_TOP then ctx.kbStops(inst_id .. ":pager", {}) end
+        -- The grid cells and the pager inside the box take the box's ink.
+        local ink     = ModuleChrome.ink(layout.chrome)
+        ctx.ink       = ink
+        local pager_ink = ink ~= ModuleChrome.PLAIN_INK and ink or nil
         local grid    = buildGrid(grid_w, ctx)
         local content = grid or emptyTabNotice(grid_w, layout.grid_h, active)
         local body    = VerticalGroup:new{ align = "left", content }
@@ -981,10 +1057,10 @@ local function makeInstance(inst_id)
             -- The pager follows the content of the active tab.
             local gap = pagerGap(pager, hasTextBelow(pfx, active))
             body[#body + 1] = VerticalSpan:new{ width = gap }
-            body[#body + 1] = buildPager(grid_w, ctx, inst_id, pager)
+            body[#body + 1] = buildPager(grid_w, ctx, inst_id, pager, pager_ink)
             used = used + gap + pagerRowHeight(ctx, pager)
         end
-        local column = VerticalGroup:new{ align = "left", buildTabBar(col_w, ctx, tabs, active, layout) }
+        local column = VerticalGroup:new{ align = "left", tab_bar }
         if pager.position == POSITION_TOP then
             column[#column + 1] = buildTopPager(col_w, grid_w, ctx, inst_id, pager)
         end
@@ -1034,7 +1110,7 @@ M.text_elems       = TEXT_ELEMS
 M.makeInstance     = makeInstance
 
 -- Layout-editor summary of an instance: its tabs.
-function M.getInstanceSubtitle(inst_id, pfx)
+function M.getSummary(inst_id, pfx)
     local titles = {}
     for _i, tab in ipairs(tabStore(inst_id).read(pfx)) do
         titles[#titles + 1] = tabLabel(tab)

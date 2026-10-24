@@ -18,7 +18,7 @@
 --
 -- Public API
 -- ----------
---   CoverWidgets.buildProgressBadgeDesc(eff_size, status, percent_finished, border, dark)
+--   CoverWidgets.buildProgressBadgeDesc(eff_size, status, percent_finished, border, color)
 --   CoverWidgets.drawProgressBadge(bb, ox, oy, desc)
 --   CoverWidgets.progressBadgeSize(desc)  -- outer width, height (border included)
 --   CoverWidgets.progressBadgeKey(desc)
@@ -29,12 +29,12 @@
 --       -- consumers that need it embedded in an OverlapGroup rather than
 --       -- painted directly onto a Blitbuffer — see engines/sui_book_grid.lua.
 --   CoverWidgets.paintCornerRibbon(bb, cover_left, cover_right, cover_top, cover_h,
---                                  span, band_thick, label, font_sz, dark)
---   CoverWidgets.buildCornerRibbonWidget(cw, ch, dark, badge_scale, label)
+--                                  span, band_thick, label, font_sz, color)
+--   CoverWidgets.buildCornerRibbonWidget(cw, ch, color, badge_scale, label)
 --       -- Widget wrapper (getSize/paintTo) around paintCornerRibbon, for the
 --       -- same reason buildProgressBadgeWidget exists — see
 --       -- engines/sui_book_grid.lua's "New" badge, mode = "ribbon".
---   CoverWidgets.buildRectBadgeWidget(text, bold, cell_min, dark, new_badge, badge_scale)
+--   CoverWidgets.buildRectBadgeWidget(text, bold, cell_min, color, new_badge, badge_scale)
 --   CoverWidgets.pileInset(scale)
 --       -- Total px a cover gives up on the right and bottom for its pile
 --       -- (layer steps plus the front cover's shadow).
@@ -54,9 +54,9 @@
 --       -- The widget for that backing (nil when there is nothing to draw).
 --   CoverWidgets.buildFolderNameWidget(item, available_w, font_size, fgcolor, bgcolor, text_style)
 --   CoverWidgets.buildLabel(item, size, border, display)
---       -- display: { label_mode, show_name, label_opacity, label_layout, label_pos, label_color, label_scale }
+--       -- display: { show_name, label_opacity, label_layout, label_pos, label_color, label_scale }
 --   CoverWidgets.buildBadge(mandatory, cover_dimen, cv_scale, cell_dimen, opts)
---       -- opts: { hidden, scale, dark, position }  ("bottom" | anything else = top)
+--       -- opts: { hidden, scale, color, position }  ("bottom" | anything else = top)
 --   CoverWidgets.computeCellGeometry(item, hide_stack)
 --   CoverWidgets.assembleCoverWidget(item, content_widget, size, border, backing, display)
 --   CoverWidgets.buildQuadGrid(img_list, w, h, border)
@@ -89,6 +89,7 @@ local RightContainer  = require("ui/widget/container/rightcontainer")
 local VerticalGroup   = require("ui/widget/verticalgroup")
 local VerticalSpan    = require("ui/widget/verticalspan")
 local SUIStyle        = require("features/sui_style")
+local Accent          = require("infra/sui_accent")
 local UI              = require("infra/sui_core")
 local AAPaint         = require("infra/sui_aa_paint")
 local RasterCache     = require("infra/sui_raster_cache")
@@ -200,12 +201,12 @@ end
 
 -- Returns a descriptor table for the progress badge, or nil when too small.
 -- No Blitbuffer is allocated here — drawing is deferred to paintTo().
-function CoverWidgets.buildProgressBadgeDesc(eff_size, status, percent_finished, border, dark)
+function CoverWidgets.buildProgressBadgeDesc(eff_size, status, percent_finished, border, color)
     local bw = math.floor(eff_size * 1.3)
     local bh = math.floor(eff_size * 1.4)
     if bw < 4 or bh < 4 then return nil end
 
-    local text_color  = dark and SUIStyle.COLOR.surface or SUIStyle.COLOR.text_primary
+    local _, text_color = SUIStyle.badgeColors(color)
     local text_widget = nil
     -- Cap label width at 95% of the banner body so "100%" and wide icons
     -- stay inside the pentagon on small covers.
@@ -238,20 +239,21 @@ function CoverWidgets.buildProgressBadgeDesc(eff_size, status, percent_finished,
         status           = status,
         percent_finished = percent_finished,
         eff_size         = eff_size,
-        dark             = dark ~= false,
+        color            = color or "dark",
         text_widget      = text_widget,
     }
 end
 
 -- Draw the progress badge described by `desc` directly onto `bb` at (ox, oy).
--- Border uses text_primary so the top edge matches the cover border it sits on.
+-- The border has the colour of every badge, which matches the cover border it sits on.
 function CoverWidgets.drawProgressBadge(bb, ox, oy, desc)
     local bw         = desc.bw
     local bh         = desc.bh
     local fr         = desc.border
-    local fill_color = desc.dark and SUIStyle.COLOR.text_primary or SUIStyle.COLOR.surface
-    local text_color = desc.dark and SUIStyle.COLOR.surface or SUIStyle.COLOR.text_primary
-    local brd_color  = SUIStyle.COLOR.text_primary
+    local fill_color, text_color = SUIStyle.badgeColors(desc.color)
+    local brd_color  = SUIStyle.BADGE_BORDER_CLR
+    -- The label widget is built once; follow the painted accent colour.
+    if desc.text_widget then desc.text_widget.fgcolor = text_color end
 
     pentagonPaintRect(bb, ox,      oy,      bw + 2 * fr, bh + 2 * fr, brd_color)
     pentagonPaintRect(bb, ox + fr, oy + fr, bw,          bh,          fill_color)
@@ -302,7 +304,8 @@ function CoverWidgets.progressBadgeKey(desc)
         or desc.status == "abandoned" and "abandoned"
         or desc.percent_finished and math.floor(desc.percent_finished * 100 + 0.5)
         or ""
-    return table.concat({ desc.eff_size, desc.border, desc.dark and 1 or 0, content }, "|")
+    return table.concat({ desc.eff_size, desc.border, desc.color, content,
+        SUIStyle.isPaletteChoice(desc.color) and Accent.stamp() or "" }, "|")
 end
 
 -- Widget wrapper around buildProgressBadgeDesc/drawProgressBadge, for
@@ -360,16 +363,15 @@ end
 local _COS_45 = 0.70711  -- cos 45° = sin 45°
 
 -- Upright band of tw × th px: bordered long edges, filled interior, centred label.
-local function renderRibbonBand(tw, th, bb_type, label, font_sz, dark)
-    local bg  = dark and SUIStyle.COLOR.text_primary or SUIStyle.COLOR.surface
-    local fg  = dark and SUIStyle.COLOR.surface or SUIStyle.COLOR.text_primary
+local function renderRibbonBand(tw, th, bb_type, label, font_sz, color)
+    local bg, fg = SUIStyle.badgeColors(color)
     local brd = SUIStyle.BADGE_BORDER_CLR
     local bw  = SUIStyle.BADGE_BORDER_SZ
 
     local band = Blitbuffer.new(tw, th, bb_type)
     band:paintRect(0, 0, tw, th, brd)
     if bw * 2 < th then
-        band:paintRect(0, bw, tw, th - bw * 2, bg)
+        AAPaint.fillRect(band, 0, bw, tw, th - bw * 2, bg, 255)
     end
 
     -- Step the font down 1pt at a time until the label fits, min 6pt.
@@ -399,11 +401,11 @@ end
 -- Entry: { bb = sprite, w, h, first, last }. Sprite column i is i - w px from
 -- the cover's right edge, row j is j px below its top edge. first[j] and
 -- last[j] bound the ribbon's pixels in row j (nil when the row has none).
-local function buildRibbonSprite(bb_type, span, band_thick, label, font_sz, dark)
+local function buildRibbonSprite(bb_type, span, band_thick, label, font_sz, color)
     -- The ends protrude past both cover edges; cover clipping hides the cuts.
     local tw = math.ceil((span + band_thick * 2) * 1.41422)
     local th = band_thick
-    local band = renderRibbonBand(tw, th, bb_type, label, font_sz, dark)
+    local band = renderRibbonBand(tw, th, bb_type, label, font_sz, color)
 
     local reach    = math.floor(span / 2)  -- band centre's distance from the corner
     local half_box = math.ceil((tw + th) * _COS_45 / 2) + 1
@@ -430,12 +432,13 @@ local function buildRibbonSprite(bb_type, span, band_thick, label, font_sz, dark
 end
 
 function CoverWidgets.paintCornerRibbon(bb, cover_left, cover_right, cover_top, cover_h,
-                                        span, band_thick, label, font_sz, dark)
+                                        span, band_thick, label, font_sz, color)
     if span <= 0 or band_thick <= 0 then return end
-    local key = string.format("%d|%d|%d|%s|%d|%d|%s|%s", bb:getType(), span, band_thick, label,
-        font_sz, dark and 1 or 0, tostring(SUIStyle.BADGE_BORDER_SZ), tostring(SUIStyle.BADGE_BORDER_CLR))
+    local key = string.format("%d|%d|%d|%s|%d|%s|%s|%s|%s", bb:getType(), span, band_thick, label,
+        font_sz, color, tostring(SUIStyle.BADGE_BORDER_SZ), tostring(SUIStyle.BADGE_BORDER_CLR),
+        SUIStyle.isPaletteChoice(color) and Accent.stamp() or "")
     local ribbon = RasterCache.get("ribbon", key, buildRibbonSprite,
-        bb:getType(), span, band_thick, label, font_sz, dark)
+        bb:getType(), span, band_thick, label, font_sz, color)
 
     local sprite_x = cover_right - ribbon.w
     local min_col  = math.max(0, cover_left - sprite_x)
@@ -480,7 +483,7 @@ end
 
 function CornerRibbonWidget:paintTo(bb, x, y)
     CoverWidgets.paintCornerRibbon(bb, x, x + self.cw, y, self.ch,
-        self.span, self.band_thick, self.label, self.font_sz, self.dark)
+        self.span, self.band_thick, self.label, self.font_sz, self.color)
 end
 
 -- See ProgressBadgeWidget:handleEvent() above for why this is required —
@@ -493,7 +496,7 @@ end
 -- above for why. span/band_thick/font_sz derivation copied verbatim from
 -- sui_foldercovers.lua's ribbon call site so both grids draw an
 -- identically-proportioned ribbon for the same cover size.
-function CoverWidgets.buildCornerRibbonWidget(cw, ch, dark, badge_scale, label)
+function CoverWidgets.buildCornerRibbonWidget(cw, ch, color, badge_scale, label)
     if cw < 4 or ch < 4 then return nil end
     local cell_min   = math.min(cw, ch)
     local eff_size   = math.max(8, math.floor(cell_min * 0.1694 * (badge_scale or 1.0)))
@@ -501,13 +504,13 @@ function CoverWidgets.buildCornerRibbonWidget(cw, ch, dark, badge_scale, label)
     local band_thick = math.floor(span * 0.40)
     local font_sz    = math.max(7, math.floor(eff_size * 0.26))
     return setmetatable({
-        cw = cw, ch = ch, dark = dark,
+        cw = cw, ch = ch, color = color,
         span = span, band_thick = band_thick,
         font_sz = font_sz, label = label or _("New"),
     }, CornerRibbonWidget)
 end
 
-function CoverWidgets.buildRectBadgeWidget(text, bold, cell_min, dark, new_badge, badge_scale)
+function CoverWidgets.buildRectBadgeWidget(text, bold, cell_min, color, new_badge, badge_scale)
     badge_scale = badge_scale or 1.0
     local eff_size = math.max(8, math.floor((cell_min or 40) * 0.15 * badge_scale))
     local font_sz  = math.max(7, math.floor(eff_size * 0.24))
@@ -516,8 +519,7 @@ function CoverWidgets.buildRectBadgeWidget(text, bold, cell_min, dark, new_badge
     local corner   = math.max(1, math.floor(eff_size * 0.08))
     local border   = SUIStyle.BADGE_BORDER_SZ
 
-    local bg = dark and SUIStyle.COLOR.text_primary or SUIStyle.COLOR.surface
-    local fg = dark and SUIStyle.COLOR.surface or SUIStyle.COLOR.text_primary
+    local bg, fg = SUIStyle.badgeColors(color)
     local border_color = SUIStyle.BADGE_BORDER_CLR
 
     local tw = TextWidget:new{
@@ -818,16 +820,19 @@ end
 -- _LABEL_LAYOUTS). At the bottom it is lifted off the edge so it reads as a
 -- strap around the book.
 -- `display` is the pre-read settings table:
---   { label_mode, show_name, label_opacity, label_layout, label_pos, label_color, label_scale,
+--   { show_name, label_opacity, label_layout, label_pos, label_color, label_scale,
 --     label_style? }   label_style: text style of the name (see buildFolderNameWidget)
 function CoverWidgets.buildLabel(item, size, border, display)
-    if display.label_mode ~= "overlay" then return nil end
-    if not display.show_name            then return nil end
+    if not display.show_name then return nil end
     local layout   = _LABEL_LAYOUTS[display.label_layout] or _LABEL_LAYOUTS[_DEFAULT_LABEL_LAYOUT]
-    local dark     = display.label_color == "dark"
-    local bg_color = dark and SUIStyle.COLOR.text_primary
-        or Backdrop.toneColor(display.label_color == "gray" and Backdrop.TONE.GRAY or Backdrop.TONE.WHITE)
-    local fg_color = dark and SUIStyle.COLOR.surface or SUIStyle.COLOR.text_primary
+    local color    = display.label_color
+    local bg_color, fg_color
+    if color == "dark" or SUIStyle.isPaletteChoice(color) then
+        bg_color, fg_color = SUIStyle.badgeColors(color)
+    else
+        bg_color = Backdrop.toneColor(color == "gray" and Backdrop.TONE.GRAY or Backdrop.TONE.WHITE)
+        fg_color = SUIStyle.COLOR.text_primary
+    end
 
     local cover_w  = size.w + border * 2
     local cover_h  = size.h + border * 2
@@ -882,7 +887,8 @@ end
 
 -- `cell_dimen` is the full mosaic cell (used for sizing); when absent,
 -- cover_dimen is used instead (produces a smaller badge).
--- `opts`: { hidden, scale, dark, position }  (position: "bottom" | top-default)
+-- `opts`: { hidden, scale, color, position }  (position: "bottom" | top-default)
+-- `color` is a badge colour choice (see SUIStyle.badgeColors).
 -- The badge is anchored to the top-left of its parent group and sized to the
 -- cover alone; assembleCoverWidget offsets it past a backing on the left.
 function CoverWidgets.buildBadge(mandatory, cover_dimen, cv_scale, cell_dimen, opts)
@@ -899,9 +905,7 @@ function CoverWidgets.buildBadge(mandatory, cover_dimen, cv_scale, cell_dimen, o
     local nb_font_size   = math.max(7, math.floor(nb_size * 0.28))
     local badge_margin   = math.max(1, math.floor(_BADGE_MARGIN_BASE   * cv_scale))
     local badge_margin_r = math.max(1, math.floor(_BADGE_MARGIN_R_BASE * cv_scale))
-    local dark           = opts.dark
-    local bg_color       = dark and SUIStyle.COLOR.text_primary or SUIStyle.COLOR.surface
-    local fg_color       = dark and SUIStyle.COLOR.surface or SUIStyle.COLOR.text_primary
+    local bg_color, fg_color = SUIStyle.badgeColors(opts.color)
     local border_color   = SUIStyle.BADGE_BORDER_CLR
 
     local badge = FrameContainer:new{

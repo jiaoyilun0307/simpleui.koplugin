@@ -6,7 +6,7 @@
 -- A set of label options is a plain table of fields:
 --   layout     "floating" | "band"
 --   position   "top" | "center" | "bottom"
---   color      "light" | "gray" | "dark"
+--   color      "light" | "gray" | "dark" | "accent" | "secondary"
 --   opacity    0–100, opacity of the background (the text stays solid)
 --   scale_pct  50–200, text size
 --
@@ -20,6 +20,7 @@
 
 local _ = require("infra/sui_i18n").translate
 
+local Accent   = require("infra/sui_accent")
 local Backdrop = require("infra/sui_backdrop")
 local Config   = require("infra/sui_config")
 
@@ -27,7 +28,7 @@ local LabelOptions = {}
 
 local LAYOUTS   = { "floating", "band" }
 local POSITIONS = { "top", "center", "bottom" }
-local COLORS    = { "light", "gray", "dark" }
+local COLORS    = { "light", "gray", "dark", "accent", "secondary" }
 
 local SCALE_MIN, SCALE_MAX = 50, 200
 
@@ -76,7 +77,6 @@ end
 -- the text style of the name.
 function LabelOptions.makeDisplay(fields, scale, text_style)
     return {
-        label_mode    = "overlay",
         show_name     = true,
         label_opacity = fields.opacity,
         label_layout  = fields.layout,
@@ -125,6 +125,16 @@ function LabelOptions.makeMenuItems(opts)
         size_item.enabled_func = opts.enabled_func
     end
 
+    local color_options = {
+        { value = "light", label = _lc("Light") },
+        { value = "gray",  label = _lc("Gray") },
+        { value = "dark",  label = _lc("Dark") },
+    }
+    if Accent.isSupported() then
+        color_options[#color_options + 1] = { value = "accent",    label = _lc("Accent") }
+        color_options[#color_options + 1] = { value = "secondary", label = _lc("Secondary") }
+    end
+
     local items = {
         radioItem("layout", _lc("Layout"), {
             { value = "floating", label = _lc("Floating") },
@@ -135,11 +145,7 @@ function LabelOptions.makeMenuItems(opts)
             { value = "center", label = _lc("Center") },
             { value = "bottom", label = _lc("Bottom") },
         }),
-        radioItem("color", _lc("Color"), {
-            { value = "light", label = _lc("Light") },
-            { value = "gray",  label = _lc("Gray") },
-            { value = "dark",  label = _lc("Dark") },
-        }),
+        radioItem("color", _lc("Color"), color_options),
         Config.makeBackdropStrengthItem{
             title         = _lc("Background Opacity"),
             info          = _lc("0% transparent, 100% solid. Only the background changes; the text stays solid."),
