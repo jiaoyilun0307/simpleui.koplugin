@@ -8908,3 +8908,543 @@ msgstr "vs last week"
 
 msgid "vs the same days last week"
 msgstr "vs the same days last week"
+
+msgid "%d book this year. How's the goal looking?"
+msgstr "%d book this year. How's the goal looking?"
+
+msgid "%d page today. Where did it take you?"
+msgstr "%d page today. Where did it take you?"
+
+msgid "A bit behind."
+msgstr "A bit behind."
+
+msgid "A chapter helps."
+msgstr "A chapter helps."
+
+msgid "A cosy one."
+msgstr "A cosy one."
+
+msgid "A cosy one. Mostly naps."
+msgstr "A cosy one. Mostly naps."
+
+msgid "A friendly eye."
+msgstr "A friendly eye."
+
+msgid "A little. Thanks for asking."
+msgstr "A little. Thanks for asking."
+
+msgid "A map! A sword! A tiny backpack!"
+msgstr "A map! A sword! A tiny backpack!"
+
+msgid "A mystery."
+msgstr "A mystery."
+
+msgid "A very short one."
+msgstr "A very short one."
+
+msgid "Almost."
+msgstr "Almost."
+
+msgid "An adventure."
+msgstr "An adventure."
+
+msgid "An old bus ticket."
+msgstr "An old bus ticket."
+
+msgid "Anywhere I can."
+msgstr "Anywhere I can."
+
+msgid "Ask anyone my size."
+msgstr "Ask anyone my size."
+
+msgid "Bold. Let's see."
+msgstr "Bold. Let's see."
+
+msgid "Bold. You like to know who makes it."
+msgstr "Bold. You like to know who makes it."
+
+msgid "Books are good at that."
+msgstr "Books are good at that."
+
+msgid "Can I stay up while you read tonight?"
+msgstr "Can I stay up while you read tonight?"
+
+msgid "Can't say. Spoilers."
+msgstr "Can't say. Spoilers."
+
+msgid "Careful. Books fall on faces."
+msgstr "Careful. Books fall on faces."
+
+msgid "Chaos. I respect it."
+msgstr "Chaos. I respect it."
+
+msgid "Correct. Don't get smug."
+msgstr "Correct. Don't get smug."
+
+msgid "Correct. You get a gold star."
+msgstr "Correct. You get a gold star."
+
+msgid "Could be better."
+msgstr "Could be better."
+
+msgid "Day %d, here we come!"
+msgstr "Day %d, here we come!"
+
+msgid "Day one with you. My favourite."
+msgstr "Day one with you. My favourite."
+
+msgid "Day one. Again. Fine."
+msgstr "Day one. Again. Fine."
+
+msgid "Day one. My favourite kind."
+msgstr "Day one. My favourite kind."
+
+msgid "Deal. I'll keep an eye on it."
+msgstr "Deal. I'll keep an eye on it."
+
+msgid "Do you get lonely?"
+msgstr "Do you get lonely?"
+
+msgid "Done. It was holding someone's place."
+msgstr "Done. It was holding someone's place."
+
+msgid "Eventually."
+msgstr "Eventually."
+
+msgid "Every book opened! Look at you!"
+msgstr "Every book opened! Look at you!"
+
+msgid "Every time."
+msgstr "Every time."
+
+msgid "Everything is about books."
+msgstr "Everything is about books."
+
+msgid "Everything starts here."
+msgstr "Everything starts here."
+
+msgid "Fair. Even streaks get tired."
+msgstr "Fair. Even streaks get tired."
+
+msgid "Fair. I'll find out myself one day."
+msgstr "Fair. I'll find out myself one day."
+
+msgid "Fine. It'll keep."
+msgstr "Fine. It'll keep."
+
+msgid "Forgotten. What streak?"
+msgstr "Forgotten. What streak?"
+
+msgid "Gently."
+msgstr "Gently."
+
+msgid "Go! I'll be here, counting."
+msgstr "Go! I'll be here, counting."
+
+msgid "Goals are like that."
+msgstr "Goals are like that."
+
+msgid "Good. I'd hate to start over."
+msgstr "Good. I'd hate to start over."
+
+msgid "Good. Let's keep it that way."
+msgstr "Good. Let's keep it that way."
+
+msgid "Good. Some rules matter."
+msgstr "Good. Some rules matter."
+
+msgid "Great. Now I'll worry all night."
+msgstr "Great. Now I'll worry all night."
+
+msgid "How was your day?"
+msgstr "How was your day?"
+
+msgid "How's the afternoon going?"
+msgstr "How's the afternoon going?"
+
+msgid "I can hear the pages."
+msgstr "I can hear the pages."
+
+msgid "I checked the rules."
+msgstr "I checked the rules."
+
+msgid "I forgot I had one."
+msgstr "I forgot I had one."
+
+msgid "I found something between the pages."
+msgstr "I found something between the pages."
+
+msgid "I had a feeling it would be."
+msgstr "I had a feeling it would be."
+
+msgid "I have a suspect."
+msgstr "I have a suspect."
+
+msgid "I knew it. I've seen the shelf."
+msgstr "I knew it. I've seen the shelf."
+
+msgid "I knew it. The good kind of reader."
+msgstr "I knew it. The good kind of reader."
+
+msgid "I knew you'd say yes."
+msgstr "I knew you'd say yes."
+
+msgid "I love counting."
+msgstr "I love counting."
+
+msgid "I nap all the time."
+msgstr "I nap all the time."
+
+msgid "I only have small ones."
+msgstr "I only have small ones."
+
+msgid "I speak from experience."
+msgstr "I speak from experience."
+
+msgid "I visit them at night."
+msgstr "I visit them at night."
+
+msgid "I won't tell anyone."
+msgstr "I won't tell anyone."
+
+msgid "I'd hate to keep them waiting."
+msgstr "I'd hate to keep them waiting."
+
+msgid "I'd rather not talk."
+msgstr "I'd rather not talk."
+
+msgid "I'll be back soon."
+msgstr "I'll be back soon."
+
+msgid "I'll give it back. Warm."
+msgstr "I'll give it back. Warm."
+
+msgid "I'll keep your place."
+msgstr "I'll keep your place."
+
+msgid "I'll look."
+msgstr "I'll look."
+
+msgid "I'll remind you."
+msgstr "I'll remind you."
+
+msgid "I'm good at that."
+msgstr "I'm good at that."
+
+msgid "I'm out of stars. Imagine one."
+msgstr "I'm out of stars. Imagine one."
+
+msgid "I'm the one who counts."
+msgstr "I'm the one who counts."
+
+msgid "I've noticed. Not a speck of dust."
+msgstr "I've noticed. Not a speck of dust."
+
+msgid "If I find the time."
+msgstr "If I find the time."
+
+msgid "If I were in a book, what kind would it be?"
+msgstr "If I were in a book, what kind would it be?"
+
+msgid "Impressive. And a bit worrying."
+msgstr "Impressive. And a bit worrying."
+
+msgid "In bed."
+msgstr "In bed."
+
+msgid "In big letters."
+msgstr "In big letters."
+
+msgid "Is it about books?"
+msgstr "Is it about books?"
+
+msgid "It didn't forget you."
+msgstr "It didn't forget you."
+
+msgid "It needed a rest."
+msgstr "It needed a rest."
+
+msgid "It's %s. Any reading planned?"
+msgstr "It's %s. Any reading planned?"
+
+msgid "It's %s. Reading day, surely?"
+msgstr "It's %s. Reading day, surely?"
+
+msgid "Later tonight."
+msgstr "Later tonight."
+
+msgid "Leave it where it is."
+msgstr "Leave it where it is."
+
+msgid "Let's start again today."
+msgstr "Let's start again today."
+
+msgid "Look at me."
+msgstr "Look at me."
+
+msgid "Lucky. I stayed here. On the shelf."
+msgstr "Lucky. I stayed here. On the shelf."
+
+msgid "Lucky. I've never left this shelf."
+msgstr "Lucky. I've never left this shelf."
+
+msgid "Mine are well looked after."
+msgstr "Mine are well looked after."
+
+msgid "Morning! How did you sleep?"
+msgstr "Morning! How did you sleep?"
+
+msgid "Never. Things in books are clues."
+msgstr "Never. Things in books are clues."
+
+msgid "No pressure? Really?"
+msgstr "No pressure? Really?"
+
+msgid "No reading yet today. Shall we fix that?"
+msgstr "No reading yet today. Shall we fix that?"
+
+msgid "No rush. The shelf isn't going anywhere."
+msgstr "No rush. The shelf isn't going anywhere."
+
+msgid "None at all. I'm just writing it on the wall."
+msgstr "None at all. I'm just writing it on the wall."
+
+msgid "Not today."
+msgstr "Not today."
+
+msgid "Not when you're reading."
+msgstr "Not when you're reading."
+
+msgid "Nothing with maps."
+msgstr "Nothing with maps."
+
+msgid "Nowhere exciting yet."
+msgstr "Nowhere exciting yet."
+
+msgid "Of course."
+msgstr "Of course."
+
+msgid "Of course. No pressure."
+msgstr "Of course. No pressure."
+
+msgid "Oh. I was using it as a blanket."
+msgstr "Oh. I was using it as a blanket."
+
+msgid "Okay. I'll just sit here."
+msgstr "Okay. I'll just sit here."
+
+msgid "Okay. They'll wait."
+msgstr "Okay. They'll wait."
+
+msgid "On the go."
+msgstr "On the go."
+
+msgid "On the sofa."
+msgstr "On the sofa."
+
+msgid "On track! I'm telling the whole shelf."
+msgstr "On track! I'm telling the whole shelf."
+
+msgid "On track. Quietly proud of you."
+msgstr "On track. Quietly proud of you."
+
+msgid "One page at a time. They all count."
+msgstr "One page at a time. They all count."
+
+msgid "Only a small one."
+msgstr "Only a small one."
+
+msgid "Only when I'm nervous."
+msgstr "Only when I'm nervous."
+
+msgid "Perfect."
+msgstr "Perfect."
+
+msgid "Perfect. I won't look."
+msgstr "Perfect. I won't look."
+
+msgid "Pretty good."
+msgstr "Pretty good."
+
+msgid "Psst. Can I ask you something?"
+msgstr "Psst. Can I ask you something?"
+
+msgid "Queues, buses, kitchens. I've seen you."
+msgstr "Queues, buses, kitchens. I've seen you."
+
+msgid "Quietly."
+msgstr "Quietly."
+
+msgid "Reading and travelling at once."
+msgstr "Reading and travelling at once."
+
+msgid "Right on track."
+msgstr "Right on track."
+
+msgid "Same. I check that the dog survives."
+msgstr "Same. I check that the dog survives."
+
+msgid "Saving it for later, then."
+msgstr "Saving it for later, then."
+
+msgid "Shh. They can hear you."
+msgstr "Shh. They can hear you."
+
+msgid "Short books are the best ones."
+msgstr "Short books are the best ones."
+
+msgid "Sitting came later."
+msgstr "Sitting came later."
+
+msgid "Small critter, tall shelf, very long ladder."
+msgstr "Small critter, tall shelf, very long ladder."
+
+msgid "So am I. Mostly."
+msgstr "So am I. Mostly."
+
+msgid "Sofas were invented for books."
+msgstr "Sofas were invented for books."
+
+msgid "Some chapters are corridors."
+msgstr "Some chapters are corridors."
+
+msgid "Someone has to."
+msgstr "Someone has to."
+
+msgid "Somewhere far away."
+msgstr "Somewhere far away."
+
+msgid "Sorry. Counting is how I show I care."
+msgstr "Sorry. Counting is how I show I care."
+
+msgid "Sorry. I just like it when you read."
+msgstr "Sorry. I just like it when you read."
+
+msgid "Still up? How was your day?"
+msgstr "Still up? How was your day?"
+
+msgid "Stop nagging."
+msgstr "Stop nagging."
+
+msgid "Suit yourself."
+msgstr "Suit yourself."
+
+msgid "Tea, a blanket and nothing bad happening."
+msgstr "Tea, a blanket and nothing bad happening."
+
+msgid "Tell me about it sometime."
+msgstr "Tell me about it sometime."
+
+msgid "Ten minutes count. Even sleepy ones."
+msgstr "Ten minutes count. Even sleepy ones."
+
+msgid "Ten minutes count. I checked."
+msgstr "Ten minutes count. I checked."
+
+msgid "That's allowed. Books are patient."
+msgstr "That's allowed. Books are patient."
+
+msgid "That's fine. Rest days count too."
+msgstr "That's fine. Rest days count too."
+
+msgid "That's my favourite kind of reader."
+msgstr "That's my favourite kind of reader."
+
+msgid "That's the spirit. I'll keep count."
+msgstr "That's the spirit. I'll keep count."
+
+msgid "The case of the missing bookmark."
+msgstr "The case of the missing bookmark."
+
+msgid "The offer stands until midnight."
+msgstr "The offer stands until midnight."
+
+msgid "The unread ones, maybe."
+msgstr "The unread ones, maybe."
+
+msgid "Then let's end it with a good chapter."
+msgstr "Then let's end it with a good chapter."
+
+msgid "Then let's pick one to visit."
+msgstr "Then let's pick one to visit."
+
+msgid "Then read something easy."
+msgstr "Then read something easy."
+
+msgid "Then slowly. Very slowly."
+msgstr "Then slowly. Very slowly."
+
+msgid "Then we start again. I'll still be here."
+msgstr "Then we start again. I'll still be here."
+
+msgid "Then you get the comfiest book tonight."
+msgstr "Then you get the comfiest book tonight."
+
+msgid "There's still time. Short books count."
+msgstr "There's still time. Short books count."
+
+msgid "They lead somewhere."
+msgstr "They lead somewhere."
+
+msgid "This book has been places."
+msgstr "This book has been places."
+
+msgid "Throw it away."
+msgstr "Throw it away."
+
+msgid "Tiring."
+msgstr "Tiring."
+
+msgid "Twice the places."
+msgstr "Twice the places."
+
+msgid "Want me to pick your next book?"
+msgstr "Want me to pick your next book?"
+
+msgid "Was it my bookmark?"
+msgstr "Was it my bookmark?"
+
+msgid "What should I read next?"
+msgstr "What should I read next?"
+
+msgid "What was it?"
+msgstr "What was it?"
+
+msgid "When you close a book, do the characters wait?"
+msgstr "When you close a book, do the characters wait?"
+
+msgid "Whenever you're ready."
+msgstr "Whenever you're ready."
+
+msgid "Where do you like to read the most?"
+msgstr "Where do you like to read the most?"
+
+msgid "Wonderful. I'll hold the lamp."
+msgstr "Wonderful. I'll hold the lamp."
+
+msgid "Yes! Lamp on. Pages ready."
+msgstr "Yes! Lamp on. Pages ready."
+
+msgid "Yes, a few chapters."
+msgstr "Yes, a few chapters."
+
+msgid "Yes, right now."
+msgstr "Yes, right now."
+
+msgid "Yes. I'll sleep on the cover, then."
+msgstr "Yes. I'll sleep on the cover, then."
+
+msgid "You can do it. One page at a time."
+msgstr "You can do it. One page at a time."
+
+msgid "You know which one."
+msgstr "You know which one."
+
+msgid "You're unstoppable today."
+msgstr "You're unstoppable today."
+
+msgid "You've opened every book you own."
+msgstr "You've opened every book you own."
+
+msgid "Your secret is safe with the shelf."
+msgstr "Your secret is safe with the shelf."
