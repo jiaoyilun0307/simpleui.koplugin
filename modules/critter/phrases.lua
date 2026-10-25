@@ -5,9 +5,10 @@
 --   f      facts about the moment: period, weekday (os.date "*t" wday: 1 is
 --          Sunday, 2 Monday ... 7 Saturday), weekday_name, month, day,
 --          streak, streak_record, streak_milestone, books_year, goal,
---          today_secs, today_pages, daily_goal_secs, user_name (goal and
---          daily_goal_secs are numbers, 0 meaning none; the rest may be nil,
---          user_name being the name the user gave the critter)
+--          today_secs, today_pages, stats_fresh, daily_goal_secs, user_name
+--          (goal and daily_goal_secs are numbers, 0 meaning none; the rest may
+--          be nil; stats_fresh is false while the statistics may be from a past
+--          day; user_name is the name the user told the critter)
 --   when   whether the phrase fits `f`
 --   text   main line;  sub  optional second line
 --   mood   critter state shown with the phrase

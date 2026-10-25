@@ -6553,17 +6553,9 @@ msgstr "Um mês novo, uma pilha nova."
 msgid "A marathon. I'm tired just watching."
 msgstr "Uma maratona. Só de ver já me cansei."
 
-#: modules/critter/dialog.lua:160
-msgid "A mind like an index. I'm honoured."
-msgstr "O teu cérebro é um índice. É uma honra."
-
 #: modules/critter/reaction_lines.lua:357
 msgid "A month. I kept busy. Mostly sulking."
 msgstr "Um mês. Fui-me entretendo. A amuar, sobretudo."
-
-#: modules/critter/dialog.lua:373
-msgid "A motion! Seconded by the entire shelf!"
-msgstr "Uma moção! Apoiada pela prateleira inteira!"
 
 #: modules/critter/reaction_lines.lua:74
 msgid "A new chapter of your legend is complete!"
@@ -6577,10 +6569,6 @@ msgstr "Um ano novo, uma saga nova! Avante!"
 msgid "A new year. Wake me in January. Oh, wait."
 msgstr "Um ano novo. Acorda-me em janeiro. Ah, espera."
 
-#: modules/critter/dialog.lua:271
-msgid "A noble soul! Bards will sing of this."
-msgstr "Uma alma nobre! Os bardos vão cantar sobre isso."
-
 #: modules/critter/reaction_lines.lua:125
 msgid "A page here, a page there."
 msgstr "Uma página aqui, outra ali."
@@ -6589,13 +6577,9 @@ msgstr "Uma página aqui, outra ali."
 msgid "A proper stretch."
 msgstr "Uma boa sessão."
 
-#: modules/critter/dialog.lua:270
-msgid "A purist. Boring. Respect."
-msgstr "Purismo. Aborrecido."
-
 #: modules/critter/dialog.lua:267
 msgid "A purist. I knew I liked you."
-msgstr "Um purista. Sabia que ia gostar de ti."
+msgstr "Purista. Eu sabia que gostava de ti."
 
 #: modules/critter/reaction_lines.lua:108
 msgid "A quick peek?"
@@ -6617,29 +6601,9 @@ msgstr "Curta. O meu tipo de esforço."
 msgid "A small goal, a big grin."
 msgstr "Um objetivo pequeno, um sorriso grande."
 
-#: modules/critter/dialog.lua:213
-msgid "A twist? In this economy?"
-msgstr "Um twist? Com esta crise?"
-
-#: modules/critter/dialog.lua:214
-msgid "A whisper of a twist. Exquisite."
-msgstr "Um sussurro de um twist. Requintado."
-
 #: modules/critter/reaction_lines.lua:222
 msgid "A whole year of unread pages awaits."
 msgstr "Um ano inteiro de páginas por ler à espera."
-
-#: modules/critter/dialog.lua:248
-msgid "A word that earned its place on the shelf!"
-msgstr "Uma palavra que mereceu o seu lugar na estante!"
-
-#: modules/critter/dialog.lua:231
-msgid "A word that tastes like old paper. Divine."
-msgstr "Uma palavra que sabe a papel antigo. Divinal."
-
-#: modules/critter/dialog.lua:67
-msgid "About what?"
-msgstr "Sobre quê?"
 
 #: modules/critter/reaction_lines.lua:163
 msgid "All that reading. Wake me when it's over."
@@ -6656,10 +6620,6 @@ msgstr "Um aniversário. Bolo? Não? Então, sesta."
 #: modules/critter/reaction_lines.lua:269
 msgid "An anniversary. I suppose I'm fond of you."
 msgstr "Um aniversário. Acho que tenho carinho por ti."
-
-#: modules/critter/dialog.lua:91
-msgid "An audience! I knew this day would come."
-msgstr "Público! Sabia que este dia ia chegar."
 
 #: modules/critter/reaction_lines.lua:164
 msgid "An epic voyage! The sagas will remember it!"
@@ -6689,33 +6649,13 @@ msgstr "Mais um para a pilha dos livros lidos."
 msgid "Another year. The pile is still there."
 msgstr "Mais um ano. A pilha continua lá."
 
-#: modules/critter/dialog.lua:518
-msgid "Asking for a friend. The friend is me."
-msgstr "É para um amigo. O amigo sou eu."
-
-#: modules/critter/dialog.lua:107
-msgid "Aww! We'll cheer them up with a visit!"
-msgstr "Ah! Vamos animá-los com uma visita!"
-
 #: modules/critter/reaction_lines.lua:182
 msgid "Battery low! Quick, adventure's calling!"
 msgstr "Bateria fraca! Depressa, a aventura chama!"
 
-#: modules/critter/dialog.lua:196
-msgid "Be careful what you wish for."
-msgstr "Cuidado com o que desejas."
-
 #: modules/critter/dialog.lua:261
 msgid "Be honest: do you read the last page first?"
 msgstr "Diz a verdade: lês a última página primeiro?"
-
-#: modules/critter/dialog.lua:323
-msgid "Bold words, with no book in hand."
-msgstr "Palavras ousadas, sem nenhum livro na mão."
-
-#: modules/critter/dialog.lua:584
-msgid "Bold. We'll see how long that lasts."
-msgstr "Ousado. Vamos ver quanto tempo dura."
 
 #: modules/critter/reaction_lines.lua:255
 msgid "Book Day. A holiday for my favourite thing: sitting."
@@ -6729,21 +6669,9 @@ msgstr "Livro terminado!"
 msgid "Books don't have feelings."
 msgstr "Os livros não têm sentimentos."
 
-#: modules/critter/dialog.lua:478
-msgid "Brave. I'd hide behind the sofa."
-msgstr "Que coragem. Eu escondia-me atrás do sofá."
-
-#: modules/critter/dialog.lua:480
-msgid "Brave. I'm already behind the sofa."
-msgstr "Que coragem. Eu já estou atrás do sofá."
-
 #: modules/critter/module_critter.lua:799
 msgid "Bubble style"
 msgstr "Estilo do balão"
-
-#: modules/critter/dialog.lua:120
-msgid "Careful. They can hear you."
-msgstr "Cuidado. Eles estão a ouvir-te."
 
 #: modules/critter/dialog.lua:578
 msgid "Challenge accepted"
@@ -6757,18 +6685,6 @@ msgstr "Desafio esmagado! Faz uma vénia, que mereces!"
 msgid "Challenge met!"
 msgstr "Desafio cumprido!"
 
-#: modules/critter/dialog.lua:287
-msgid "Chaos! I adore you."
-msgstr "Caos! Gosto disso!"
-
-#: modules/critter/dialog.lua:436
-msgid "Chapter one of a brand new saga!"
-msgstr "Capítulo um de uma saga novinha em folha!"
-
-#: modules/critter/dialog.lua:438
-msgid "Chapter one. Again. Wonderful."
-msgstr "Capítulo um. Outra vez. Maravilhoso."
-
 #: modules/critter/reaction_lines.lua:202
 msgid "Charging. About time."
 msgstr "A carregar. Já não era sem tempo."
@@ -6781,53 +6697,13 @@ msgstr "A carregar. Que maravilha."
 msgid "Charging. Wake me at 100%."
 msgstr "A carregar. Acorda-me nos 100%."
 
-#: modules/critter/dialog.lua:188
-msgid "Confetti! Dragons! A talking bookcase!"
-msgstr "Confetis! Dragões! Uma estante que fala!"
-
-#: modules/critter/dialog.lua:417
-msgid "Counting is my love language."
-msgstr "Contar é a minha forma de demonstrar amor."
-
 #: modules/critter/reaction_lines.lua:89
 msgid "DONE! Incredible!"
 msgstr "ACABADO! Inacreditável!"
 
-#: modules/critter/dialog.lua:63
-msgid "Dangerous AND brilliant. Naturally."
-msgstr "Perigoso E brilhante. Naturalmente."
-
-#: modules/critter/dialog.lua:61
-msgid "Dangerous! Thrilling! Say it again!"
-msgstr "Perigoso! Emocionante! Diz isso outra vez!"
-
-#: modules/critter/dialog.lua:56
-msgid "Dangerous."
-msgstr "Perigoso."
-
-#: modules/critter/dialog.lua:211
-msgid "Deal. A twist so quiet nobody notices."
-msgstr "Combinado. Um twist tão discreto que ninguém repara."
-
-#: modules/critter/dialog.lua:517
-msgid "Do the unread books judge us?"
-msgstr "Os livros por ler julgam-nos?"
-
-#: modules/critter/dialog.lua:520
-msgid "Do the unread books judge us? I think so."
-msgstr "Os livros por ler julgam-nos? Acho que sim."
-
 #: modules/critter/dialog.lua:98
 msgid "Do you think books get lonely?"
 msgstr "Achas que os livros se sentem sozinhos?"
-
-#: modules/critter/dialog.lua:170
-msgid "Dog-ears are better."
-msgstr "Dobrar os cantos das páginas é melhor."
-
-#: modules/critter/dialog.lua:71
-msgid "Don't answer. It's a trap."
-msgstr "Não respondas. É uma armadilha."
 
 #: modules/critter/dialog.lua:459
 msgid "Don't remind me."
@@ -6865,105 +6741,29 @@ msgstr "Até poucas páginas contam."
 msgid "Every day is a reading day."
 msgstr "Todos os dias são dias de leitura."
 
-#: modules/critter/dialog.lua:355
-msgid "Every day! Hooray!"
-msgstr "Todos os dias! Viva!"
-
 #: modules/critter/reaction_lines.lua:115
 msgid "Every page counts! Hooray for pages!"
 msgstr "Todas as páginas contam! Um viva para as páginas!"
-
-#: modules/critter/dialog.lua:562
-msgid "Every single book opened! Look at you!"
-msgstr "Todos os livros abertos!"
-
-#: modules/critter/dialog.lua:205
-msgid "Everyone's fine. The tea isn't."
-msgstr "Está tudo bem. O chá é que não."
-
-#: modules/critter/dialog.lua:294
-msgid "Exactly the energy I need."
-msgstr "Exatamente a energia de que preciso."
-
-#: modules/critter/dialog.lua:227
-msgid "Fancy. Very fancy."
-msgstr "Que requinte. Muito requinte."
 
 #: modules/critter/reaction_lines.lua:185
 msgid "Feeling a bit faint."
 msgstr "Ando com pouca energia."
 
-#: modules/critter/dialog.lua:88
-msgid "Finally, an audience."
-msgstr "Finalmente, público."
-
-#: modules/critter/dialog.lua:148
-msgid "Finders keepers."
-msgstr "Achado não é roubado."
-
-#: modules/critter/dialog.lua:145
-msgid "Finders keepers. Kidding. Mostly."
-msgstr "Achado não é roubado. Brincadeira. Talvez."
-
 #: modules/critter/reaction_lines.lua:135
 msgid "Fine. A decent session. Don't let it go to your head."
 msgstr "Pronto. Uma sessão decente. Não deixes que isso te suba à cabeça."
 
-#: modules/critter/dialog.lua:399
-msgid "Fine. But I'm not wearing a party hat."
-msgstr "Pronto. Mas não ponho chapéu de festa."
-
-#: modules/critter/dialog.lua:167
-msgid "Fine. But it's looking at me."
-msgstr "Pronto. Mas está a olhar para mim."
-
-#: modules/critter/dialog.lua:341
-msgid "Fine. I'll go be dramatic elsewhere."
-msgstr "Pronto. Vou fazer drama para outro lado."
-
 #: modules/critter/dialog.lua:43
 msgid "Fine. The books can wait. So can I."
-msgstr "Pronto. Os livros ficam à espera. Eu também."
-
-#: modules/critter/dialog.lua:41
-msgid "Fine. They'll keep."
-msgstr "Pronto. Ficam à espera."
+msgstr "Pronto. Os livros esperam. Eu também."
 
 #: modules/critter/reaction_lines.lua:410
 msgid "Fine. You did it. Don't expect a parade."
 msgstr "Pronto. Conseguiste. Não esperes um desfile."
 
-#: modules/critter/dialog.lua:192
-msgid "Gasp."
-msgstr "Ai."
-
-#: modules/critter/dialog.lua:278
-msgid "Gasp. Your secret is safe with the shelves."
-msgstr "*Arfa.* O teu segredo está seguro com as estantes."
-
-#: modules/critter/dialog.lua:105
-msgid "Go and visit one."
-msgstr "Vai ler um."
-
-#: modules/critter/dialog.lua:85
-msgid "Go on, I'm listening."
-msgstr "Força, estou a ouvir."
-
 #: modules/critter/reaction_lines.lua:260
 msgid "Go on, pick something shiny."
 msgstr "Anda, escolhe algo brilhante."
-
-#: modules/critter/dialog.lua:608
-msgid "Go, go, go! Pages await."
-msgstr "Força, força, força! As páginas esperam por ti."
-
-#: modules/critter/dialog.lua:498
-msgid "Goals are patient. Until they aren't."
-msgstr "Os objetivos são pacientes. Até deixarem de ser."
-
-#: modules/critter/dialog.lua:108
-msgid "Great. Now I'm thinking about it."
-msgstr "Ótimo. Agora fiquei a pensar nisso."
 
 #: modules/critter/reaction_lines.lua:270
 msgid "HAPPY ANNIVERSARY! I love us!"
@@ -6972,10 +6772,6 @@ msgstr "FELIZ ANIVERSÁRIO! Adoro-nos!"
 #: modules/critter/reaction_lines.lua:228
 msgid "HAPPY NEW YEAR! Let's read everything!"
 msgstr "FELIZ ANO NOVO! Vamos ler tudo!"
-
-#: modules/critter/dialog.lua:347
-msgid "Happy %s, I suppose?"
-msgstr "Feliz %s, suponho?"
 
 #: modules/critter/reaction_lines.lua:259
 msgid "Happy Book Day!"
@@ -6993,14 +6789,6 @@ msgstr "Feliz aniversário!"
 msgid "Happy new year!"
 msgstr "Feliz ano novo!"
 
-#: modules/critter/dialog.lua:353
-msgid "Hear, hear! Put it on a mug."
-msgstr "Muito bem! Imprime isso numa caneca."
-
-#: modules/critter/dialog.lua:173
-msgid "Heresy! Call the librarian."
-msgstr "Heresia! Chamem o bibliotecário!"
-
 #: modules/critter/reaction_lines.lua:320
 msgid "Hope the books were jealous."
 msgstr "Espero que os livros tenham tido ciúmes."
@@ -7009,38 +6797,18 @@ msgstr "Espero que os livros tenham tido ciúmes."
 msgid "I didn't want to say anything."
 msgstr "Não queria dizer nada."
 
-#: modules/critter/dialog.lua:252
-msgid "I don't have one."
-msgstr "Não tenho nenhuma."
-
 #: modules/critter/reaction_lines.lua:334
 msgid "I dusted the shelves twice."
 msgstr "Limpei o pó das estantes duas vezes."
-
-#: modules/critter/dialog.lua:139
-msgid "I found a bookmark in the sofa."
-msgstr "Encontrei um marcador no sofá."
 
 #: modules/critter/reaction_lines.lua:312
 msgid "I kept your place."
 msgstr "Guardei-te o lugar."
 
-#: modules/critter/dialog.lua:586
-msgid "I knew you'd say yes. I love this for us."
-msgstr "Sabia que ias dizer que sim."
-
 #: modules/critter/reaction_lines.lua:355
 #: modules/critter/reaction_lines.lua:408
 msgid "I never doubted you. Much."
 msgstr "Nunca duvidei de ti. Muito."
-
-#: modules/critter/dialog.lua:130
-msgid "I never thought about it."
-msgstr "Nunca pensei nisso."
-
-#: modules/critter/dialog.lua:333
-msgid "I preside over a kingdom of paper."
-msgstr "Presido um reino de papel."
 
 #: modules/critter/reaction_lines.lua:273
 msgid "I remember the day we met."
@@ -7049,30 +6817,6 @@ msgstr "Lembro-me do dia em que nos conhecemos."
 #: modules/critter/reaction_lines.lua:347
 msgid "I started talking to the bookcase."
 msgstr "Comecei a falar com a estante."
-
-#: modules/critter/dialog.lua:329
-msgid "I supervise the shelves."
-msgstr "Supervisiono as estantes."
-
-#: modules/critter/dialog.lua:332
-msgid "I supervise the shelves. Sitting down."
-msgstr "Supervisiono as estantes. Sem me levantar."
-
-#: modules/critter/dialog.lua:179
-msgid "I'd like a plot twist today."
-msgstr "Hoje apetecia-me um twist na história."
-
-#: modules/critter/dialog.lua:377
-msgid "I'd rather not discuss it."
-msgstr "Prefiro não falar disso."
-
-#: modules/critter/dialog.lua:453
-msgid "I'll be back, promise."
-msgstr "Volto já, prometo."
-
-#: modules/critter/dialog.lua:456
-msgid "I'll hold you to it. Gently. With snacks."
-msgstr "Fico à espera. Com petiscos."
 
 #: modules/critter/reaction_lines.lua:200
 msgid "I'll just rest my eyes."
@@ -7091,45 +6835,9 @@ msgstr "Estou a contar, sabes?"
 msgid "I'm not crying. It's dust."
 msgstr "Não estou a chorar. É pó."
 
-#: modules/critter/dialog.lua:485
-msgid "I'm on track."
-msgstr "Estou no bom caminho."
-
-#: modules/critter/dialog.lua:53
-msgid "I've been thinking."
-msgstr "Tenho estado a pensar."
-
 #: modules/critter/reaction_lines.lua:253
 msgid "I've been waiting all year."
 msgstr "Esperei o ano inteiro por isto."
-
-#: modules/critter/dialog.lua:159
-msgid "Impressive. I'd clap, but effort."
-msgstr "Impressionante. Aplaudia, mas dá trabalho."
-
-#: modules/critter/dialog.lua:559
-msgid "Impressive. Or suspicious."
-msgstr "Impressionante. Ou suspeito."
-
-#: modules/critter/dialog.lua:156
-msgid "Impressive. Terrifying, but impressive."
-msgstr "Impressionante. Assustador, mas impressionante."
-
-#: modules/critter/dialog.lua:244
-msgid "Invented by a publisher, loved by everyone."
-msgstr "Inventada por um editor, adorada por todos."
-
-#: modules/critter/dialog.lua:303
-msgid "Is it already nap o'clock?"
-msgstr "Já é hora da sesta?"
-
-#: modules/critter/dialog.lua:361
-msgid "Is it already?"
-msgstr "Já?"
-
-#: modules/critter/dialog.lua:302
-msgid "Is it morning already?"
-msgstr "Já é de manhã?"
 
 #: modules/critter/reaction_lines.lua:97
 msgid "It will be sung about."
@@ -7147,14 +6855,6 @@ msgstr "É o Dia Mundial do Livro!"
 msgid "It's a good listener."
 msgstr "Ouve muito bem."
 
-#: modules/critter/dialog.lua:540
-msgid "It's always about snacks, %s."
-msgstr "É sempre por causa dos petiscos, %s."
-
-#: modules/critter/dialog.lua:542
-msgid "It's always about snacks, %s. And naps."
-msgstr "É sempre por causa dos petiscos, %s. E das sestas."
-
 #: modules/critter/reaction_lines.lua:333
 msgid "It's been a while."
 msgstr "Já foi há algum tempo."
@@ -7163,53 +6863,25 @@ msgstr "Já foi há algum tempo."
 msgid "It's been so long."
 msgstr "Já passou tanto tempo."
 
-#: modules/critter/dialog.lua:443
-msgid "It's on holiday."
-msgstr "Está de férias."
-
 #: modules/critter/reaction_lines.lua:118
 msgid "Just a little one today."
 msgstr "Hoje foi só uma leitura rapidinha."
-
-#: modules/critter/dialog.lua:582
-msgid "Kindly. Mostly kindly."
-msgstr "Com bondade. Quase sempre com bondade."
-
-#: modules/critter/dialog.lua:338
-msgid "Leave me be."
-msgstr "Deixa-me em paz."
 
 #: modules/critter/dialog.lua:610
 msgid "Less talking. More reading."
 msgstr "Menos conversa. Mais leitura."
 
-#: modules/critter/dialog.lua:481
-msgid "Let it watch! We shall dazzle it!"
-msgstr "Deixa-o estar! Vamos deslumbrá-lo!"
-
-#: modules/critter/dialog.lua:475
-msgid "Let it watch."
-msgstr "Deixa-o estar."
-
 #: modules/critter/dialog.lua:393
 msgid "Let's keep it going."
-msgstr "Vamos manter o ritmo."
+msgstr "Vamos continuar."
 
 #: modules/critter/reaction_lines.lua:239
 msgid "Let's make it a good chapter."
 msgstr "Vamos fazer dele um bom capítulo."
 
-#: modules/critter/dialog.lua:433
-msgid "Let's restart it today."
-msgstr "Vamos recomeçar hoje."
-
 #: modules/critter/reaction_lines.lua:295
 msgid "Let's see what %s brings."
 msgstr "Vamos ver o que %s traz."
-
-#: modules/critter/dialog.lua:182
-msgid "Like what?"
-msgstr "Como o quê?"
 
 #: modules/critter/reaction_lines.lua:119
 msgid "Little reads add up."
@@ -7235,14 +6907,6 @@ msgstr "Bateria fraca. Finalmente, uma desculpa para dormir."
 msgid "Low battery. Typical."
 msgstr "Bateria fraca. Típico."
 
-#: modules/critter/dialog.lua:448
-msgid "Lucky streak. I could use a holiday."
-msgstr "Que sorte. Eu também precisava de férias."
-
-#: modules/critter/dialog.lua:208
-msgid "Make it a quiet one."
-msgstr "Que seja um twist discreto."
-
 #: modules/critter/reaction_lines.lua:153
 msgid "Marathon reader!"
 msgstr "Que maratonista da leitura!"
@@ -7251,33 +6915,13 @@ msgstr "Que maratonista da leitura!"
 msgid "Maybe later"
 msgstr "Talvez mais tarde"
 
-#: modules/critter/dialog.lua:124
-msgid "Mine are perfectly happy."
-msgstr "Os meus estão muito felizes."
-
 #: modules/critter/reaction_lines.lua:232
 msgid "Mine is to nap more. Yours?"
 msgstr "O meu é dormir mais sestas. E o teu?"
 
-#: modules/critter/dialog.lua:286
-msgid "Monstrous. And yet, efficient."
-msgstr "Seu monstro. Mas um monstro eficiente."
-
-#: modules/critter/dialog.lua:284
-msgid "Monstrous. I'll allow it."
-msgstr "Seu monstro! Mas aceito."
-
 #: modules/critter/reaction_lines.lua:189
 msgid "My light is fading! Fetch the charger, brave soul!"
 msgstr "A minha luz está a apagar-se! Traz o carregador, alma corajosa!"
-
-#: modules/critter/dialog.lua:235
-msgid "Nap."
-msgstr "Uma sesta."
-
-#: modules/critter/dialog.lua:462
-msgid "Never mentioned. Never existed."
-msgstr "Nunca falámos nisso. Nunca existiu."
 
 #: modules/critter/dialog.lua:264
 msgid "Never!"
@@ -7295,18 +6939,6 @@ msgstr "Ano novo, estante nova."
 msgid "Nice little session!"
 msgstr "Que bela sessão de leitura!"
 
-#: modules/critter/dialog.lua:404
-msgid "No pressure? Sure."
-msgstr "Sem pressão? Claro."
-
-#: modules/critter/dialog.lua:44
-msgid "No rush! The shelf isn't going anywhere."
-msgstr "Sem pressa! A estante não vai a lado nenhum."
-
-#: modules/critter/dialog.lua:424
-msgid "No shame in snacks."
-msgstr "Não há vergonha nenhuma em petiscar."
-
 #: modules/critter/reaction_lines.lua:101
 msgid "No spoilers. Okay, spoilers."
 msgstr "Sem spoilers. Pronto, com spoilers."
@@ -7322,43 +6954,11 @@ msgstr "Agora não."
 
 #: modules/critter/dialog.lua:561
 msgid "Not one unopened book. Show-off."
-msgstr "Nem um livro por abrir. Que exibicionismo."
-
-#: modules/critter/dialog.lua:320
-msgid "Not really."
-msgstr "Não propriamente."
+msgstr "Nem um livro por abrir. Gabarolas."
 
 #: modules/critter/reaction_lines.lua:176
 msgid "Not to be dramatic, but find a charger."
 msgstr "Sem querer fazer drama, mas arranja um carregador."
-
-#: modules/critter/dialog.lua:82
-msgid "Noted. I'll sulk quietly. Loudly."
-msgstr "Registado. Vou amuar em silêncio. Bem alto."
-
-#: modules/critter/dialog.lua:558
-msgid "Nothing unopened on your shelves."
-msgstr "Não há nada por abrir nas tuas estantes."
-
-#: modules/critter/dialog.lua:189
-msgid "Nothing. Nothing happens. Perfect."
-msgstr "Nada. Não acontece nada. Perfeito."
-
-#: modules/critter/dialog.lua:133
-msgid "Now you never will stop."
-msgstr "Agora nunca mais vais deixar de pensar nisso."
-
-#: modules/critter/dialog.lua:186
-msgid "Obviously."
-msgstr "Obviamente."
-
-#: modules/critter/dialog.lua:596
-msgid "Of course. No pressure at all."
-msgstr "Claro. Sem pressão nenhuma."
-
-#: modules/critter/dialog.lua:73
-msgid "Oh, EVERYTHING! Where do I even start?"
-msgstr "Ah, TUDO! Nem sei por onde começar!"
 
 #: modules/critter/reaction_lines.lua:315
 msgid "Oh, you remember me."
@@ -7368,45 +6968,13 @@ msgstr "Ah, lembraste-te de mim."
 msgid "On it!"
 msgstr "Deixa comigo!"
 
-#: modules/critter/dialog.lua:491
-msgid "On track and in legend. Metaphorically."
-msgstr "Um caminho lendário!"
-
-#: modules/critter/dialog.lua:488
-msgid "On track and on fire. Metaphorically."
-msgstr "No bom caminho e a todo o gás. Metaforicamente."
-
-#: modules/critter/dialog.lua:490
-msgid "On track. I'm proud, quietly."
-msgstr "No bom caminho. Tenho orgulho, em silêncio."
-
 #: modules/critter/reaction_lines.lua:95
 msgid "One more finished. I need to lie down."
 msgstr "Mais um terminado. Preciso de descansar."
 
-#: modules/critter/dialog.lua:537
-msgid "Only if it's about snacks."
-msgstr "Só se for sobre petiscos."
-
-#: modules/critter/dialog.lua:101
-msgid "Only the unread ones."
-msgstr "Só os que ninguém leu."
-
-#: modules/critter/dialog.lua:400
-msgid "Onward! Glory awaits in chapter nine!"
-msgstr "Avante! A glória espera no capítulo nove!"
-
-#: modules/critter/dialog.lua:229
-msgid "Ooh, so pretty! Say it again!"
-msgstr "Ui, tão bonita! Diz outra vez!"
-
 #: modules/critter/reaction_lines.lua:196
 msgid "Ooh, that's nice."
 msgstr "Ui, que bom."
-
-#: modules/critter/dialog.lua:504
-msgid "Ooh. A question for a committee of me."
-msgstr "Ui. Uma pergunta para uma comissão composta só por mim."
 
 #: modules/critter/dialog.lua:700
 msgid "Open it"
@@ -7420,25 +6988,9 @@ msgstr "Ou os mesmos. Eu não me importo."
 msgid "Our story is the finest of all libraries!"
 msgstr "A nossa história é a melhor de todas as bibliotecas!"
 
-#: modules/critter/dialog.lua:153
-msgid "Page 212, probably."
-msgstr "Página 212, provavelmente."
-
-#: modules/critter/dialog.lua:190
-msgid "Peace at last."
-msgstr "Paz, finalmente."
-
 #: modules/critter/module_critter.lua:801
 msgid "Pixel"
 msgstr "Pixel"
-
-#: modules/critter/dialog.lua:531
-msgid "Please don't."
-msgstr "Por favor, não."
-
-#: modules/critter/dialog.lua:446
-msgid "Postcards expected."
-msgstr "Fico à espera dos postais."
 
 #: modules/critter/reaction_lines.lua:203
 msgid "Power! Glorious power!"
@@ -7446,35 +6998,11 @@ msgstr "Energia! Gloriosa energia!"
 
 #: modules/critter/dialog.lua:511
 msgid "Psst, %s. Can I ask you something?"
-msgstr "Psst, %s. Posso fazer-te uma pergunta?"
+msgstr "Psst, %s. Posso perguntar-te uma coisa?"
 
 #: modules/critter/reaction_lines.lua:192
 msgid "Psst. The battery is low."
 msgstr "Psst. A bateria está fraca."
-
-#: modules/critter/dialog.lua:164
-msgid "Put it back."
-msgstr "Põe de volta no sítio."
-
-#: modules/critter/dialog.lua:357
-msgid "Put it on a banner. On a flag!"
-msgstr "Imprime isso numa bandeira!"
-
-#: modules/critter/dialog.lua:356
-msgid "Put it on a mug. Then leave me alone."
-msgstr "Imprime isso numa caneca. E depois deixa-me em paz."
-
-#: modules/critter/dialog.lua:370
-msgid "Put it to a vote. I'm in favour."
-msgstr "Vamos a votos. Sou a favor."
-
-#: modules/critter/dialog.lua:372
-msgid "Put it to a vote. Tomorrow."
-msgstr "Vamos a votos. Amanhã."
-
-#: modules/critter/dialog.lua:221
-msgid "Quick: favourite word?"
-msgstr "Depressa: palavra preferida?"
 
 #: modules/critter/module_critter.lua:851
 msgid "React to events"
@@ -7500,21 +7028,9 @@ msgstr "Hoje, ler é praticamente obrigatório."
 msgid "Resolutions?"
 msgstr "Resoluções?"
 
-#: modules/critter/dialog.lua:149
-msgid "Returned with full honours!"
-msgstr "Devolvido com todas as honras!"
-
 #: modules/critter/reaction_lines.lua:313
 msgid "Right where you left it."
 msgstr "Exatamente onde o deixaste."
-
-#: modules/critter/dialog.lua:59
-msgid "Rude. Accurate, but rude."
-msgstr "Que falta de educação. Mas tens razão."
-
-#: modules/critter/dialog.lua:62
-msgid "Rude. Also correct. I hate that."
-msgstr "Que falta de educação. E ainda por cima tens razão. Detesto isso."
 
 #: modules/critter/reaction_lines.lua:178
 msgid "Running on fumes."
@@ -7528,14 +7044,6 @@ msgstr "Amanhã à mesma hora?"
 msgid "Say something else…"
 msgstr "Diz outra coisa…"
 
-#: modules/critter/dialog.lua:119
-msgid "Says the one who needs a charger."
-msgstr "Diz aquele que precisa de um carregador."
-
-#: modules/critter/dialog.lua:224
-msgid "Serendipity."
-msgstr "Serendipidade."
-
 #: modules/critter/reaction_lines.lua:418
 msgid "Shall I pick a harder one tomorrow?"
 msgstr "Escolho um mais difícil amanhã?"
@@ -7544,29 +7052,13 @@ msgstr "Escolho um mais difícil amanhã?"
 msgid "Shall we pick up where we left off?"
 msgstr "Retomamos onde ficámos?"
 
-#: modules/critter/dialog.lua:521
-msgid "Shall we read them all and settle it?"
-msgstr "Lemo-los todos e tiramos isto a limpo?"
-
 #: modules/critter/reaction_lines.lua:111
 msgid "Short and sweet."
 msgstr "Curto e bom."
 
-#: modules/critter/dialog.lua:305
-msgid "Shouldn't we both be asleep?"
-msgstr "Não devíamos estar ambos a dormir?"
-
-#: modules/critter/dialog.lua:230
-msgid "Show-off."
-msgstr "Que exibicionismo."
-
 #: modules/critter/reaction_lines.lua:197
 msgid "Slurp. Thank you."
 msgstr "*Slurp.* Que bom."
-
-#: modules/critter/dialog.lua:618
-msgid "Small steps. One page is still a page."
-msgstr "Passos pequenos. Uma página continua a ser uma página."
 
 #: modules/critter/module_critter.lua:802
 msgid "Smooth"
@@ -7589,22 +7081,6 @@ msgstr "Então, como acabou?"
 msgid "Sometimes."
 msgstr "Às vezes."
 
-#: modules/critter/dialog.lua:199
-msgid "Sound advice. I'll ignore it."
-msgstr "Bom conselho. Vou ignorá-lo."
-
-#: modules/critter/dialog.lua:127
-msgid "Spoiled books. I approve."
-msgstr "Livros mimados. Aprovo."
-
-#: modules/critter/dialog.lua:202
-msgid "Spoilers, please."
-msgstr "Dá-me spoilers!"
-
-#: modules/critter/dialog.lua:528
-msgid "Spoken like a true diplomat, %s."
-msgstr "Falaste como um verdadeiro diplomata, %s."
-
 #: modules/critter/challenge.lua:221
 msgid "Start reading before %d:00 and it's yours."
 msgstr "Começa a ler antes das %d:00 e o desafio é teu."
@@ -7613,22 +7089,10 @@ msgstr "Começa a ler antes das %d:00 e o desafio é teu."
 msgid "Stop counting."
 msgstr "Para de contar."
 
-#: modules/critter/dialog.lua:449
-msgid "Sunburnt and ready to return, I hope!"
-msgstr "Espero que volte bronzeada e com a força toda!"
-
-#: modules/critter/dialog.lua:514
-msgid "Sure."
-msgstr "Claro."
-
 #: modules/critter/reaction_lines.lua:61
 #: modules/critter/reaction_lines.lua:83
 msgid "Take a bow. I'll hold the applause."
 msgstr "Faz uma vénia. Eu trato dos aplausos."
-
-#: modules/critter/dialog.lua:334
-msgid "Taxes are low."
-msgstr "Os impostos são baixos."
 
 #: modules/critter/reaction_lines.lua:79
 msgid "Tell me about %s. No spoilers. Okay, spoilers."
@@ -7641,10 +7105,6 @@ msgstr "Conta-me tudo. Devagar."
 #: modules/critter/dialog.lua:116
 msgid "Tell that to the ending of that one book."
 msgstr "Diz isso ao final daquele livro."
-
-#: modules/critter/dialog.lua:525
-msgid "That depends."
-msgstr "Depende."
 
 #: modules/critter/reaction_lines.lua:93
 msgid "That was a good one."
@@ -7662,25 +7122,9 @@ msgstr "Foi curto. Pisquei os olhos e perdi."
 msgid "That's how libraries get built."
 msgstr "É assim que se constroem as bibliotecas."
 
-#: modules/critter/dialog.lua:142
-msgid "That's mine!"
-msgstr "É meu!"
-
 #: modules/critter/reaction_lines.lua:415
 msgid "That's the best kind of promise."
 msgstr "É a melhor espécie de promessa."
-
-#: modules/critter/dialog.lua:104
-msgid "That's the saddest true thing I've heard."
-msgstr "É a coisa mais triste que já ouvi."
-
-#: modules/critter/dialog.lua:396
-msgid "That's the spirit! I'll sharpen the bookmarks."
-msgstr "É esse o espírito! Vou afiar os marcadores de livros."
-
-#: modules/critter/dialog.lua:581
-msgid "That's the spirit. I'll be watching."
-msgstr "É esse o espírito. Estarei a ver."
 
 #: modules/critter/reaction_lines.lua:147
 msgid "The book and you make a good team."
@@ -7698,45 +7142,21 @@ msgstr "O livro já está quentinho."
 msgid "The books were worried."
 msgstr "Os livros estavam preocupados."
 
-#: modules/critter/dialog.lua:185
-msgid "The butler did it. In a library. With a bookmark."
-msgstr "Foi o mordomo. Na biblioteca. Com um marcador."
-
 #: modules/critter/reaction_lines.lua:294
 msgid "The calendar flipped a page."
 msgstr "O calendário virou a página."
-
-#: modules/critter/dialog.lua:191
-msgid "The critter was the author all along!"
-msgstr "A mascote era a autora desde o início!"
 
 #: modules/critter/reaction_lines.lua:362
 msgid "The dust and I have become friends."
 msgstr "O pó e eu ficámos amigos."
 
-#: modules/critter/dialog.lua:495
-msgid "The goal can wait."
-msgstr "O objetivo pode esperar."
-
 #: modules/critter/reaction_lines.lua:365
 msgid "The hero returns after a long quest!"
 msgstr "O herói regressa de uma longa demanda!"
 
-#: modules/critter/dialog.lua:304
-msgid "The light is nice this time of day."
-msgstr "A luz está agradável a esta hora do dia."
-
-#: modules/critter/dialog.lua:593
-msgid "The offer stands. Dramatically."
-msgstr "A oferta mantém-se. Com todo o drama."
-
 #: modules/critter/reaction_lines.lua:344
 msgid "The reader returns! Let the feast begin!"
 msgstr "A leitura regressa! Que comece o banquete!"
-
-#: modules/critter/dialog.lua:439
-msgid "The sequel will be better. I can feel it!"
-msgstr "A sequela vai ser melhor. Sinto-o!"
 
 #: modules/critter/reaction_lines.lua:327
 msgid "The shelves missed you."
@@ -7758,33 +7178,9 @@ msgstr "O mundo pode esperar."
 msgid "The year turns like a page."
 msgstr "O ano vira como uma página."
 
-#: modules/critter/dialog.lua:255
-msgid "Then borrow mine: snack."
-msgstr "Então toma emprestada a minha: petisco."
-
-#: modules/critter/dialog.lua:621
-msgid "Then let's take it slowly. Very slowly."
-msgstr "Então vamos com calma. Com muita calma."
-
-#: modules/critter/dialog.lua:312
-msgid "Then we agree. A rare event."
-msgstr "Então estamos de acordo. Um acontecimento raro."
-
-#: modules/critter/dialog.lua:109
-msgid "Then we rescue them, one chapter at a time!"
-msgstr "Então resgatamo-los, um capítulo de cada vez!"
-
-#: modules/critter/dialog.lua:423
-msgid "Then we start again, with snacks."
-msgstr "Então recomeçamos, com petiscos."
-
 #: modules/critter/reaction_lines.lua:288
 msgid "Time flies when you're reading."
 msgstr "O tempo voa quando estamos a ler."
-
-#: modules/critter/dialog.lua:364
-msgid "Time is an illusion. So are weekends."
-msgstr "O tempo é uma ilusão. Os fins de semana também."
 
 #: modules/critter/reaction_lines.lua:256
 msgid "Today the whole world kneels to the book!"
@@ -7798,10 +7194,6 @@ msgstr "Hoje celebramos-te a ti e às tuas estantes."
 msgid "Together, with books."
 msgstr "Juntos, com livros."
 
-#: modules/critter/dialog.lua:534
-msgid "Too late. It's already in the air."
-msgstr "Tarde demais. A pergunta já está no ar."
-
 #: modules/critter/dialog.lua:615
 msgid "Tough one…"
 msgstr "Está difícil…"
@@ -7814,57 +7206,13 @@ msgstr "Experimenta «%s», de %s."
 msgid "Try “%s”."
 msgstr "Experimenta «%s»."
 
-#: modules/critter/dialog.lua:595
-msgid "Typical."
-msgstr "Típico."
-
-#: modules/critter/dialog.lua:380
-msgid "Understood. Let us speak of the weather. Damp."
-msgstr "Entendido. Falemos do tempo. Está húmido."
-
-#: modules/critter/dialog.lua:241
-msgid "Unputdownable."
-msgstr "Inexorável."
-
-#: modules/critter/dialog.lua:247
-msgid "Unputdownable. Unlike my energy levels."
-msgstr "Inexorável. Ok."
-
-#: modules/critter/dialog.lua:611
-msgid "Unstoppable! I can feel it!"
-msgstr "Imparável! Dá para sentir!"
-
-#: modules/critter/dialog.lua:330
-msgid "Very demanding work."
-msgstr "Trabalho muito exigente."
-
-#: modules/critter/dialog.lua:309
-msgid "Very much."
-msgstr "Sim."
-
 #: modules/critter/reaction_lines.lua:249
 msgid "WORLD BOOK DAY! The best day of the year!"
 msgstr "DIA MUNDIAL DO LIVRO! O melhor dia do ano!"
 
-#: modules/critter/dialog.lua:552
-msgid "Want something new to read?"
-msgstr "Queres ler algo novo?"
-
 #: modules/critter/reaction_lines.lua:167
 msgid "Was it that good?"
 msgstr "Foi assim tão bom?"
-
-#: modules/critter/dialog.lua:316
-msgid "We agree! Fetch the confetti!"
-msgstr "Estamos de acordo! Tragam os confetis!"
-
-#: modules/critter/dialog.lua:315
-msgid "We agree. Mark the calendar."
-msgstr "Estamos de acordo. Marca no calendário."
-
-#: modules/critter/dialog.lua:367
-msgid "Weekdays should be optional."
-msgstr "Os dias úteis deviam ser opcionais."
 
 #: modules/critter/reaction_lines.lua:326
 msgid "Welcome back!"
@@ -7890,81 +7238,25 @@ msgstr "Que sessão linda! Bravo!"
 msgid "What did I miss?"
 msgstr "O que é que perdi?"
 
-#: modules/critter/dialog.lua:326
-msgid "What do you do all day?"
-msgstr "O que fazes o dia todo?"
-
 #: modules/critter/dialog.lua:420
 msgid "What if I miss a day?"
-msgstr "E se faltar um dia?"
+msgstr "E se falhar um dia?"
 
 #: modules/critter/reaction_lines.lua:225
 msgid "What shall we read first?"
 msgstr "O que lemos primeiro?"
 
-#: modules/critter/dialog.lua:291
-msgid "What's a last page?"
-msgstr "O que é isso de uma última página?"
-
-#: modules/critter/dialog.lua:45
-msgid "Whenever you're ready. I'll be right here."
-msgstr "Quando quiseres. Estou aqui."
-
-#: modules/critter/dialog.lua:89
-msgid "Where was I? Ah, yes: snacks."
-msgstr "Onde é que eu ia? Ah, sim: petiscos."
-
-#: modules/critter/dialog.lua:75
-msgid "Whether I am a footnote or a whole chapter."
-msgstr "Se sou uma nota de rodapé ou um capítulo inteiro."
-
-#: modules/critter/dialog.lua:74
-msgid "Whether anyone reads me. Never mind."
-msgstr "Se alguém me lê. Esquece."
-
-#: modules/critter/dialog.lua:70
-msgid "Whether books read us back."
-msgstr "Se os livros também nos leem."
-
-#: modules/critter/dialog.lua:501
-msgid "Which book next?"
-msgstr "Qual é o livro a seguir?"
-
-#: modules/critter/dialog.lua:238
-msgid "Wise. Spoken like a scholar."
-msgstr "Sábio."
-
-#: modules/critter/dialog.lua:269
-msgid "Wonderful! Suspense is the best part!"
-msgstr "Maravilhoso! O suspense é o melhor!"
-
 #: modules/critter/reaction_lines.lua:248
 msgid "World Book Day. Fine. Read something."
 msgstr "Dia Mundial do Livro. Pronto. Lê alguma coisa."
-
-#: modules/critter/dialog.lua:158
-msgid "Wow! Page 212! You're amazing!"
-msgstr "Uau! Página 212! És incrível!"
-
-#: modules/critter/dialog.lua:246
-msgid "YES! The best kind of book!"
-msgstr "Como o destino. Um destino feliz, por sinal."
 
 #: modules/critter/reaction_lines.lua:358
 msgid "YOU'RE BACK! Confetti, everyone!"
 msgstr "VOLTASTE! Confetis para todos!"
 
-#: modules/critter/dialog.lua:398
-msgid "Yes yes yes! Let's gooo!"
-msgstr "Sim sim sim! Vamos láaa!"
-
-#: modules/critter/dialog.lua:314
-msgid "Yes! We agree! What a lovely day!"
-msgstr "Sim! Estamos de acordo! Que dia lindo!"
-
 #: modules/critter/dialog.lua:585
 msgid "Yes! You've got this!"
-msgstr "Sim! Tu consegues!"
+msgstr "Boa! Tu consegues!"
 
 #: modules/critter/dialog.lua:555
 msgid "Yes, pick one"
@@ -7973,10 +7265,6 @@ msgstr "Sim, escolhe um"
 #: modules/critter/reaction_lines.lua:354
 msgid "You came back."
 msgstr "Voltaste."
-
-#: modules/critter/dialog.lua:620
-msgid "You can do it! One page at a time!"
-msgstr "Consegues! Uma página de cada vez!"
 
 #: modules/critter/reaction_lines.lua:63
 msgid "You finished %s."
@@ -7990,10 +7278,6 @@ msgstr "Acabaste um livro."
 msgid "You had a book in your hand."
 msgstr "Tinhas um livro na mão."
 
-#: modules/critter/dialog.lua:117
-msgid "You know the one."
-msgstr "Tu sabes qual é."
-
 #: modules/critter/reaction_lines.lua:168
 msgid "You must tell me everything."
 msgstr "Tens de me contar tudo."
@@ -8005,10 +7289,6 @@ msgstr "Puseste-me a carregar."
 #: modules/critter/reaction_lines.lua:414
 msgid "You said you would, and you did."
 msgstr "Disseste que ias fazer, e fizeste."
-
-#: modules/critter/dialog.lua:543
-msgid "You understand me, %s. Truly."
-msgstr "Tu percebes-me, %s. A sério."
 
 #: modules/critter/reaction_lines.lua:337
 msgid "You're back! Best day ever!"
@@ -8037,28 +7317,6 @@ msgstr "És a minha pessoa preferida."
 #: modules/critter/dialog.lua:563
 msgid "You've opened them all. I'm so proud."
 msgstr "Abriste-os todos. Que orgulho."
-
-#: modules/critter/dialog.lua:147
-msgid "Yours! Take it! Take two!"
-msgstr "É teu! Leva! Leva dois!"
-
-#: modules/critter/dialog.lua:410
-msgid "Zero pressure, infinite splendour."
-msgstr "Zero pressão, esplendor infinito."
-
-#: modules/critter/dialog.lua:407
-msgid "Zero pressure. Pure vibes."
-msgstr "Pressão zero. Só boas energias."
-
-#: modules/critter/dialog.lua:409
-msgid "Zero. None. Breathe."
-msgstr "Zero. Nenhuma. Respira."
-
-#: modules/critter/dialog.lua:470
-msgid "%d book this year. The goal is watching."
-msgid_plural "%d books this year. The goal is watching."
-msgstr[0] "%d livro lido este ano. O objetivo está à espreita."
-msgstr[1] "%d livros lidos este ano. O objetivo está à espreita."
 
 #: modules/critter/reaction_lines.lua:310
 msgid "%d day away. I counted."
@@ -8143,3 +7401,727 @@ msgid "Read %d page today?"
 msgid_plural "Read %d pages today?"
 msgstr[0] "Ler %d página hoje?"
 msgstr[1] "Ler %d páginas hoje?"
+
+#: modules/critter/dialog.lua:53
+msgid "You've opened every book you own."
+msgstr "Já abriste todos os livros que tens."
+
+#: modules/critter/dialog.lua:54
+msgid "Impressive. And a bit worrying."
+msgstr "Impressionante. E um pouco preocupante."
+
+#: modules/critter/dialog.lua:57
+msgid "Every book opened! Look at you!"
+msgstr "Todos abertos! Olha só para ti!"
+
+#: modules/critter/dialog.lua:65
+msgid "Okay. They'll wait."
+msgstr "Está bem. Eles esperam."
+
+#: modules/critter/dialog.lua:68
+msgid "No rush. The shelf isn't going anywhere."
+msgstr "Sem pressa. A estante não foge."
+
+#: modules/critter/dialog.lua:69
+msgid "Whenever you're ready."
+msgstr "Quando quiseres."
+
+#: modules/critter/dialog.lua:81
+msgid "Psst. Can I ask you something?"
+msgstr "Psst. Posso perguntar-te uma coisa?"
+
+#: modules/critter/dialog.lua:85
+msgid "Of course."
+msgstr "Claro."
+
+#: modules/critter/dialog.lua:88
+msgid "When you close a book, do the characters wait?"
+msgstr "Ao fechares um livro, as personagens esperam?"
+
+#: modules/critter/dialog.lua:89
+msgid "I'd hate to keep them waiting."
+msgstr "Não as quero deixar à espera."
+
+#: modules/critter/dialog.lua:91
+msgid "Can I stay up while you read tonight?"
+msgstr "Hoje posso ficar a ver-te ler?"
+
+#: modules/critter/dialog.lua:96
+msgid "Is it about books?"
+msgstr "É sobre livros?"
+
+#: modules/critter/dialog.lua:99
+msgid "Everything is about books."
+msgstr "Tudo é sobre livros."
+
+#: modules/critter/dialog.lua:100
+msgid "Eventually."
+msgstr "Mais cedo ou mais tarde."
+
+#: modules/critter/dialog.lua:103
+msgid "Only a small one."
+msgstr "Só se for rápido."
+
+#: modules/critter/dialog.lua:106
+msgid "I only have small ones."
+msgstr "Eu só tenho perguntas rápidas."
+
+#: modules/critter/dialog.lua:107
+msgid "Look at me."
+msgstr "Prometo."
+
+#: modules/critter/dialog.lua:113
+msgid "Saving it for later, then."
+msgstr "Fica para depois, então."
+
+#: modules/critter/dialog.lua:115
+msgid "Fine. It'll keep."
+msgstr "Pronto. Não foge."
+
+#: modules/critter/dialog.lua:125
+msgid "Do you get lonely?"
+msgstr "E tu, sentes-te só?"
+
+#: modules/critter/dialog.lua:128
+msgid "Not when you're reading."
+msgstr "Não quando estás a ler."
+
+#: modules/critter/dialog.lua:129
+msgid "I can hear the pages."
+msgstr "Oiço as páginas."
+
+#: modules/critter/dialog.lua:131
+msgid "A little. Thanks for asking."
+msgstr "Um bocadinho. Ainda bem que perguntas."
+
+#: modules/critter/dialog.lua:135
+msgid "The unread ones, maybe."
+msgstr "Os que ninguém leu, talvez."
+
+#: modules/critter/dialog.lua:138
+msgid "I visit them at night."
+msgstr "Eu visito-os à noite."
+
+#: modules/critter/dialog.lua:139
+msgid "Someone has to."
+msgstr "Alguém tem de o fazer."
+
+#: modules/critter/dialog.lua:141
+msgid "Then let's pick one to visit."
+msgstr "Então vamos escolher um para visitar."
+
+#: modules/critter/dialog.lua:142
+msgid "Great. Now I'll worry all night."
+msgstr "Ótimo. Lá se vai o meu sono."
+
+#: modules/critter/dialog.lua:147
+msgid "Mine are well looked after."
+msgstr "Os meus são bem tratados."
+
+#: modules/critter/dialog.lua:150
+msgid "I've noticed. Not a speck of dust."
+msgstr "Já reparei. Nem um grão de pó."
+
+#: modules/critter/dialog.lua:151
+msgid "Almost."
+msgstr "Quase."
+
+#: modules/critter/dialog.lua:158
+msgid "You know which one."
+msgstr "Sabes bem qual."
+
+#: modules/critter/dialog.lua:160
+msgid "Shh. They can hear you."
+msgstr "Chiu. Eles ouvem-te."
+
+#: modules/critter/dialog.lua:167
+msgid "I found something between the pages."
+msgstr "Encontrei uma coisa entre as páginas."
+
+#: modules/critter/dialog.lua:170
+msgid "What was it?"
+msgstr "O que era?"
+
+#: modules/critter/dialog.lua:173
+msgid "An old bus ticket."
+msgstr "Um bilhete de autocarro antigo."
+
+#: modules/critter/dialog.lua:174
+msgid "This book has been places."
+msgstr "Este livro já viajou muito."
+
+#: modules/critter/dialog.lua:177
+msgid "Was it my bookmark?"
+msgstr "Era o meu marcador?"
+
+#: modules/critter/dialog.lua:180
+msgid "Oh. I was using it as a blanket."
+msgstr "Ah. Estava a usá-lo como cobertor."
+
+#: modules/critter/dialog.lua:181
+msgid "I'll give it back. Warm."
+msgstr "Já o devolvo. Quentinho."
+
+#: modules/critter/dialog.lua:183
+msgid "Yes. I'll sleep on the cover, then."
+msgstr "Era. Durmo na capa, então."
+
+#: modules/critter/dialog.lua:188
+msgid "Leave it where it is."
+msgstr "Deixa-o onde está."
+
+#: modules/critter/dialog.lua:191
+msgid "Done. It was holding someone's place."
+msgstr "Ok. Estava a marcar o sítio de alguém."
+
+#: modules/critter/dialog.lua:194
+msgid "Throw it away."
+msgstr "Deita-o fora."
+
+#: modules/critter/dialog.lua:197
+msgid "Never. Things in books are clues."
+msgstr "Nunca. Nos livros, tudo são pistas."
+
+#: modules/critter/dialog.lua:203
+msgid "If I were in a book, what kind would it be?"
+msgstr "Se eu vivesse num livro, de que género seria?"
+
+#: modules/critter/dialog.lua:206
+msgid "An adventure."
+msgstr "Uma aventura."
+
+#: modules/critter/dialog.lua:209
+msgid "Small critter, tall shelf, very long ladder."
+msgstr "Bicho pequeno, estante alta, escada enorme."
+
+#: modules/critter/dialog.lua:211
+msgid "A map! A sword! A tiny backpack!"
+msgstr "Um mapa! Uma espada! Uma mochila minúscula!"
+
+#: modules/critter/dialog.lua:215
+msgid "A cosy one."
+msgstr "Um aconchegante."
+
+#: modules/critter/dialog.lua:218
+msgid "Tea, a blanket and nothing bad happening."
+msgstr "Chá, uma manta e nada de mal a acontecer."
+
+#: modules/critter/dialog.lua:219
+msgid "Perfect."
+msgstr "Perfeito."
+
+#: modules/critter/dialog.lua:221
+msgid "A cosy one. Mostly naps."
+msgstr "Aconchegante. Quase só sestas."
+
+#: modules/critter/dialog.lua:225
+msgid "A mystery."
+msgstr "Um mistério."
+
+#: modules/critter/dialog.lua:228
+msgid "The case of the missing bookmark."
+msgstr "O caso do marcador desaparecido."
+
+#: modules/critter/dialog.lua:229
+msgid "I have a suspect."
+msgstr "Tenho um suspeito."
+
+#: modules/critter/dialog.lua:232
+msgid "A very short one."
+msgstr "Um muito curtinho."
+
+#: modules/critter/dialog.lua:235
+msgid "Short books are the best ones."
+msgstr "Os livros curtos são os melhores."
+
+#: modules/critter/dialog.lua:236
+msgid "Ask anyone my size."
+msgstr "Pergunta a quem tem o meu tamanho."
+
+#: modules/critter/dialog.lua:242
+msgid "Where do you like to read the most?"
+msgstr "Onde é que gostas mais de ler?"
+
+#: modules/critter/dialog.lua:245
+msgid "Anywhere I can."
+msgstr "Onde calhar."
+
+#: modules/critter/dialog.lua:248
+msgid "Queues, buses, kitchens. I've seen you."
+msgstr "Filas, autocarros, cozinhas. Eu já te vi."
+
+#: modules/critter/dialog.lua:250
+msgid "That's my favourite kind of reader."
+msgstr "Gosto mesmo de quem lê assim."
+
+#: modules/critter/dialog.lua:254
+msgid "On the go."
+msgstr "Em viagem."
+
+#: modules/critter/dialog.lua:257
+msgid "Reading and travelling at once."
+msgstr "Ler e viajar ao mesmo tempo."
+
+#: modules/critter/dialog.lua:258
+msgid "Twice the places."
+msgstr "O dobro dos sítios."
+
+#: modules/critter/dialog.lua:261
+msgid "On the sofa."
+msgstr "No sofá."
+
+#: modules/critter/dialog.lua:264
+msgid "Sofas were invented for books."
+msgstr "Os sofás foram inventados para os livros."
+
+#: modules/critter/dialog.lua:265
+msgid "Sitting came later."
+msgstr "Sentar veio só depois."
+
+#: modules/critter/dialog.lua:268
+msgid "In bed."
+msgstr "Na cama."
+
+#: modules/critter/dialog.lua:271
+msgid "Careful. Books fall on faces."
+msgstr "Cuidado. Os livros caem na cara."
+
+#: modules/critter/dialog.lua:272
+msgid "I speak from experience."
+msgstr "Falo por experiência."
+
+#: modules/critter/dialog.lua:286
+msgid "Good. Some rules matter."
+msgstr "Ainda bem. Há regras que importam."
+
+#: modules/critter/dialog.lua:287
+msgid "I knew it. The good kind of reader."
+msgstr "Eu sabia. Lês como deve ser."
+
+#: modules/critter/dialog.lua:291
+msgid "Only when I'm nervous."
+msgstr "Só quando estou nervoso."
+
+#: modules/critter/dialog.lua:294
+msgid "Same. I check that the dog survives."
+msgstr "Eu também. Vejo se o cão sobrevive."
+
+#: modules/critter/dialog.lua:295
+msgid "Every time."
+msgstr "Sempre."
+
+#: modules/critter/dialog.lua:301
+msgid "Your secret is safe with the shelf."
+msgstr "Segredo guardado. A estante não conta."
+
+#: modules/critter/dialog.lua:307
+msgid "Bold. You like to know who makes it."
+msgstr "Que ousadia. Gostas de saber quem se safa."
+
+#: modules/critter/dialog.lua:308
+msgid "I won't tell anyone."
+msgstr "Não conto a ninguém."
+
+#: modules/critter/dialog.lua:310
+msgid "Chaos. I respect it."
+msgstr "Caos. Respeito."
+
+#: modules/critter/dialog.lua:319
+msgid "Morning! How did you sleep?"
+msgstr "Bom dia! Dormiste bem?"
+
+#: modules/critter/dialog.lua:320
+msgid "How's the afternoon going?"
+msgstr "Como está a correr a tarde?"
+
+#: modules/critter/dialog.lua:321
+msgid "How was your day?"
+msgstr "Como correu o teu dia?"
+
+#: modules/critter/dialog.lua:322
+msgid "Still up? How was your day?"
+msgstr "Ainda a pé? Como correu o dia?"
+
+#: modules/critter/dialog.lua:326
+msgid "Pretty good."
+msgstr "Bastante bem."
+
+#: modules/critter/dialog.lua:329
+msgid "Good. Let's keep it that way."
+msgstr "Ótimo. Vamos continuar assim."
+
+#: modules/critter/dialog.lua:330
+msgid "A chapter helps."
+msgstr "Ler um capítulo ajuda."
+
+#: modules/critter/dialog.lua:332
+msgid "I had a feeling it would be."
+msgstr "Eu tinha um pressentimento."
+
+#: modules/critter/dialog.lua:337
+msgid "Could be better."
+msgstr "Podia ser melhor."
+
+#: modules/critter/dialog.lua:340
+msgid "Then let's end it with a good chapter."
+msgstr "Então vamos ler um bom capítulo para melhorar."
+
+#: modules/critter/dialog.lua:341
+msgid "Books are good at that."
+msgstr "Os livros têm jeito para isso."
+
+#: modules/critter/dialog.lua:343
+msgid "Then you get the comfiest book tonight."
+msgstr "Hoje tens direito ao livro mais confortável."
+
+#: modules/critter/dialog.lua:348
+msgid "Tiring."
+msgstr "Estou com sono."
+
+#: modules/critter/dialog.lua:351
+msgid "Then read something easy."
+msgstr "Então lê algo leve."
+
+#: modules/critter/dialog.lua:352
+msgid "Nothing with maps."
+msgstr "Nada com mapas."
+
+#: modules/critter/dialog.lua:355
+msgid "I'd rather not talk."
+msgstr "Prefiro não falar."
+
+#: modules/critter/dialog.lua:358
+msgid "Okay. I'll just sit here."
+msgstr "Está bem. Eu fico aqui."
+
+#: modules/critter/dialog.lua:359
+msgid "Quietly."
+msgstr "Em silêncio."
+
+#: modules/critter/dialog.lua:367
+msgid "It's %s. Reading day, surely?"
+msgstr "Hoje é %s. Dia de leitura, certo?"
+
+#: modules/critter/dialog.lua:369
+msgid "It's %s. Any reading planned?"
+msgstr "Hoje é %s. Há leitura nos planos?"
+
+#: modules/critter/dialog.lua:376
+msgid "Correct. You get a gold star."
+msgstr "Certo! Ganhaste uma estrela dourada."
+
+#: modules/critter/dialog.lua:377
+msgid "I'm out of stars. Imagine one."
+msgstr "Acabaram-se. Imagina uma."
+
+#: modules/critter/dialog.lua:379
+msgid "Correct. Don't get smug."
+msgstr "Certo. Mas não te armes."
+
+#: modules/critter/dialog.lua:383
+msgid "Yes, a few chapters."
+msgstr "Sim, uns capítulos."
+
+#: modules/critter/dialog.lua:386
+msgid "Perfect. I won't look."
+msgstr "Perfeito. Não vou espreitar."
+
+#: modules/critter/dialog.lua:387
+msgid "I'll look."
+msgstr "Vou espreitar."
+
+#: modules/critter/dialog.lua:390
+msgid "If I find the time."
+msgstr "Se tiver tempo."
+
+#: modules/critter/dialog.lua:393
+msgid "Ten minutes count. I checked."
+msgstr "Dez minutos contam. Eu verifiquei."
+
+#: modules/critter/dialog.lua:394
+msgid "I'm the one who counts."
+msgstr "Sou eu que conto."
+
+#: modules/critter/dialog.lua:396
+msgid "Ten minutes count. Even sleepy ones."
+msgstr "Dez minutos contam. Mesmo com sono."
+
+#: modules/critter/dialog.lua:401 modules/critter/dialog.lua:583
+msgid "Not today."
+msgstr "Hoje não."
+
+#: modules/critter/dialog.lua:404
+msgid "That's allowed. Books are patient."
+msgstr "Sem problema. Os livros são pacientes."
+
+#: modules/critter/dialog.lua:405
+msgid "So am I. Mostly."
+msgstr "Eu também. Quase sempre."
+
+#: modules/critter/dialog.lua:421
+msgid "That's the spirit. I'll keep count."
+msgstr "É assim mesmo. Eu vou contando."
+
+#: modules/critter/dialog.lua:422
+msgid "I love counting."
+msgstr "Adoro contar."
+
+#: modules/critter/dialog.lua:425 modules/critter/dialog.lua:427
+msgid "Day %d, here we come!"
+msgstr "Dia %d, aí vamos nós!"
+
+#: modules/critter/dialog.lua:428
+msgid "Good. I'd hate to start over."
+msgstr "Ainda bem. Recomeçar era chato."
+
+#: modules/critter/dialog.lua:433
+msgid "No pressure? Really?"
+msgstr "Sem pressão? A sério?"
+
+#: modules/critter/dialog.lua:436
+msgid "None at all. I'm just writing it on the wall."
+msgstr "Nenhuma. Só vou escrever isso na parede."
+
+#: modules/critter/dialog.lua:437
+msgid "In big letters."
+msgstr "Em letras grandes."
+
+#: modules/critter/dialog.lua:443
+msgid "Then we start again. I'll still be here."
+msgstr "Recomeçamos. Eu continuo cá."
+
+#: modules/critter/dialog.lua:449
+msgid "Sorry. Counting is how I show I care."
+msgstr "Desculpa. Contar é como mostro que gosto de ti."
+
+#: modules/critter/dialog.lua:458
+msgid "Let's start again today."
+msgstr "Vamos recomeçar hoje."
+
+#: modules/critter/dialog.lua:461
+msgid "Day one. My favourite kind."
+msgstr "Dia um. O meu preferido."
+
+#: modules/critter/dialog.lua:462
+msgid "Everything starts here."
+msgstr "Tudo começa aqui."
+
+#: modules/critter/dialog.lua:464
+msgid "Day one. Again. Fine."
+msgstr "Dia um. Outra vez. Pronto."
+
+#: modules/critter/dialog.lua:465
+msgid "Day one with you. My favourite."
+msgstr "Dia um contigo. O meu preferido."
+
+#: modules/critter/dialog.lua:470
+msgid "I'll be back soon."
+msgstr "Volto em breve."
+
+#: modules/critter/dialog.lua:473
+msgid "I'll keep your place."
+msgstr "Eu guardo-te o lugar."
+
+#: modules/critter/dialog.lua:474
+msgid "I'm good at that."
+msgstr "Tenho jeito para isso."
+
+#: modules/critter/dialog.lua:477
+msgid "It needed a rest."
+msgstr "Precisava de descanso."
+
+#: modules/critter/dialog.lua:480
+msgid "Fair. Even streaks get tired."
+msgstr "É justo. Até as sequências se cansam."
+
+#: modules/critter/dialog.lua:481
+msgid "I nap all the time."
+msgstr "Eu faço sestas a toda a hora."
+
+#: modules/critter/dialog.lua:487
+msgid "Forgotten. What streak?"
+msgstr "Já esqueci. Que sequência?"
+
+#: modules/critter/dialog.lua:495
+msgid "%d book this year. How's the goal looking?"
+msgid_plural "%d books this year. How's the goal looking?"
+msgstr[0] "%d livro este ano. Como vai a meta?"
+msgstr[1] "%d livros este ano. Como vai a meta?"
+
+#: modules/critter/dialog.lua:500
+msgid "Right on track."
+msgstr "Em dia."
+
+#: modules/critter/dialog.lua:503
+msgid "I knew it. I've seen the shelf."
+msgstr "Eu sabia. Já vi a estante."
+
+#: modules/critter/dialog.lua:505
+msgid "On track. Quietly proud of you."
+msgstr "Em dia. Que orgulho, cá dentro."
+
+#: modules/critter/dialog.lua:506
+msgid "On track! I'm telling the whole shelf."
+msgstr "Em dia! Vou contar à estante toda."
+
+#: modules/critter/dialog.lua:510
+msgid "What should I read next?"
+msgstr "O que leio a seguir?"
+
+#: modules/critter/dialog.lua:513
+msgid "A bit behind."
+msgstr "Tenho algum atraso."
+
+#: modules/critter/dialog.lua:516
+msgid "There's still time. Short books count."
+msgstr "Ainda há tempo. Os livros curtos contam."
+
+#: modules/critter/dialog.lua:517
+msgid "I checked the rules."
+msgstr "Fui ver as regras."
+
+#: modules/critter/dialog.lua:520
+msgid "I forgot I had one."
+msgstr "Esqueci-me que tinha uma."
+
+#: modules/critter/dialog.lua:523
+msgid "It didn't forget you."
+msgstr "Ela não se esqueceu de ti."
+
+#: modules/critter/dialog.lua:524
+msgid "Goals are like that."
+msgstr "As metas são assim."
+
+#: modules/critter/dialog.lua:532
+msgid "%d page today. Where did it take you?"
+msgid_plural "%d pages today. Where did they take you?"
+msgstr[0] "%d página hoje. Para onde te levou?"
+msgstr[1] "%d páginas hoje. Para onde te levaram?"
+
+#: modules/critter/dialog.lua:537
+msgid "Somewhere far away."
+msgstr "Para muito longe."
+
+#: modules/critter/dialog.lua:540
+msgid "Lucky. I've never left this shelf."
+msgstr "Que sorte. Eu nunca saí desta estante."
+
+#: modules/critter/dialog.lua:541
+msgid "Tell me about it sometime."
+msgstr "Um dia contas-me."
+
+#: modules/critter/dialog.lua:543
+msgid "Lucky. I stayed here. On the shelf."
+msgstr "Que sorte. Eu fiquei cá. Na estante."
+
+#: modules/critter/dialog.lua:548
+msgid "Can't say. Spoilers."
+msgstr "Não posso dizer. Spoilers."
+
+#: modules/critter/dialog.lua:551
+msgid "Fair. I'll find out myself one day."
+msgstr "Justo. Um dia descubro por mim."
+
+#: modules/critter/dialog.lua:554
+msgid "Nowhere exciting yet."
+msgstr "A lado nenhum, para já."
+
+#: modules/critter/dialog.lua:557
+msgid "Some chapters are corridors."
+msgstr "Há capítulos que são corredores."
+
+#: modules/critter/dialog.lua:558
+msgid "They lead somewhere."
+msgstr "Levam a algum lado."
+
+#: modules/critter/dialog.lua:564
+msgid "No reading yet today. Shall we fix that?"
+msgstr "Hoje ainda não leste. Vamos resolver isso?"
+
+#: modules/critter/dialog.lua:567
+msgid "Yes, right now."
+msgstr "Sim, agora mesmo."
+
+#: modules/critter/dialog.lua:570
+msgid "Wonderful. I'll hold the lamp."
+msgstr "Boa. Eu seguro o candeeiro."
+
+#: modules/critter/dialog.lua:572
+msgid "Yes! Lamp on. Pages ready."
+msgstr "Boa! Candeeiro aceso. Páginas a postos."
+
+#: modules/critter/dialog.lua:576
+msgid "Later tonight."
+msgstr "Logo à noite."
+
+#: modules/critter/dialog.lua:579
+msgid "I'll remind you."
+msgstr "Eu lembro-te."
+
+#: modules/critter/dialog.lua:580
+msgid "Gently."
+msgstr "Com jeitinho."
+
+#: modules/critter/dialog.lua:586
+msgid "That's fine. Rest days count too."
+msgstr "Tudo bem. Descansar também conta."
+
+#: modules/critter/dialog.lua:589
+msgid "Stop nagging."
+msgstr "Para de insistir."
+
+#: modules/critter/dialog.lua:592
+msgid "Sorry. I just like it when you read."
+msgstr "Desculpa. Gosto tanto quando lês."
+
+#: modules/critter/dialog.lua:600
+msgid "Want me to pick your next book?"
+msgstr "Queres que escolha o teu próximo livro?"
+
+#: modules/critter/dialog.lua:620
+msgid "Deal. I'll keep an eye on it."
+msgstr "Combinado. Vou ficar de olho."
+
+#: modules/critter/dialog.lua:621
+msgid "A friendly eye."
+msgstr "Um olho amigo."
+
+#: modules/critter/dialog.lua:623
+msgid "Bold. Let's see."
+msgstr "Que ousadia. Vamos ver."
+
+#: modules/critter/dialog.lua:625
+msgid "I knew you'd say yes."
+msgstr "Eu sabia que ias dizer que sim."
+
+#: modules/critter/dialog.lua:632
+msgid "The offer stands until midnight."
+msgstr "A oferta fica de pé até à meia-noite."
+
+#: modules/critter/dialog.lua:634
+msgid "Suit yourself."
+msgstr "Como quiseres."
+
+#: modules/critter/dialog.lua:635
+msgid "Of course. No pressure."
+msgstr "Claro. Sem pressão."
+
+#: modules/critter/dialog.lua:647
+msgid "Go! I'll be here, counting."
+msgstr "Força! Eu fico aqui a contar."
+
+#: modules/critter/dialog.lua:650
+msgid "You're unstoppable today."
+msgstr "Hoje ninguém te para."
+
+#: modules/critter/dialog.lua:657
+msgid "One page at a time. They all count."
+msgstr "Uma página de cada vez. Todas contam."
+
+#: modules/critter/dialog.lua:659
+msgid "You can do it. One page at a time."
+msgstr "Tu consegues. Uma página de cada vez."
+
+#: modules/critter/dialog.lua:660
+msgid "Then slowly. Very slowly."
+msgstr "Então devagar. Muito devagar."

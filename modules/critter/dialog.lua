@@ -11,9 +11,17 @@
 --           reply is then what the critter says when it finds none
 --   reply   { mood, text(f), sub?(f), by_tier? }: what the critter says back,
 --           shown as a phrase of the bubble. `by_tier[tier]` replaces the
---           fields it sets for a critter in that mood tier.
+--           fields it sets for a critter in that mood tier (`sub = false`
+--           drops the second line).
 -- `f` are the facts about the moment (see phrases.lua) and `tier` is the mood
 -- tier (see mood.lua).
+--
+-- Voice: a tiny critter living on the shelf, dry and warm, never sarcastic with
+-- the user. Its humour comes from its size and home and from the reading facts.
+-- Every answer of an exchange fits every opener variant, since 2-3 are dealt at
+-- random. A tier changes the attitude, not the volume; a declined answer costs
+-- mood but gets a gracious reply. Lines stay short (about 42 characters, 32 for
+-- `sub`) and free of puns that only work in English.
 
 local Deck = require("infra/sui_deck")
 local _    = require("infra/sui_i18n").translate
@@ -29,69 +37,82 @@ Dialog.DECK_KEY = "simpleui_critter_dialog_deck"
 local MAX_OPTIONS = 3
 local MIN_OPTIONS = 2
 
-local function hasName(f) return f.user_name ~= nil end
-
-local function named(text)
-    return function(f) return string.format(text(), f.user_name) end
+-- Today's figures are only offered once the statistics are fresh: on the first
+-- paint after a return they may be from a past day.
+local function readToday(f) return f.stats_fresh == true and (f.today_pages or 0) >= 1 end
+local function nothingToday(f)
+    return f.stats_fresh == true and f.today_secs == 0 and f.period ~= "morning"
 end
 
 -- Answer that turns a suggestion down.
 local function notNow() return _("Not now") end
 
+-- What the critter says when a book suggestion finds no unopened book.
+local NO_BOOK_REPLY = {
+    mood = "surprised",
+    text = function() return _("You've opened every book you own.") end,
+    sub  = function() return _("Impressive. And a bit worrying.") end,
+    by_tier = {
+        grumpy  = { mood = "grumpy", text = function() return _("Not one unopened book. Show-off.") end, sub = false },
+        happy   = { mood = "cheer",  text = function() return _("Every book opened! Look at you!") end, sub = false },
+        radiant = { mood = "love",   text = function() return _("You've opened them all. I'm so proud.") end, sub = false },
+    },
+}
+
 -- What the critter says when the user turns a book suggestion down.
 local LATER_REPLY = {
     mood = "playful",
-    text = function() return _("Fine. They'll keep.") end,
+    text = function() return _("Okay. They'll wait.") end,
     by_tier = {
         grumpy  = { mood = "grumpy", text = function() return _("Fine. The books can wait. So can I.") end },
-        happy   = { mood = "cheer",  text = function() return _("No rush! The shelf isn't going anywhere.") end },
-        radiant = { mood = "love",   text = function() return _("Whenever you're ready. I'll be right here.") end },
+        happy   = { mood = "cheer",  text = function() return _("No rush. The shelf isn't going anywhere.") end },
+        radiant = { mood = "love",   text = function() return _("Whenever you're ready.") end },
     },
 }
 
 Dialog.EXCHANGES = {
     -- General.
-    { id = "thinking",
+    { id = "question",
       when   = function() return true end,
-      opener = function() return _("I've been thinking.") end,
+      opener = function(f)
+          if f.user_name then
+              return string.format(_("Psst, %s. Can I ask you something?"), f.user_name)
+          end
+          return _("Psst. Can I ask you something?")
+      end,
       options = {
-          { id = "dangerous", delta = 1,
-            text  = function() return _("Dangerous.") end,
-            reply = {
-                mood = "playful",
-                text = function() return _("Rude. Accurate, but rude.") end,
-                by_tier = {
-                    happy   = { mood = "cheer", text = function() return _("Dangerous! Thrilling! Say it again!") end },
-                    grumpy  = { mood = "grumpy", text = function() return _("Rude. Also correct. I hate that.") end },
-                    radiant = { mood = "cheer",  text = function() return _("Dangerous AND brilliant. Naturally.") end },
-                },
-            } },
-          { id = "about", delta = 2,
-            text  = function() return _("About what?") end,
+          { id = "of_course", delta = 2,
+            text  = function() return _("Of course.") end,
             reply = {
                 mood = "curious",
-                text = function() return _("Whether books read us back.") end,
-                sub  = function() return _("Don't answer. It's a trap.") end,
+                text = function() return _("When you close a book, do the characters wait?") end,
+                sub  = function() return _("I'd hate to keep them waiting.") end,
                 by_tier = {
-                    happy   = { mood = "cheer", text = function() return _("Oh, EVERYTHING! Where do I even start?") end },
-                    grumpy  = { mood = "grumpy", text = function() return _("Whether anyone reads me. Never mind.") end },
-                    radiant = { mood = "cheer",  text = function() return _("Whether I am a footnote or a whole chapter.") end },
+                    radiant = { mood = "love", text = function() return _("Can I stay up while you read tonight?") end,
+                                sub = false },
                 },
+            } },
+          { id = "about_books", delta = 1,
+            text  = function() return _("Is it about books?") end,
+            reply = {
+                mood = "playful",
+                text = function() return _("Everything is about books.") end,
+                sub  = function() return _("Eventually.") end,
+            } },
+          { id = "small_one", delta = 0,
+            text  = function() return _("Only a small one.") end,
+            reply = {
+                mood = "playful",
+                text = function() return _("I only have small ones.") end,
+                sub  = function() return _("Look at me.") end,
             } },
           { id = "not_now", delta = -1,
             text  = function() return _("Not now.") end,
             reply = {
-                mood = "grumpy",
-                text = function() return _("Noted. I'll sulk quietly. Loudly.") end,
-            } },
-          { id = "go_on", delta = 3,
-            text  = function() return _("Go on, I'm listening.") end,
-            reply = {
-                mood = "happy",
-                text = function() return _("Finally, an audience.") end,
-                sub  = function() return _("Where was I? Ah, yes: snacks.") end,
+                mood = "shy",
+                text = function() return _("Saving it for later, then.") end,
                 by_tier = {
-                    radiant = { mood = "cheer", text = function() return _("An audience! I knew this day would come.") end },
+                    grumpy = { mood = "grumpy", text = function() return _("Fine. It'll keep.") end },
                 },
             } },
       } },
@@ -100,162 +121,155 @@ Dialog.EXCHANGES = {
       when   = function() return true end,
       opener = function() return _("Do you think books get lonely?") end,
       options = {
+          { id = "you_lonely", delta = 3,
+            text  = function() return _("Do you get lonely?") end,
+            reply = {
+                mood = "shy",
+                text = function() return _("Not when you're reading.") end,
+                sub  = function() return _("I can hear the pages.") end,
+                by_tier = {
+                    grumpy = { text = function() return _("A little. Thanks for asking.") end, sub = false },
+                },
+            } },
           { id = "unread", delta = 2,
-            text  = function() return _("Only the unread ones.") end,
+            text  = function() return _("The unread ones, maybe.") end,
             reply = {
                 mood = "sad",
-                text = function() return _("That's the saddest true thing I've heard.") end,
-                sub  = function() return _("Go and visit one.") end,
+                text = function() return _("I visit them at night.") end,
+                sub  = function() return _("Someone has to.") end,
                 by_tier = {
-                    happy   = { mood = "love", text = function() return _("Aww! We'll cheer them up with a visit!") end },
-                    grumpy  = { mood = "grumpy", text = function() return _("Great. Now I'm thinking about it.") end },
-                    radiant = { mood = "love",   text = function() return _("Then we rescue them, one chapter at a time!") end },
+                    happy  = { mood = "love", text = function() return _("Then let's pick one to visit.") end, sub = false },
+                    grumpy = { mood = "grumpy", text = function() return _("Great. Now I'll worry all night.") end,
+                               sub = false },
                 },
+            } },
+          { id = "looked_after", delta = 1,
+            text  = function() return _("Mine are well looked after.") end,
+            reply = {
+                mood = "happy",
+                text = function() return _("I've noticed. Not a speck of dust.") end,
+                sub  = function() return _("Almost.") end,
             } },
           { id = "no_feelings", delta = -1,
             text  = function() return _("Books don't have feelings.") end,
             reply = {
                 mood = "surprised",
                 text = function() return _("Tell that to the ending of that one book.") end,
-                sub  = function() return _("You know the one.") end,
+                sub  = function() return _("You know which one.") end,
                 by_tier = {
-                    grumpy  = { mood = "grumpy",  text = function() return _("Says the one who needs a charger.") end },
-                    radiant = { mood = "playful", text = function() return _("Careful. They can hear you.") end },
+                    radiant = { mood = "playful", text = function() return _("Shh. They can hear you.") end, sub = false },
                 },
-            } },
-          { id = "happy_books", delta = 1,
-            text  = function() return _("Mine are perfectly happy.") end,
-            reply = {
-                mood = "happy",
-                text = function() return _("Spoiled books. I approve.") end,
-            } },
-          { id = "never_thought", delta = 1,
-            text  = function() return _("I never thought about it.") end,
-            reply = {
-                mood = "curious",
-                text = function() return _("Now you never will stop.") end,
             } },
       } },
 
-    { id = "bookmark",
+    { id = "found",
       when   = function() return true end,
-      opener = function() return _("I found a bookmark in the sofa.") end,
+      opener = function() return _("I found something between the pages.") end,
       options = {
-          { id = "mine", delta = 1,
-            text  = function() return _("That's mine!") end,
+          { id = "what", delta = 2,
+            text  = function() return _("What was it?") end,
             reply = {
-                mood = "surprised",
-                text = function() return _("Finders keepers. Kidding. Mostly.") end,
-                by_tier = {
-                    happy   = { mood = "cheer", text = function() return _("Yours! Take it! Take two!") end },
-                    grumpy  = { mood = "grumpy", text = function() return _("Finders keepers.") end },
-                    radiant = { mood = "cheer",  text = function() return _("Returned with full honours!") end },
-                },
+                mood = "curious",
+                text = function() return _("An old bus ticket.") end,
+                sub  = function() return _("This book has been places.") end,
             } },
-          { id = "page", delta = 2,
-            text  = function() return _("Page 212, probably.") end,
-            reply = {
-                mood = "playful",
-                text = function() return _("Impressive. Terrifying, but impressive.") end,
-                by_tier = {
-                    happy   = { mood = "cheer", text = function() return _("Wow! Page 212! You're amazing!") end },
-                    meh     = { text = function() return _("Impressive. I'd clap, but effort.") end },
-                    radiant = { mood = "cheer", text = function() return _("A mind like an index. I'm honoured.") end },
-                },
-            } },
-          { id = "put_back", delta = -1,
-            text  = function() return _("Put it back.") end,
+          { id = "my_bookmark", delta = 1,
+            text  = function() return _("Was it my bookmark?") end,
             reply = {
                 mood = "shy",
-                text = function() return _("Fine. But it's looking at me.") end,
-            } },
-          { id = "dog_ears", delta = -2,
-            text  = function() return _("Dog-ears are better.") end,
-            reply = {
-                mood = "surprised",
-                text = function() return _("Heresy! Call the librarian.") end,
-            } },
-      } },
-
-    { id = "plot_twist",
-      when   = function() return true end,
-      opener = function() return _("I'd like a plot twist today.") end,
-      options = {
-          { id = "like_what", delta = 2,
-            text  = function() return _("Like what?") end,
-            reply = {
-                mood = "curious",
-                text = function() return _("The butler did it. In a library. With a bookmark.") end,
-                sub  = function() return _("Obviously.") end,
+                text = function() return _("Oh. I was using it as a blanket.") end,
+                sub  = function() return _("I'll give it back. Warm.") end,
                 by_tier = {
-                    happy   = { mood = "cheer", text = function() return _("Confetti! Dragons! A talking bookcase!") end },
-                    grumpy  = { mood = "grumpy", text = function() return _("Nothing. Nothing happens. Perfect.") end,
-                                sub = function() return _("Peace at last.") end },
-                    radiant = { mood = "cheer",  text = function() return _("The critter was the author all along!") end,
-                                sub = function() return _("Gasp.") end },
+                    grumpy = { mood = "grumpy", text = function() return _("Yes. I'll sleep on the cover, then.") end,
+                               sub = false },
                 },
             } },
-          { id = "careful", delta = 0,
-            text  = function() return _("Be careful what you wish for.") end,
-            reply = {
-                mood = "surprised",
-                text = function() return _("Sound advice. I'll ignore it.") end,
-            } },
-          { id = "spoilers", delta = 1,
-            text  = function() return _("Spoilers, please.") end,
-            reply = {
-                mood = "playful",
-                text = function() return _("Everyone's fine. The tea isn't.") end,
-            } },
-          { id = "quiet", delta = 1,
-            text  = function() return _("Make it a quiet one.") end,
-            reply = {
-                mood = "sleepy",
-                text = function() return _("Deal. A twist so quiet nobody notices.") end,
-                by_tier = {
-                    grumpy  = { mood = "grumpy", text = function() return _("A twist? In this economy?") end },
-                    radiant = { mood = "happy",  text = function() return _("A whisper of a twist. Exquisite.") end },
-                },
-            } },
-      } },
-
-    { id = "favourite_word",
-      when   = function() return true end,
-      opener = function() return _("Quick: favourite word?") end,
-      options = {
-          { id = "serendipity", delta = 2,
-            text  = function() return _("Serendipity.") end,
+          { id = "leave_it", delta = 0,
+            text  = function() return _("Leave it where it is.") end,
             reply = {
                 mood = "happy",
-                text = function() return _("Fancy. Very fancy.") end,
-                by_tier = {
-                    happy   = { mood = "love", text = function() return _("Ooh, so pretty! Say it again!") end },
-                    grumpy  = { mood = "grumpy", text = function() return _("Show-off.") end },
-                    radiant = { mood = "love",   text = function() return _("A word that tastes like old paper. Divine.") end },
-                },
+                text = function() return _("Done. It was holding someone's place.") end,
             } },
-          { id = "nap", delta = 1,
-            text  = function() return _("Nap.") end,
+          { id = "throw_away", delta = -1,
+            text  = function() return _("Throw it away.") end,
             reply = {
-                mood = "sleepy",
-                text = function() return _("Wise. Spoken like a scholar.") end,
+                mood = "surprised",
+                text = function() return _("Never. Things in books are clues.") end,
             } },
-          { id = "unputdownable", delta = 3,
-            text  = function() return _("Unputdownable.") end,
+      } },
+
+    { id = "what_book",
+      when   = function() return true end,
+      opener = function() return _("If I were in a book, what kind would it be?") end,
+      options = {
+          { id = "adventure", delta = 2,
+            text  = function() return _("An adventure.") end,
             reply = {
                 mood = "cheer",
-                text = function() return _("Invented by a publisher, loved by everyone.") end,
+                text = function() return _("Small critter, tall shelf, very long ladder.") end,
                 by_tier = {
-                    happy   = { mood = "cheer", text = function() return _("YES! The best kind of book!") end },
-                    meh     = { mood = "sleepy", text = function() return _("Unputdownable. Unlike my energy levels.") end },
-                    radiant = { text = function() return _("A word that earned its place on the shelf!") end },
+                    radiant = { mood = "party", text = function() return _("A map! A sword! A tiny backpack!") end },
                 },
             } },
-          { id = "none", delta = -1,
-            text  = function() return _("I don't have one.") end,
+          { id = "cosy", delta = 2,
+            text  = function() return _("A cosy one.") end,
             reply = {
-                mood = "shy",
-                text = function() return _("Then borrow mine: snack.") end,
+                mood = "happy",
+                text = function() return _("Tea, a blanket and nothing bad happening.") end,
+                sub  = function() return _("Perfect.") end,
+                by_tier = {
+                    meh = { mood = "sleepy", text = function() return _("A cosy one. Mostly naps.") end, sub = false },
+                },
+            } },
+          { id = "mystery", delta = 1,
+            text  = function() return _("A mystery.") end,
+            reply = {
+                mood = "curious",
+                text = function() return _("The case of the missing bookmark.") end,
+                sub  = function() return _("I have a suspect.") end,
+            } },
+          { id = "short", delta = 0,
+            text  = function() return _("A very short one.") end,
+            reply = {
+                mood = "playful",
+                text = function() return _("Short books are the best ones.") end,
+                sub  = function() return _("Ask anyone my size.") end,
+            } },
+      } },
+
+    { id = "reading_spot",
+      when   = function() return true end,
+      opener = function() return _("Where do you like to read the most?") end,
+      options = {
+          { id = "anywhere", delta = 2,
+            text  = function() return _("Anywhere I can.") end,
+            reply = {
+                mood = "cheer",
+                text = function() return _("Queues, buses, kitchens. I've seen you.") end,
+                by_tier = {
+                    radiant = { mood = "love", text = function() return _("That's my favourite kind of reader.") end },
+                },
+            } },
+          { id = "on_the_go", delta = 2,
+            text  = function() return _("On the go.") end,
+            reply = {
+                mood = "curious",
+                text = function() return _("Reading and travelling at once.") end,
+                sub  = function() return _("Twice the places.") end,
+            } },
+          { id = "sofa", delta = 1,
+            text  = function() return _("On the sofa.") end,
+            reply = {
+                mood = "happy",
+                text = function() return _("Sofas were invented for books.") end,
+                sub  = function() return _("Sitting came later.") end,
+            } },
+          { id = "bed", delta = 1,
+            text  = function() return _("In bed.") end,
+            reply = {
+                mood = "sleepy",
+                text = function() return _("Careful. Books fall on faces.") end,
+                sub  = function() return _("I speak from experience.") end,
             } },
       } },
 
@@ -269,32 +283,32 @@ Dialog.EXCHANGES = {
                 mood = "cheer",
                 text = function() return _("A purist. I knew I liked you.") end,
                 by_tier = {
-                    happy   = { mood = "cheer", text = function() return _("Wonderful! Suspense is the best part!") end },
-                    grumpy  = { mood = "grumpy", text = function() return _("A purist. Boring. Respect.") end },
-                    radiant = { mood = "love",   text = function() return _("A noble soul! Bards will sing of this.") end },
+                    grumpy  = { mood = "grumpy", text = function() return _("Good. Some rules matter.") end },
+                    radiant = { mood = "love",   text = function() return _("I knew it. The good kind of reader.") end },
                 },
+            } },
+          { id = "nervous", delta = 1,
+            text  = function() return _("Only when I'm nervous.") end,
+            reply = {
+                mood = "shy",
+                text = function() return _("Same. I check that the dog survives.") end,
+                sub  = function() return _("Every time.") end,
             } },
           { id = "sometimes", delta = 1,
             text  = function() return _("Sometimes.") end,
             reply = {
                 mood = "playful",
-                text = function() return _("Gasp. Your secret is safe with the shelves.") end,
+                text = function() return _("Your secret is safe with the shelf.") end,
             } },
           { id = "always", delta = 0,
             text  = function() return _("Always.") end,
             reply = {
                 mood = "surprised",
-                text = function() return _("Monstrous. I'll allow it.") end,
+                text = function() return _("Bold. You like to know who makes it.") end,
+                sub  = function() return _("I won't tell anyone.") end,
                 by_tier = {
-                    grumpy  = { mood = "grumpy",  text = function() return _("Monstrous. And yet, efficient.") end },
-                    radiant = { mood = "playful", text = function() return _("Chaos! I adore you.") end },
+                    radiant = { mood = "playful", text = function() return _("Chaos. I respect it.") end, sub = false },
                 },
-            } },
-          { id = "what_last_page", delta = 1,
-            text  = function() return _("What's a last page?") end,
-            reply = {
-                mood = "curious",
-                text = function() return _("Exactly the energy I need.") end,
             } },
       } },
 
@@ -302,85 +316,93 @@ Dialog.EXCHANGES = {
     { id = "time_of_day",
       when   = function() return true end,
       opener = function(f)
-          if f.period == "morning" then return _("Is it morning already?") end
-          if f.period == "afternoon" then return _("Is it already nap o'clock?") end
-          if f.period == "evening" then return _("The light is nice this time of day.") end
-          return _("Shouldn't we both be asleep?")
+          if f.period == "morning" then return _("Morning! How did you sleep?") end
+          if f.period == "afternoon" then return _("How's the afternoon going?") end
+          if f.period == "evening" then return _("How was your day?") end
+          return _("Still up? How was your day?")
       end,
       options = {
-          { id = "agree", delta = 1,
-            text  = function() return _("Very much.") end,
+          { id = "good", delta = 2,
+            text  = function() return _("Pretty good.") end,
             reply = {
                 mood = "happy",
-                text = function() return _("Then we agree. A rare event.") end,
+                text = function() return _("Good. Let's keep it that way.") end,
+                sub  = function() return _("A chapter helps.") end,
                 by_tier = {
-                    happy   = { mood = "cheer", text = function() return _("Yes! We agree! What a lovely day!") end },
-                    grumpy  = { mood = "grumpy", text = function() return _("We agree. Mark the calendar.") end },
-                    radiant = { mood = "cheer",  text = function() return _("We agree! Fetch the confetti!") end },
+                    radiant = { mood = "cheer", text = function() return _("I had a feeling it would be.") end,
+                                sub = false },
                 },
             } },
-          { id = "disagree", delta = 0,
-            text  = function() return _("Not really.") end,
+          { id = "could_be_better", delta = 1,
+            text  = function() return _("Could be better.") end,
             reply = {
-                mood = "playful",
-                text = function() return _("Bold words, with no book in hand.") end,
-            } },
-          { id = "all_day", delta = 2,
-            text  = function() return _("What do you do all day?") end,
-            reply = {
-                mood = "cheer",
-                text = function() return _("I supervise the shelves.") end,
-                sub  = function() return _("Very demanding work.") end,
+                mood = "shy",
+                text = function() return _("Then let's end it with a good chapter.") end,
+                sub  = function() return _("Books are good at that.") end,
                 by_tier = {
-                    meh     = { mood = "sleepy", text = function() return _("I supervise the shelves. Sitting down.") end },
-                    radiant = { text = function() return _("I preside over a kingdom of paper.") end,
-                                sub = function() return _("Taxes are low.") end },
+                    happy = { mood = "love", text = function() return _("Then you get the comfiest book tonight.") end,
+                              sub = false },
                 },
             } },
-          { id = "leave_me", delta = -2,
-            text  = function() return _("Leave me be.") end,
+          { id = "tiring", delta = 1,
+            text  = function() return _("Tiring.") end,
             reply = {
-                mood = "sad",
-                text = function() return _("Fine. I'll go be dramatic elsewhere.") end,
+                mood = "sleepy",
+                text = function() return _("Then read something easy.") end,
+                sub  = function() return _("Nothing with maps.") end,
+            } },
+          { id = "rather_not", delta = -1,
+            text  = function() return _("I'd rather not talk.") end,
+            reply = {
+                mood = "shy",
+                text = function() return _("Okay. I'll just sit here.") end,
+                sub  = function() return _("Quietly.") end,
             } },
       } },
 
     { id = "weekday",
       when   = function() return true end,
-      opener = function(f) return string.format(_("Happy %s, I suppose?"), f.weekday_name) end,
+      opener = function(f)
+          if f.weekday == 1 or f.weekday == 7 then
+              return string.format(_("It's %s. Reading day, surely?"), f.weekday_name)
+          end
+          return string.format(_("It's %s. Any reading planned?"), f.weekday_name)
+      end,
       options = {
-          { id = "reading_day", delta = 2,
+          { id = "every_day", delta = 2,
             text  = function() return _("Every day is a reading day.") end,
             reply = {
                 mood = "cheer",
-                text = function() return _("Hear, hear! Put it on a mug.") end,
+                text = function() return _("Correct. You get a gold star.") end,
+                sub  = function() return _("I'm out of stars. Imagine one.") end,
                 by_tier = {
-                    happy   = { mood = "cheer", text = function() return _("Every day! Hooray!") end },
-                    grumpy  = { mood = "grumpy", text = function() return _("Put it on a mug. Then leave me alone.") end },
-                    radiant = { text = function() return _("Put it on a banner. On a flag!") end },
+                    grumpy = { mood = "grumpy", text = function() return _("Correct. Don't get smug.") end, sub = false },
                 },
             } },
-          { id = "already", delta = 0,
-            text  = function() return _("Is it already?") end,
-            reply = {
-                mood = "surprised",
-                text = function() return _("Time is an illusion. So are weekends.") end,
-            } },
-          { id = "optional", delta = 1,
-            text  = function() return _("Weekdays should be optional.") end,
+          { id = "few_chapters", delta = 2,
+            text  = function() return _("Yes, a few chapters.") end,
             reply = {
                 mood = "playful",
-                text = function() return _("Put it to a vote. I'm in favour.") end,
+                text = function() return _("Perfect. I won't look.") end,
+                sub  = function() return _("I'll look.") end,
+            } },
+          { id = "find_time", delta = 1,
+            text  = function() return _("If I find the time.") end,
+            reply = {
+                mood = "curious",
+                text = function() return _("Ten minutes count. I checked.") end,
+                sub  = function() return _("I'm the one who counts.") end,
                 by_tier = {
-                    meh     = { mood = "sleepy", text = function() return _("Put it to a vote. Tomorrow.") end },
-                    radiant = { mood = "cheer",  text = function() return _("A motion! Seconded by the entire shelf!") end },
+                    meh = { mood = "sleepy", text = function() return _("Ten minutes count. Even sleepy ones.") end,
+                            sub = false },
                 },
             } },
-          { id = "rather_not", delta = -1,
-            text  = function() return _("I'd rather not discuss it.") end,
+          { id = "not_today", delta = -1,
+            text  = function() return _("Not today.") end,
             reply = {
                 mood = "shy",
-                text = function() return _("Understood. Let us speak of the weather. Damp.") end,
+                text = function() return _("That's allowed. Books are patient.") end,
+                sub  = function() return _("So am I. Mostly.") end,
             } },
       } },
 
@@ -396,35 +418,35 @@ Dialog.EXCHANGES = {
             text  = function() return _("Let's keep it going.") end,
             reply = {
                 mood = "cheer",
-                text = function() return _("That's the spirit! I'll sharpen the bookmarks.") end,
+                text = function() return _("That's the spirit. I'll keep count.") end,
+                sub  = function() return _("I love counting.") end,
                 by_tier = {
-                    happy   = { mood = "cheer", text = function() return _("Yes yes yes! Let's gooo!") end },
-                    grumpy  = { mood = "grumpy", text = function() return _("Fine. But I'm not wearing a party hat.") end },
-                    radiant = { text = function() return _("Onward! Glory awaits in chapter nine!") end },
+                    happy   = { mood = "party", sub = false,
+                                text = function(f) return string.format(_("Day %d, here we come!"), f.streak + 1) end },
+                    radiant = { mood = "party", sub = false,
+                                text = function(f) return string.format(_("Day %d, here we come!"), f.streak + 1) end },
+                    grumpy  = { mood = "grumpy", text = function() return _("Good. I'd hate to start over.") end,
+                                sub = false },
                 },
             } },
-          { id = "no_pressure", delta = 1,
-            text  = function() return _("No pressure? Sure.") end,
+          { id = "really", delta = 1,
+            text  = function() return _("No pressure? Really?") end,
             reply = {
                 mood = "playful",
-                text = function() return _("Zero pressure. Pure vibes.") end,
-                by_tier = {
-                    grumpy  = { mood = "grumpy", text = function() return _("Zero. None. Breathe.") end },
-                    radiant = { mood = "cheer",  text = function() return _("Zero pressure, infinite splendour.") end },
-                },
-            } },
-          { id = "stop_counting", delta = -1,
-            text  = function() return _("Stop counting.") end,
-            reply = {
-                mood = "shy",
-                text = function() return _("Counting is my love language.") end,
+                text = function() return _("None at all. I'm just writing it on the wall.") end,
+                sub  = function() return _("In big letters.") end,
             } },
           { id = "miss_a_day", delta = 0,
             text  = function() return _("What if I miss a day?") end,
             reply = {
                 mood = "curious",
-                text = function() return _("Then we start again, with snacks.") end,
-                sub  = function() return _("No shame in snacks.") end,
+                text = function() return _("Then we start again. I'll still be here.") end,
+            } },
+          { id = "stop_counting", delta = -1,
+            text  = function() return _("Stop counting.") end,
+            reply = {
+                mood = "shy",
+                text = function() return _("Sorry. Counting is how I show I care.") end,
             } },
       } },
 
@@ -433,118 +455,141 @@ Dialog.EXCHANGES = {
       opener = function() return _("The streak took a little break.") end,
       options = {
           { id = "restart", delta = 3,
-            text  = function() return _("Let's restart it today.") end,
+            text  = function() return _("Let's start again today.") end,
             reply = {
                 mood = "cheer",
-                text = function() return _("Chapter one of a brand new saga!") end,
+                text = function() return _("Day one. My favourite kind.") end,
+                sub  = function() return _("Everything starts here.") end,
                 by_tier = {
-                    grumpy  = { mood = "grumpy", text = function() return _("Chapter one. Again. Wonderful.") end },
-                    radiant = { text = function() return _("The sequel will be better. I can feel it!") end },
+                    grumpy  = { mood = "grumpy", text = function() return _("Day one. Again. Fine.") end, sub = false },
+                    radiant = { mood = "love",   text = function() return _("Day one with you. My favourite.") end,
+                                sub = false },
                 },
             } },
-          { id = "holiday", delta = 1,
-            text  = function() return _("It's on holiday.") end,
-            reply = {
-                mood = "playful",
-                text = function() return _("Postcards expected.") end,
-                by_tier = {
-                    meh     = { mood = "sleepy", text = function() return _("Lucky streak. I could use a holiday.") end },
-                    radiant = { mood = "cheer",  text = function() return _("Sunburnt and ready to return, I hope!") end },
-                },
-            } },
-          { id = "promise", delta = 2,
-            text  = function() return _("I'll be back, promise.") end,
+          { id = "back_soon", delta = 2,
+            text  = function() return _("I'll be back soon.") end,
             reply = {
                 mood = "shy",
-                text = function() return _("I'll hold you to it. Gently. With snacks.") end,
+                text = function() return _("I'll keep your place.") end,
+                sub  = function() return _("I'm good at that.") end,
             } },
-          { id = "dont_remind", delta = -2,
+          { id = "needed_rest", delta = 1,
+            text  = function() return _("It needed a rest.") end,
+            reply = {
+                mood = "playful",
+                text = function() return _("Fair. Even streaks get tired.") end,
+                sub  = function() return _("I nap all the time.") end,
+            } },
+          { id = "dont_remind", delta = -1,
             text  = function() return _("Don't remind me.") end,
             reply = {
                 mood = "shy",
-                text = function() return _("Never mentioned. Never existed.") end,
+                text = function() return _("Forgotten. What streak?") end,
             } },
       } },
 
-    -- Books this year.
+    -- Books this year. "What should I read next?" suggests a book (talk.lua).
     { id = "goal_watching",
       when   = function(f) return f.books_year ~= nil and f.books_year >= 1 and f.goal > 0 end,
       opener = function(f)
-          return string.format(N_("%d book this year. The goal is watching.",
-              "%d books this year. The goal is watching.", f.books_year), f.books_year)
+          return string.format(N_("%d book this year. How's the goal looking?",
+              "%d books this year. How's the goal looking?", f.books_year), f.books_year)
       end,
       options = {
-          { id = "let_it", delta = 2,
-            text  = function() return _("Let it watch.") end,
-            reply = {
-                mood = "playful",
-                text = function() return _("Brave. I'd hide behind the sofa.") end,
-                by_tier = {
-                    grumpy  = { mood = "grumpy", text = function() return _("Brave. I'm already behind the sofa.") end },
-                    radiant = { mood = "cheer",  text = function() return _("Let it watch! We shall dazzle it!") end },
-                },
-            } },
           { id = "on_track", delta = 2,
-            text  = function() return _("I'm on track.") end,
+            text  = function() return _("Right on track.") end,
             reply = {
                 mood = "cheer",
-                text = function() return _("On track and on fire. Metaphorically.") end,
+                text = function() return _("I knew it. I've seen the shelf.") end,
                 by_tier = {
-                    meh     = { mood = "happy", text = function() return _("On track. I'm proud, quietly.") end },
-                    radiant = { mood = "love",  text = function() return _("On track and in legend. Metaphorically.") end },
+                    meh     = { mood = "happy", text = function() return _("On track. Quietly proud of you.") end },
+                    radiant = { mood = "party", text = function() return _("On track! I'm telling the whole shelf.") end },
                 },
             } },
-          { id = "can_wait", delta = -1,
-            text  = function() return _("The goal can wait.") end,
+          { id = "which_next", delta = 1, recommend = true,
+            text  = function() return _("What should I read next?") end,
+            reply = NO_BOOK_REPLY },
+          { id = "behind", delta = 0,
+            text  = function() return _("A bit behind.") end,
             reply = {
                 mood = "curious",
-                text = function() return _("Goals are patient. Until they aren't.") end,
+                text = function() return _("There's still time. Short books count.") end,
+                sub  = function() return _("I checked the rules.") end,
             } },
-          { id = "which_next", delta = 1,
-            text  = function() return _("Which book next?") end,
+          { id = "forgot", delta = 0,
+            text  = function() return _("I forgot I had one.") end,
             reply = {
-                mood = "curious",
-                text = function() return _("Ooh. A question for a committee of me.") end,
+                mood = "surprised",
+                text = function() return _("It didn't forget you.") end,
+                sub  = function() return _("Goals are like that.") end,
             } },
       } },
 
-    -- The name the user gave the critter.
-    { id = "question",
-      when   = hasName,
-      opener = function(f) return string.format(_("Psst, %s. Can I ask you something?"), f.user_name) end,
+    -- Today's reading.
+    { id = "today_read",
+      when   = readToday,
+      opener = function(f)
+          return string.format(N_("%d page today. Where did it take you?",
+              "%d pages today. Where did they take you?", f.today_pages), f.today_pages)
+      end,
       options = {
-          { id = "sure", delta = 1,
-            text  = function() return _("Sure.") end,
+          { id = "far_away", delta = 2,
+            text  = function() return _("Somewhere far away.") end,
             reply = {
-                mood = "curious",
-                text = function() return _("Do the unread books judge us?") end,
-                sub  = function() return _("Asking for a friend. The friend is me.") end,
+                mood = "love",
+                text = function() return _("Lucky. I've never left this shelf.") end,
+                sub  = function() return _("Tell me about it sometime.") end,
                 by_tier = {
-                    grumpy  = { mood = "grumpy", text = function() return _("Do the unread books judge us? I think so.") end },
-                    radiant = { mood = "cheer",  text = function() return _("Shall we read them all and settle it?") end },
+                    grumpy = { mood = "grumpy", text = function() return _("Lucky. I stayed here. On the shelf.") end,
+                               sub = false },
                 },
             } },
-          { id = "depends", delta = 0,
-            text  = function() return _("That depends.") end,
+          { id = "spoilers", delta = 1,
+            text  = function() return _("Can't say. Spoilers.") end,
             reply = {
                 mood = "playful",
-                text = named(function() return _("Spoken like a true diplomat, %s.") end),
+                text = function() return _("Fair. I'll find out myself one day.") end,
             } },
-          { id = "please_dont", delta = -1,
-            text  = function() return _("Please don't.") end,
+          { id = "nowhere", delta = 0,
+            text  = function() return _("Nowhere exciting yet.") end,
             reply = {
-                mood = "surprised",
-                text = function() return _("Too late. It's already in the air.") end,
+                mood = "curious",
+                text = function() return _("Some chapters are corridors.") end,
+                sub  = function() return _("They lead somewhere.") end,
             } },
-          { id = "snacks", delta = 2,
-            text  = function() return _("Only if it's about snacks.") end,
+      } },
+
+    { id = "not_yet_today",
+      when   = nothingToday,
+      opener = function() return _("No reading yet today. Shall we fix that?") end,
+      options = {
+          { id = "right_now", delta = 3,
+            text  = function() return _("Yes, right now.") end,
             reply = {
                 mood = "cheer",
-                text = named(function() return _("It's always about snacks, %s.") end),
+                text = function() return _("Wonderful. I'll hold the lamp.") end,
                 by_tier = {
-                    meh     = { mood = "sleepy", text = named(function() return _("It's always about snacks, %s. And naps.") end) },
-                    radiant = { mood = "love",   text = named(function() return _("You understand me, %s. Truly.") end) },
+                    radiant = { mood = "party", text = function() return _("Yes! Lamp on. Pages ready.") end },
                 },
+            } },
+          { id = "later_tonight", delta = 1,
+            text  = function() return _("Later tonight.") end,
+            reply = {
+                mood = "happy",
+                text = function() return _("I'll remind you.") end,
+                sub  = function() return _("Gently.") end,
+            } },
+          { id = "not_today", delta = 0,
+            text  = function() return _("Not today.") end,
+            reply = {
+                mood = "shy",
+                text = function() return _("That's fine. Rest days count too.") end,
+            } },
+          { id = "stop_nagging", delta = -1,
+            text  = function() return _("Stop nagging.") end,
+            reply = {
+                mood = "shy",
+                text = function() return _("Sorry. I just like it when you read.") end,
             } },
       } },
 
@@ -552,20 +597,11 @@ Dialog.EXCHANGES = {
     -- book (talk.lua); its reply is what the critter says when there is none.
     { id = "read_next",
       when   = function() return true end,
-      opener = function() return _("Want something new to read?") end,
+      opener = function() return _("Want me to pick your next book?") end,
       options = {
           { id = "yes", delta = 1, recommend = true,
             text  = function() return _("Yes, pick one") end,
-            reply = {
-                mood = "surprised",
-                text = function() return _("Nothing unopened on your shelves.") end,
-                sub  = function() return _("Impressive. Or suspicious.") end,
-                by_tier = {
-                    grumpy  = { mood = "grumpy", text = function() return _("Not one unopened book. Show-off.") end },
-                    happy   = { mood = "cheer",  text = function() return _("Every single book opened! Look at you!") end },
-                    radiant = { mood = "love",   text = function() return _("You've opened them all. I'm so proud.") end },
-                },
-            } },
+            reply = NO_BOOK_REPLY },
           { id = "later", delta = 0,
             text  = notNow,
             reply = LATER_REPLY },
@@ -581,22 +617,22 @@ Dialog.EXCHANGES = {
             text  = function() return _("Challenge accepted") end,
             reply = {
                 mood = "cheer",
-                text = function() return _("That's the spirit. I'll be watching.") end,
-                sub  = function() return _("Kindly. Mostly kindly.") end,
+                text = function() return _("Deal. I'll keep an eye on it.") end,
+                sub  = function() return _("A friendly eye.") end,
                 by_tier = {
-                    grumpy  = { mood = "grumpy", text = function() return _("Bold. We'll see how long that lasts.") end },
-                    happy   = { mood = "party",  text = function() return _("Yes! You've got this!") end },
-                    radiant = { mood = "love",   text = function() return _("I knew you'd say yes. I love this for us.") end },
+                    grumpy  = { mood = "grumpy", text = function() return _("Bold. Let's see.") end, sub = false },
+                    happy   = { mood = "party",  text = function() return _("Yes! You've got this!") end, sub = false },
+                    radiant = { mood = "love",   text = function() return _("I knew you'd say yes.") end, sub = false },
                 },
             } },
           { id = "later", delta = 0,
             text  = function() return _("Maybe later") end,
             reply = {
                 mood = "playful",
-                text = function() return _("The offer stands. Dramatically.") end,
+                text = function() return _("The offer stands until midnight.") end,
                 by_tier = {
-                    grumpy  = { mood = "grumpy", text = function() return _("Typical.") end },
-                    radiant = { mood = "shy",    text = function() return _("Of course. No pressure at all.") end },
+                    grumpy  = { mood = "grumpy", text = function() return _("Suit yourself.") end },
+                    radiant = { mood = "shy",    text = function() return _("Of course. No pressure.") end },
                 },
             } },
       } },
@@ -608,20 +644,20 @@ Dialog.EXCHANGES = {
             text  = function() return _("On it!") end,
             reply = {
                 mood = "cheer",
-                text = function() return _("Go, go, go! Pages await.") end,
+                text = function() return _("Go! I'll be here, counting.") end,
                 by_tier = {
                     grumpy  = { mood = "grumpy", text = function() return _("Less talking. More reading.") end },
-                    radiant = { mood = "party",  text = function() return _("Unstoppable! I can feel it!") end },
+                    radiant = { mood = "party",  text = function() return _("You're unstoppable today.") end },
                 },
             } },
           { id = "tough", delta = 0,
             text  = function() return _("Tough one…") end,
             reply = {
                 mood = "curious",
-                text = function() return _("Small steps. One page is still a page.") end,
+                text = function() return _("One page at a time. They all count.") end,
                 by_tier = {
-                    happy = { mood = "cheer", text = function() return _("You can do it! One page at a time!") end },
-                    meh   = { mood = "sleepy", text = function() return _("Then let's take it slowly. Very slowly.") end },
+                    happy = { mood = "cheer",  text = function() return _("You can do it. One page at a time.") end },
+                    meh   = { mood = "sleepy", text = function() return _("Then slowly. Very slowly.") end },
                 },
             } },
       } },
@@ -639,7 +675,8 @@ end
 -- What the critter answers `reply` says for a critter in mood tier `tier`.
 local function renderReply(reply, f, tier)
     local override = reply.by_tier and reply.by_tier[tier] or {}
-    local sub = override.sub or reply.sub
+    local sub = reply.sub
+    if override.sub ~= nil then sub = override.sub end
     return {
         mood = override.mood or reply.mood,
         text = (override.text or reply.text)(f),

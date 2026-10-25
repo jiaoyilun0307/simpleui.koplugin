@@ -25,6 +25,7 @@ local Config          = require("infra/sui_config")
 local SUIStyle        = require("features/sui_style")
 local UI              = require("infra/sui_core")
 local SUIStreak       = require("infra/sui_streak")
+local Ledger          = require("infra/sui_stats_ledger")
 local DateNames       = require("infra/sui_datenames")
 local Charts          = require("engines/sui_stats_charts")
 local Frames          = require("screens/insights/sui_insights_frames")
@@ -1284,63 +1285,38 @@ end
 -- _ri_cache[year] = { yearly_stats, monthly_data }
 -- _ri_cache["lastweek"] / ["alltime"] / ["today"] for page-2 data.
 -- _ri_streaks: loaded once per window session (all-time, not year-bound).
+-- _ledger: the stats ledger snapshot (infra/sui_stats_ledger) the Reading
+-- Insights and Streak windows read their daily history from, taken once per
+-- window session.
 local _ri_cache   = {}
 local _ri_streaks = nil
+local _ledger     = nil
+
+-- The ledger snapshot of this window session, nil when the database cannot be
+-- read.
+local function _getLedger()
+    if not _ledger then _ledger = Ledger.get() end
+    return _ledger
+end
 
 -- ---------------------------------------------------------------------------
 -- Reading-insights data fetchers
 -- ---------------------------------------------------------------------------
 
--- Returns { min_year, max_year } from page_stat.
+-- Returns { min_year, max_year } of the recorded reading.
 local function _riGetYearRange()
     local current_year = tonumber(os.date("%Y"))
-    local default = { min_year = current_year, max_year = current_year }
-    return _withStatsDb(default, function(conn)
-        local range = { min_year = current_year, max_year = current_year }
-        _withStmt(conn, [[
-            SELECT MIN(strftime('%Y', start_time, 'unixepoch', 'localtime')),
-                   MAX(strftime('%Y', start_time, 'unixepoch', 'localtime'))
-            FROM page_stat
-        ]], function(stmt)
-            for row in stmt:rows() do
-                if row[1] then range.min_year = tonumber(row[1]) or current_year end
-                if row[2] then range.max_year = tonumber(row[2]) or current_year end
-            end
-        end)
-        return range
-    end)
+    local ledger = _getLedger()
+    local min_year, max_year = ledger and ledger:yearRange()
+    return { min_year = min_year or current_year, max_year = max_year or current_year }
 end
 
 -- Returns { days, pages, duration } for a given year.
 local function _riGetYearlyStats(year)
-    local default = { days = 0, pages = 0, duration = 0 }
-    return _withStatsDb(default, function(conn)
-        local s = { days = 0, pages = 0, duration = 0 }
-        local yr = tostring(year)
-        _withStmt(conn, string.format([[
-            SELECT COUNT(DISTINCT date(start_time, 'unixepoch', 'localtime'))
-            FROM page_stat
-            WHERE strftime('%%Y', start_time, 'unixepoch', 'localtime') = '%s'
-        ]], yr), function(stmt)
-            for row in stmt:rows() do s.days = tonumber(row[1]) or 0 end
-        end)
-        _withStmt(conn, string.format([[
-            SELECT count(*) FROM (
-                SELECT 1 FROM page_stat
-                WHERE strftime('%%Y', start_time, 'unixepoch', 'localtime') = '%s'
-                GROUP BY id_book, page
-            )
-        ]], yr), function(stmt)
-            for row in stmt:rows() do s.pages = tonumber(row[1]) or 0 end
-        end)
-        _withStmt(conn, string.format([[
-            SELECT sum(duration) FROM page_stat
-            WHERE strftime('%%Y', start_time, 'unixepoch', 'localtime') = '%s'
-        ]], yr), function(stmt)
-            for row in stmt:rows() do s.duration = tonumber(row[1]) or 0 end
-        end)
-        return s
-    end)
+    local ledger = _getLedger()
+    if not ledger then return { days = 0, pages = 0, duration = 0 } end
+    local days, duration = ledger:yearTotals(year)
+    return { days = days, pages = ledger:pagesInYear(year) or 0, duration = duration }
 end
 
 -- Returns an array[1..12] of { month="YYYY-MM", days=N, hours=H,
@@ -1355,60 +1331,23 @@ local _MONTH_FULL = {
 }
 
 local function _riGetMonthlyData(year)
-    local default = {}
+    local ledger = _getLedger()
+    local totals = ledger and ledger:monthTotals(year)
+    local result = {}
     for m = 1, 12 do
-        default[m] = { month = string.format("%04d-%02d", year, m),
-                       days = 0, hours = 0,
-                       label = _MONTH_SHORT[m], label_full = _MONTH_FULL[m],
-                       month_num = m }
+        local h = totals and totals[m].secs / 3600 or 0
+        if h >= 1 then h = math.floor(h)
+        elseif h > 0 then h = math.floor(h * 10) / 10 end
+        result[m] = {
+            month      = string.format("%04d-%02d", year, m),
+            days       = totals and totals[m].days or 0,
+            hours      = h,
+            label      = _MONTH_SHORT[m],
+            label_full = _MONTH_FULL[m],
+            month_num  = m,
+        }
     end
-    return _withStatsDb(default, function(conn)
-        local yr = tostring(year)
-        -- Days read per month
-        local days_by_month = {}
-        _withStmt(conn, string.format([[
-            SELECT strftime('%%Y-%%m', start_time, 'unixepoch', 'localtime') AS mo,
-                   COUNT(DISTINCT date(start_time, 'unixepoch', 'localtime'))
-            FROM page_stat
-            WHERE strftime('%%Y', start_time, 'unixepoch', 'localtime') = '%s'
-            GROUP BY mo ORDER BY mo ASC
-        ]], yr), function(stmt)
-            for row in stmt:rows() do
-                days_by_month[row[1]] = tonumber(row[2]) or 0
-            end
-        end)
-        -- Hours read per month (de-duplicate page reads like the patch does)
-        local hours_by_month = {}
-        _withStmt(conn, string.format([[
-            SELECT dates, SUM(sum_duration) / 3600.0 FROM (
-                SELECT strftime('%%Y-%%m', start_time, 'unixepoch', 'localtime') AS dates,
-                       sum(duration) AS sum_duration
-                FROM page_stat
-                WHERE strftime('%%Y', start_time, 'unixepoch', 'localtime') = '%s'
-                GROUP BY id_book, page, dates
-            ) GROUP BY dates ORDER BY dates ASC
-        ]], yr), function(stmt)
-            for row in stmt:rows() do
-                local h = tonumber(row[2]) or 0
-                if h >= 1 then h = math.floor(h)
-                elseif h > 0 then h = math.floor(h * 10) / 10 end
-                hours_by_month[row[1]] = h
-            end
-        end)
-        local result = {}
-        for m = 1, 12 do
-            local key = string.format("%04d-%02d", year, m)
-            result[m] = {
-                month      = key,
-                days       = days_by_month[key]  or 0,
-                hours      = hours_by_month[key] or 0,
-                label      = _MONTH_SHORT[m],
-                label_full = _MONTH_FULL[m],
-                month_num  = m,
-            }
-        end
-        return result
-    end)
+    return result
 end
 
 -- Returns { days={current,best,best_start,best_end},
@@ -1417,24 +1356,17 @@ end
 local function _riGetStreaks()
     local zero_streak = { current=0, best=0, best_start=0, best_end=0 }
     local default = { days = zero_streak, weeks = zero_streak }
-    return _withStatsDb(default, function(conn)
+    local ledger = _getLedger()
+    if not ledger then return default end
+    do
         -- ── Day streaks ──────────────────────────────────────────────────
-        -- duration > 0 filters zero-duration rows (e.g. a crash/force-close)
-        -- exactly like module_stats_provider.lua's fetchStreak does on
-        -- page_stat_data — needed so the two "current streak" sources this
-        -- window and the homescreen card both ultimately feed into
-        -- sui_streak.computeCurrentDayStreak() actually agree on the
+        -- The ledger's active dates are the days with reading time (rows with
+        -- duration > 0, so a crash/force-close leaves no gap), exactly like
+        -- module_stats_provider.lua's fetchStreak — needed so the two "current
+        -- streak" sources this window and the homescreen card both ultimately
+        -- feed into sui_streak.computeCurrentDayStreak() actually agree on the
         -- same set of "active" dates, not just share the same walk function.
-        local dates = {}
-        _withStmt(conn, [[
-            SELECT date(start_time, 'unixepoch', 'localtime') AS d,
-                   min(start_time)
-            FROM page_stat WHERE duration > 0 GROUP BY d ORDER BY d DESC
-        ]], function(stmt)
-            for row in stmt:rows() do
-                table.insert(dates, { row[1], tonumber(row[2]) })
-            end
-        end)
+        local dates = ledger:activeDates()
 
         local function parseDateYMD(s)
             if not s then return end
@@ -1497,16 +1429,7 @@ local function _riGetStreaks()
         })
 
         -- ── Week streaks ─────────────────────────────────────────────────
-        local weeks = {}
-        _withStmt(conn, [[
-            SELECT strftime('%G-%V', start_time, 'unixepoch', 'localtime') AS wk,
-                   MIN(start_time), MAX(start_time)
-            FROM page_stat GROUP BY wk ORDER BY wk DESC
-        ]], function(stmt)
-            for row in stmt:rows() do
-                table.insert(weeks, { tonumber(row[2]), tonumber(row[3]) })
-            end
-        end)
+        local weeks = ledger:weeks()
 
         local function parseWeekYear(ts)
             return tonumber(os.date("%G", ts)), tonumber(os.date("%V", ts))
@@ -1558,7 +1481,7 @@ local function _riGetStreaks()
         end
 
         return { days = day_streaks, weeks = computeWeekStreak(weeks) }
-    end)
+    end
 end
 
 -- ---------------------------------------------------------------------------
@@ -1685,47 +1608,18 @@ local function _riGetLastWeekStats()
 end
 
 -- Returns { hours=N, pages=N, book_count=N } across all recorded history.
--- Summing _ri_cache year entries avoids an extra DB connection when page 1
--- has already loaded all years; falls back to a direct DB query otherwise.
+-- Pages are the sum of the distinct pages of each year.
 local function _riGetAllTimeStats()
     if _ri_cache["alltime"] then return _ri_cache["alltime"] end
     local r = { hours = 0, pages = 0, book_count = 0 }
 
-    -- Fast path: sum already-cached yearly entries (no extra DB open needed).
-    local year_range = _riGetYearRange()
-    local all_cached = true
-    for y = year_range.min_year, year_range.max_year do
-        if not _ri_cache[y] then all_cached = false; break end
-    end
-
-    if all_cached then
+    local ledger = _getLedger()
+    if ledger then
+        r.hours = math.floor(ledger:totalSeconds() / 3600)
+        local year_range = _riGetYearRange()
         for y = year_range.min_year, year_range.max_year do
-            local ys = _ri_cache[y].yearly_stats
-            r.pages = r.pages + (ys.pages or 0)
-            r.hours = r.hours + math.floor((ys.duration or 0) / 3600)
+            r.pages = r.pages + (ledger:pagesInYear(y) or 0)
         end
-    else
-        -- Slow path: single DB connection for everything
-        _withStatsDb(nil, function(conn)
-            _withStmt(conn, [[
-                SELECT COUNT(*) FROM (
-                    SELECT 1 FROM page_stat GROUP BY id_book, page
-                )
-            ]], function(stmt)
-                for row in stmt:rows() do r.pages = tonumber(row[1]) or 0 end
-            end)
-            _withStmt(conn, [[
-                SELECT SUM(sum_dur) FROM (
-                    SELECT SUM(duration) AS sum_dur FROM page_stat
-                    GROUP BY id_book, page,
-                             date(start_time, 'unixepoch', 'localtime')
-                )
-            ]], function(stmt)
-                for row in stmt:rows() do
-                    r.hours = math.floor((tonumber(row[1]) or 0) / 3600)
-                end
-            end)
-        end)
     end
 
     local ok_sp, SP = pcall(require, "modules/module_stats_provider")
@@ -1820,9 +1714,9 @@ end
 -- ---------------------------------------------------------------------------
 -- _riStreakCategories — the "Day streak" and "Week streak" categories (current
 -- and best streak in one card of rows each), shared by the Reading Insights and
--- Streak windows. `compact` swaps each card of rows for a row of two tiles.
+-- Streak windows.
 -- ---------------------------------------------------------------------------
-local function _riStreakCategories(card_w, SZ, streaks, compact)
+local function _riStreakCategories(card_w, SZ, streaks)
     local function bestDates(streak)
         if streak.best > 1 and streak.best_start > 0 then
             return _riFmtDate(streak.best_start) .. " \xe2\x80\x93 " .. _riFmtDate(streak.best_end)
@@ -1833,8 +1727,7 @@ local function _riStreakCategories(card_w, SZ, streaks, compact)
             { icon = "streak", label = _("Current streak"), value = count(streak.current) },
             { icon = "trophy", label = _("Best streak"), sub = bestDates(streak), value = count(streak.best) },
         }
-        local frame = compact and Frames.tiles or Frames.rows
-        return { title = title, children = { frame{ w = card_w, SZ = SZ, items = items } } }
+        return { title = title, children = { Frames.rows{ w = card_w, SZ = SZ, items = items } } }
     end
     return {
         category(_("Day streak"), streaks.days, function(n)
@@ -1862,6 +1755,7 @@ end
 local function _riClearCache()
     _ri_cache   = {}
     _ri_streaks = nil
+    _ledger     = nil
 end
 
 local function _riGetOrFetchYear(year)
@@ -1889,10 +1783,12 @@ function StatsWindows.showReadingInsightsWindow(opts)
     _lazyLoad()
     local SUIWindow = require("engines/sui_window")
 
+    -- Every opening starts from fresh data: a previous window that never
+    -- reached on_close leaves nothing behind.
+    _riClearCache()
+
     -- Pre-flight: load streaks once; they span all years.
-    if not _ri_streaks then
-        _ri_streaks = _riGetStreaks()
-    end
+    _ri_streaks = _riGetStreaks()
 
     local year_range = _riGetYearRange()
     -- Start at the most recent year with data.
@@ -2105,54 +2001,20 @@ local CAL_MIN_CELL_H = 24
 -- Data fetchers
 -- ---------------------------------------------------------------------------
 
--- Whether date_str ("YYYY-MM-DD") has real reading activity (duration > 0).
--- Used by the Phase 4 freeze-spend eligibility check — deliberately checks
--- page_stat directly rather than the month-activity cache, since it needs
--- to work regardless of which month the calendar currently has selected.
+-- Whether date_str ("YYYY-MM-DD") has real reading activity (reading time
+-- recorded). Used by the freeze-spend eligibility check, which needs it
+-- regardless of which month the calendar currently has selected.
 local function _smGetRealActivityFor(date_str)
-    return _withStatsDb(false, function(conn)
-        local found = false
-        _withStmt(conn, string.format([[
-            SELECT 1 FROM page_stat
-            WHERE duration > 0 AND date(start_time,'unixepoch','localtime') = '%s'
-            LIMIT 1
-        ]], date_str), function(stmt)
-            for row in stmt:rows() do found = true end
-        end)
-        return found
-    end)
+    local ledger = _getLedger()
+    local entry = ledger and ledger:entry(date_str)
+    return entry ~= nil and entry.first_active ~= nil
 end
 
--- Per-window-session cache of month → activity set, so navigating back to
--- an already-visited month during the same window session (e.g. prev then
--- next) doesn't re-run the query. Cleared on window close, like _ri_cache.
-local _sm_month_cache = {}
-
-local function _smClearCache()
-    _sm_month_cache = {}
-end
-
--- Set of "YYYY-MM-DD" → true for real-activity days (duration > 0) in the
--- given calendar month.
+-- Set of "YYYY-MM-DD" → true for real-activity days (reading time recorded) in
+-- the given calendar month.
 local function _smGetMonthActiveDates(year, month)
-    local key = string.format("%04d-%02d", year, month)
-    if _sm_month_cache[key] then return _sm_month_cache[key] end
-
-    local set = _withStatsDb({}, function(conn)
-        local s = {}
-        _withStmt(conn, string.format([[
-            SELECT DISTINCT date(start_time, 'unixepoch', 'localtime') AS d
-            FROM page_stat
-            WHERE duration > 0
-              AND strftime('%%Y-%%m', start_time, 'unixepoch', 'localtime') = '%s'
-        ]], key), function(stmt)
-            for row in stmt:rows() do s[row[1]] = true end
-        end)
-        return s
-    end)
-
-    _sm_month_cache[key] = set
-    return set
+    local ledger = _getLedger()
+    return ledger and ledger:activeSet(year, month) or {}
 end
 
 -- Reading state of each of the last `count` days, oldest first: "read" (real
@@ -2260,6 +2122,7 @@ function StatsWindows.showStreakManagerWindow(opts)
     local function refreshStreaks()
         streaks = _riGetStreaks()
     end
+    _ledger = nil
     refreshStreaks()
 
     local freeze_mode_on = SUIStreak.isFreezeModeEnabled()
@@ -2580,13 +2443,13 @@ function StatsWindows.showStreakManagerWindow(opts)
         end
 
         -- Everything after the calendar should share page 2: try the full layout,
-        -- then streaks as tiles, then without the last days; the last attempt
-        -- stands even if it still overflows.
-        local function restBlocks(compact, with_last_days)
+        -- then without the last days; the last attempt stands even if it still
+        -- overflows. The streaks stay as rows, like in Reading Insights.
+        local function restBlocks(with_last_days)
             local categories = {}
             local last_days = with_last_days and lastDays()
             if last_days then categories[#categories + 1] = last_days end
-            for _i, streak_category in ipairs(_riStreakCategories(card_w, SZ, streaks, compact)) do
+            for _i, streak_category in ipairs(_riStreakCategories(card_w, SZ, streaks)) do
                 categories[#categories + 1] = streak_category
             end
             if freeze_mode_on then categories[#categories + 1] = freezes() end
@@ -2598,9 +2461,8 @@ function StatsWindows.showStreakManagerWindow(opts)
             end
             return true
         end
-        local rest = restBlocks(false, true)
-        if not onOnePage(rest) then rest = restBlocks(true, true) end
-        if not onOnePage(rest) then rest = restBlocks(true, false) end
+        local rest = restBlocks(true)
+        if not onOnePage(rest) then rest = restBlocks(false) end
 
         -- Page 1 is the calendar alone: the rest starts a new page whatever room is left.
         local pages = Frames.flow{ inner_w = inner_w, SZ = SZ, max_h = ctx.page_h,
@@ -2622,7 +2484,7 @@ function StatsWindows.showStreakManagerWindow(opts)
             __root__ = buildRootScreen,
         },
         on_close = function()
-            _smClearCache()
+            _ledger = nil
         end,
     }
     win:show()

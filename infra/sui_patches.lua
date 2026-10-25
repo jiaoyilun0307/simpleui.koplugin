@@ -19,6 +19,7 @@ local SUIWallpaper = require("features/sui_wallpaper")
 local Backdrop   = require("infra/sui_backdrop")
 local WindowHooks  = require("infra/sui_window_hooks")
 local Perf         = require("infra/sui_perf")
+local SUIPaths     = require("infra/sui_paths")
 
 -- Lazy: only needed on D-pad devices, inside gesture event handlers.
 local _FocusManager
@@ -2233,6 +2234,21 @@ local function _refreshExposedFileManager()
     UIManager:scheduleIn(0, _refreshLiveFileChooser)
 end
 
+-- A closing screen exposes whatever fullscreen widget lies beneath it, and
+-- UIManager:close queues no refresh of its own: only the regions dirtied by
+-- other code reach the display, leaving the screen's pixels in the gaps.
+local function _closedScreenExposesWidget(widget)
+    return widget.name == "homescreen"
+end
+
+local function _refreshExposedWidget()
+    local stack = UI.getWindowStack()
+    local top = stack[#stack] and stack[#stack].widget
+    if top and top ~= liveFM() and top.covers_fullscreen and not _isReader(top) then
+        UIManager:setDirty(top, "ui")
+    end
+end
+
 -- ── close: screen reopen ────────────────────────────────────────────────────
 
 -- Shows screen `screen_id` (the built-in homescreen when nil) again, unless
@@ -2345,6 +2361,34 @@ local function _reopenAfterReaderClose(plugin, reader)
     end)
 end
 
+-- Methods inspected to tell where a widget's class comes from.
+local WIDGET_SOURCE_METHODS = { "init", "onCloseWidget", "onShow", "onClose" }
+
+-- True when the widget class is implemented by a plugin other than this one.
+-- Native widgets resolve to files under frontend/, so they never match.
+local function _isForeignPluginWidget(widget)
+    local own_dir = SUIPaths.getPluginDir()
+    for _, name in ipairs(WIDGET_SOURCE_METHODS) do
+        local fn = widget[name]
+        local info = type(fn) == "function" and debug.getinfo(fn, "S")
+        local src = info and info.source
+        if src and src:find("plugins/", 1, true) and not src:find(own_dir, 1, true) then
+            return true
+        end
+    end
+    return false
+end
+
+-- A foreign fullscreen widget can leave its pixels on a panel that the
+-- non-flashing refresh of the reopened screen does not clear: flash it once.
+local function _clearExposedGhosting()
+    local stack = UI.getWindowStack()
+    local top = stack[#stack] and stack[#stack].widget
+    if top and top.name == "homescreen" then
+        UIManager:setDirty(nil, "flashui")
+    end
+end
+
 local function _reopenScreen(ctx)
     local widget, plugin = ctx.widget, ctx.plugin
     widget._navbar_hs_scheduled = true
@@ -2354,6 +2398,7 @@ local function _reopenScreen(ctx)
         _reopenAfterReaderClose(plugin, widget)
         return
     end
+    local foreign = _isForeignPluginWidget(widget)
     UIManager:scheduleIn(0, function()
         if isAppExiting() then return end
         local fm = liveFM()
@@ -2361,6 +2406,7 @@ local function _reopenScreen(ctx)
         local reader_module = package.loaded["apps/reader/readerui"]
         if reader_module and reader_module.instance then return end
         _doShowHS(fm, plugin, widget._sui_displaced_screen)
+        if foreign then _clearExposedGhosting() end
     end)
 end
 
@@ -2445,6 +2491,10 @@ local function registerWindowSteps()
     WindowHooks.register{
         id = "lazy_refresh", point = CLOSE, order = close.LAZY_REFRESH,
         match = _closedScreenExposesFileManager, after = _refreshExposedFileManager,
+    }
+    WindowHooks.register{
+        id = "exposed_refresh", point = CLOSE, order = close.EXPOSED_REFRESH,
+        match = _closedScreenExposesWidget, after = _refreshExposedWidget,
     }
     WindowHooks.register{
         id = "screen_reopen", point = CLOSE, order = close.REOPEN_SCREEN,

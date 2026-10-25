@@ -83,6 +83,7 @@ M.ORDER = {
         BAR_INJECTION_CLOSE   = 20,
         RELOAD_BLOCKER        = 30,
         LAZY_REFRESH          = 40,
+        EXPOSED_REFRESH       = 45,
         REOPEN_SCREEN         = 50,
     },
 }

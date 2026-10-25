@@ -102,7 +102,7 @@ local KEY_CAT    = "critter_cat_"      -- .. category id; false = category off
 local KEY_REACT  = "critter_reactions"  -- false = the critter does not react to events
 local KEY_DECOR  = "critter_decor_"    -- .. side; ids of the decorations of that side, left to right
 
--- Longest streak already celebrated and the name the user gave the critter, shared by every screen.
+-- Longest streak already celebrated and the name the user told the critter, shared by every screen.
 local BEST_STREAK_KEY = "simpleui_critter_best_streak"
 local BEST_DAY_KEY    = "simpleui_critter_best_streak_day"
 local USER_NAME_KEY   = "simpleui_critter_user_name"
@@ -271,6 +271,7 @@ local function collectFacts(ctx)
         books_year       = stats.books_year,
         today_secs       = stats.today_secs,
         today_pages      = stats.today_pages,
+        stats_fresh      = not ctx.stats_stale,
         goal             = Goals.get("annual"),
         daily_goal_secs  = Goals.get("daily"),
         user_name        = userName(),

@@ -1,17 +1,16 @@
 -- sui_heatmap_data.lua — Simple UI
--- Reading-heatmap data layer: two SQL aggregates over page_stat (daily
--- seconds, and weekday x hour-of-day seconds) plus the day arithmetic
--- needed to slice that data into "N-week blocks" for paging back through
--- history. No widgets here — this file only knows about numbers and
--- timestamps; engines/sui_heatmap_widgets.lua turns them into pixels.
+-- Reading-heatmap data layer: daily seconds (from the stats ledger,
+-- infra/sui_stats_ledger) and weekday x hour-of-day seconds (one aggregate
+-- over page_stat_data), plus the day arithmetic needed to slice that data into
+-- "N-week blocks" for paging back through history. No widgets here — this file
+-- only knows about numbers and timestamps; engines/sui_heatmap_widgets.lua
+-- turns them into pixels.
 --
--- Both queries group by id_book/page/day(/hour) before summing duration,
--- so a page re-read across multiple sessions on the same day (or same
--- hour, for the weekday/hour breakdown) is only counted once — matches
--- how module_stats_provider.lua already treats page_stat elsewhere in
--- this plugin.
+-- The base table is read, not the page_stat view, so the start_time index
+-- bounds every scan; durations are the recorded ones, as on the homescreen.
 
 local Config = require("infra/sui_config")
+local Ledger = require("infra/sui_stats_ledger")
 
 local HD = {}
 
@@ -43,11 +42,7 @@ local function runQuery(shared_conn, sql, row_fn)
     return ok, err
 end
 
--- Epoch bounds [lo, hi) of the local days start_t..end_t. The queries select the
--- matching rows through the start_time index before the page_stat view expands
--- them; filtering the view's own columns expands every session first. The
--- pre-filter is a membership test on purpose: a plain range on the view makes
--- SQLite drive the expansion from the numbers table, which is far slower.
+-- Epoch bounds [lo, hi) of the local days start_t..end_t.
 local function dayBounds(start_t, end_t)
     local s, e = os.date("*t", start_t), os.date("*t", end_t)
     local lo = os.time{ year = s.year, month = s.month, day = s.day, hour = 0 }
@@ -56,14 +51,14 @@ local function dayBounds(start_t, end_t)
 end
 
 -- ---------------------------------------------------------------------------
--- Cache — per exact [start,end] range, rebuilt at most once per day
+-- Cache — the weekday x hour map per exact [start,end] range, valid for one day
+-- and while the statistics database is unchanged. (The daily seconds need none:
+-- the ledger keeps and validates them.)
 -- ---------------------------------------------------------------------------
-local _cache = { daily = {}, weekday_hour = {}, earliest = nil }
+local _cache = { weekday_hour = {} }
 
 function HD.invalidate()
-    _cache.daily         = {}
-    _cache.weekday_hour  = {}
-    _cache.earliest      = nil
+    _cache.weekday_hour = {}
 end
 
 -- ---------------------------------------------------------------------------
@@ -113,39 +108,9 @@ end
 -- Returns { ["YYYY-MM-DD"] = seconds_read } for every day with any reading
 -- in the inclusive [start_t, end_t] range.
 function HD.getDailyReadingData(start_t, end_t, shared_conn)
-    local start_str = os.date("%Y-%m-%d", start_t)
-    local end_str   = os.date("%Y-%m-%d", end_t)
-    local today     = os.date("%Y-%m-%d")
-    local cache_key = start_str .. ".." .. end_str
-    local lo, hi    = dayBounds(start_t, end_t)
-
-    local hit = _cache.daily[cache_key]
-    if hit and hit.day == today then return hit.data end
-
-    local sql = string.format([[
-        SELECT day, SUM(dur) AS duration
-        FROM (
-            SELECT id_book, page,
-                   date(start_time, 'unixepoch', 'localtime') AS day,
-                   SUM(duration) AS dur
-            FROM page_stat
-            WHERE start_time IN (SELECT start_time FROM page_stat_data
-                                 WHERE start_time >= %d AND start_time < %d)
-            GROUP BY id_book, page, day
-        )
-        GROUP BY day
-    ]], lo, hi)
-
-    local data = {}
-    local ok, err = runQuery(shared_conn, sql, function(row)
-        data[row[1]] = tonumber(row[2]) or 0
-    end)
-    if not ok then
-        return {}, Config.isFatalDbError(err)
-    end
-
-    _cache.daily[cache_key] = { day = today, data = data }
-    return data, false
+    local ledger, err = Ledger.get(shared_conn)
+    if not ledger then return {}, Config.isFatalDbError(err) end
+    return ledger:dailySeconds(os.date("%Y-%m-%d", start_t), os.date("%Y-%m-%d", end_t)), false
 end
 
 -- Returns { [1..7] = { [0..23] = seconds_read } }, 1 = Monday, for the
@@ -155,24 +120,18 @@ function HD.getWeekdayHourReadingData(start_t, end_t, shared_conn)
     local end_str   = os.date("%Y-%m-%d", end_t)
     local today     = os.date("%Y-%m-%d")
     local cache_key = start_str .. ".." .. end_str
+    local stamp     = Config.getStatsDbStamp()
     local lo, hi    = dayBounds(start_t, end_t)
 
     local hit = _cache.weekday_hour[cache_key]
-    if hit and hit.day == today then return hit.data end
+    if hit and hit.day == today and stamp and hit.stamp == stamp then return hit.data end
 
     local sql = string.format([[
-        SELECT dow, hour, SUM(dur) AS duration
-        FROM (
-            SELECT id_book, page,
-                   strftime('%%w', start_time, 'unixepoch', 'localtime') AS dow,
-                   CAST(strftime('%%H', start_time, 'unixepoch', 'localtime') AS INTEGER) AS hour,
-                   date(start_time, 'unixepoch', 'localtime') AS day,
-                   SUM(duration) AS dur
-            FROM page_stat
-            WHERE start_time IN (SELECT start_time FROM page_stat_data
-                                 WHERE start_time >= %d AND start_time < %d)
-            GROUP BY id_book, page, day, dow, hour
-        )
+        SELECT strftime('%%w', start_time, 'unixepoch', 'localtime') AS dow,
+               CAST(strftime('%%H', start_time, 'unixepoch', 'localtime') AS INTEGER) AS hour,
+               SUM(duration)
+        FROM page_stat_data
+        WHERE start_time >= %d AND start_time < %d
         GROUP BY dow, hour
     ]], lo, hi)
 
@@ -192,7 +151,7 @@ function HD.getWeekdayHourReadingData(start_t, end_t, shared_conn)
         return data, Config.isFatalDbError(err)
     end
 
-    _cache.weekday_hour[cache_key] = { day = today, data = data }
+    if stamp then _cache.weekday_hour[cache_key] = { day = today, stamp = stamp, data = data } end
     return data, false
 end
 
@@ -368,22 +327,18 @@ end
 -- callers that want to skip a re-query when nothing new was read.
 function HD.getMaxStartTime(shared_conn)
     local max_t = 0
-    runQuery(shared_conn, "SELECT MAX(start_time) FROM page_stat", function(row)
+    runQuery(shared_conn, "SELECT MAX(start_time) FROM page_stat_data", function(row)
         max_t = tonumber(row[1]) or 0
     end)
     return max_t
 end
 
--- Epoch seconds of the very first page_stat row, or 0 if none. Cached
--- indefinitely (until HD.invalidate()) since it only moves forward and is
--- cheap enough not to bother with the daily TTL the other two caches use.
+-- Epoch seconds of the very first reading row, or 0 if none.
 function HD.getEarliestStartTime(shared_conn)
-    if _cache.earliest ~= nil then return _cache.earliest end
     local t = 0
-    runQuery(shared_conn, "SELECT MIN(start_time) FROM page_stat", function(row)
+    runQuery(shared_conn, "SELECT MIN(start_time) FROM page_stat_data", function(row)
         t = tonumber(row[1]) or 0
     end)
-    _cache.earliest = t
     return t
 end
 

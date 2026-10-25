@@ -84,6 +84,18 @@ local function _nilOrTrueToggle(text, help_text, key, on_change)
     }
 end
 
+-- Toggle for the loading notice shown while a statistics window opens (off by default).
+local function _loadingNoticeItem()
+    local key = Launcher.LOADING_NOTICE_KEY
+    return {
+        text           = _("Statistics Loading Notice"),
+        help_text      = _("Show a brief \"Loading statistics…\" notice when opening a statistics window, preventing accidental double-taps while e-ink refreshes."),
+        checked_func   = function() return SUISettings:isTrue(key) end,
+        keep_menu_open = true,
+        callback       = function() SUISettings:saveSetting(key, not SUISettings:isTrue(key)) end,
+    }
+end
+
 local function _preserveDeletedItem(refresh)
     return _nilOrTrueToggle(
         _("Preserve Deleted Books in Statistics"),
@@ -110,13 +122,6 @@ local function _manualInAllTimeItem(refresh)
             if refresh then refresh() end
         end,
     }
-end
-
-local function _loadingNoticeItem()
-    return _nilOrTrueToggle(
-        _("Statistics Loading Notice"),
-        _("Show a brief \"Loading statistics…\" notice when opening a statistics window, preventing accidental double-taps while e-ink refreshes."),
-        Launcher.LOADING_NOTICE_KEY)
 end
 
 function StatsMenu.makeMenuItems(opts)

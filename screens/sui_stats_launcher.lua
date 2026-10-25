@@ -15,11 +15,12 @@
 --                            "finished_books" initial_year, "insights"
 --                            on_close.
 --                          Every window shows the loading notice while it
---                          opens, except "finished_books". The notice is
---                          flushed to the screen before any work starts and
---                          closed once the window is shown.
+--                          opens, except "finished_books", when the setting
+--                          asks for it. The notice is flushed to the screen
+--                          before any work starts and closed once the window
+--                          is shown.
 --   Launcher.LOADING_NOTICE_KEY  setting that turns the loading notice on or
---                                off (on by default)
+--                                off (off by default)
 
 local SUISettings = require("infra/sui_store")
 local UI          = require("infra/sui_core")
@@ -41,9 +42,9 @@ local STATS_WINDOWS = {
     heatmap        = { module = "screens/sui_heatmap_popup", show = "show" },
 }
 
--- Shows the loading notice when the setting allows it. Returns the notice.
+-- Shows the loading notice when the setting asks for it. Returns the notice.
 local function showLoadingNotice()
-    if not SUISettings:nilOrTrue(Launcher.LOADING_NOTICE_KEY) then return nil end
+    if not SUISettings:isTrue(Launcher.LOADING_NOTICE_KEY) then return nil end
     return UI.Notify.sticky(_("Loading statistics…"), { timeout = 0.0 })
 end
 
