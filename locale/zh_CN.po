@@ -11463,3 +11463,42 @@ msgstr "You've opened every book you own."
 
 msgid "Your secret is safe with the shelf."
 msgstr "Your secret is safe with the shelf."
+
+msgid "Adjust Row Automatically"
+msgstr "Adjust Row Automatically"
+
+msgid "Fast Book Closing"
+msgstr "Fast Book Closing"
+
+msgid "Free widths"
+msgstr "[待翻译] Free widths"
+
+msgid "Interaction"
+msgstr "[待翻译] Interaction"
+
+msgid "Keeps the Home Screen in memory while you read, so closing a book returns to it instantly instead of rebuilding it. Uses more RAM while a book is open."
+msgstr "Keeps the Home Screen in memory while you read, so closing a book returns to it instantly instead of rebuilding it. Uses more RAM while a book is open."
+
+msgid "Module Width"
+msgstr "Module Width"
+
+msgid "Page Editor"
+msgstr "Page Editor"
+
+msgid "Share of the row this module occupies.\n100% = full width. A module that does not fit in the row goes under one of the same width."
+msgstr "Share of the row this module occupies.\n100% = full width. A module that does not fit in the row goes under one of the same width."
+
+msgid "Stack Modules"
+msgstr "Stack Modules"
+
+msgid "Start & Wake"
+msgstr "Start & Wake"
+
+msgid "To Page"
+msgstr "To Page"
+
+msgid "When a module changes width, the next module of its row adjusts so the row stays full."
+msgstr "When a module changes width, the next module of its row adjusts so the row stays full."
+
+msgid "When a module does not fit in its row, show it under the module of the row with the same width instead of starting a new row."
+msgstr "When a module does not fit in its row, show it under the module of the row with the same width instead of starting a new row."
