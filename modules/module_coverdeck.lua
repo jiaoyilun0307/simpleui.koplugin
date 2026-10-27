@@ -8,6 +8,7 @@
 local Blitbuffer       = require("ffi/blitbuffer")
 local BD               = require("ui/bidi")
 local Device           = require("device")
+local util             = require("util")
 local Font             = require("ui/font")
 local CenterContainer  = require("ui/widget/container/centercontainer")
 local FrameContainer   = require("ui/widget/container/framecontainer")
@@ -837,6 +838,7 @@ local M = {}
 
 M.id          = "coverdeck"
 M.name        = _("Cover Deck")
+M.category    = "books"
 M.label       = nil
 M.enabled_key = "coverdeck_enabled"
 M.default_on  = false
@@ -1520,7 +1522,7 @@ function M.getMenuItems(ctx_menu)
         for name in pairs(coll_set) do
             coll_names[#coll_names + 1] = name
         end
-        table.sort(coll_names, function(a, b) return a:lower() < b:lower() end)
+        table.sort(coll_names, function(a, b) return util.stringLower(a) < util.stringLower(b) end)
 
         for _i, name in ipairs(coll_names) do
             options[#options + 1] = { value = COLLECTION_PREFIX .. name, label = name }

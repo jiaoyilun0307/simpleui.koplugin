@@ -1050,6 +1050,7 @@ msgstr ""
 #: modules/module_library.lua:266
 #: modules/reading_stats/module_reading_stats.lua:662
 #: screens/sui_menu.lua:2612
+#: modules/moduleregistry.lua:241
 msgid "Books"
 msgstr ""
 
@@ -2287,6 +2288,10 @@ msgstr ""
 
 #: infra/sui_updater.lua:442
 msgid "Extraction error: "
+msgstr ""
+
+#: modules/moduleregistry.lua:244
+msgid "Extras"
 msgstr ""
 
 #: screens/sui_menu.lua:4155
@@ -4651,6 +4656,10 @@ msgstr ""
 msgid "Or the same ones. I'm not picky."
 msgstr ""
 
+#: modules/moduleregistry.lua:245
+msgid "Other"
+msgstr ""
+
 #: modules/critter/reaction_lines.lua:277
 msgid "Our story is the finest of all libraries!"
 msgstr ""
@@ -5895,6 +5904,10 @@ msgstr ""
 msgid "Short books are the best ones."
 msgstr ""
 
+#: modules/moduleregistry.lua:243
+msgid "Shortcuts"
+msgstr ""
+
 #: features/library/sui_finished_books.lua:59
 #: features/sui_cover_elements.lua:236
 #: screens/sui_menu.lua:2823
@@ -6270,6 +6283,7 @@ msgstr ""
 #: modules/module_currently.lua:1354
 #: screens/sui_quicksettings_bar.lua:219
 #: screens/sui_quicksettings_bar.lua:1567
+#: modules/moduleregistry.lua:242
 msgid "Statistics"
 msgstr ""
 

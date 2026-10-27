@@ -1031,6 +1031,7 @@ msgstr "Marcadores"
 
 #: engines/sui_book_sources.lua:400 modules/module_library.lua:266
 #: modules/reading_stats/module_reading_stats.lua:662 screens/sui_menu.lua:2612
+#: modules/moduleregistry.lua:241
 msgid "Books"
 msgstr "Livros"
 
@@ -2217,6 +2218,10 @@ msgstr "Livros lidos em %d, além da contagem automática:"
 #: infra/sui_updater.lua:442
 msgid "Extraction error: "
 msgstr "Erro na extração: "
+
+#: modules/moduleregistry.lua:244
+msgid "Extras"
+msgstr "Extras"
 
 #: screens/sui_menu.lua:4155
 msgid "Factory Reset"
@@ -4610,6 +4615,10 @@ msgstr "Abrir com…"
 msgid "Or the same ones. I'm not picky."
 msgstr "Ou os mesmos. Eu não me importo."
 
+#: modules/moduleregistry.lua:245
+msgid "Other"
+msgstr "Outros"
+
 #: modules/critter/reaction_lines.lua:277
 msgid "Our story is the finest of all libraries!"
 msgstr "A nossa história é a melhor de todas as bibliotecas!"
@@ -5878,6 +5887,10 @@ msgstr "Curto e bom."
 msgid "Short books are the best ones."
 msgstr "Os livros curtos são os melhores."
 
+#: modules/moduleregistry.lua:243
+msgid "Shortcuts"
+msgstr "Atalhos"
+
 #: features/library/sui_finished_books.lua:59
 #: features/sui_cover_elements.lua:236 screens/sui_menu.lua:2823
 msgid "Show"
@@ -6311,6 +6324,7 @@ msgstr "Iniciado"
 #: modules/module_currently.lua:273 modules/module_currently.lua:1335
 #: modules/module_currently.lua:1354 screens/sui_quicksettings_bar.lua:219
 #: screens/sui_quicksettings_bar.lua:1567
+#: modules/moduleregistry.lua:242
 msgid "Statistics"
 msgstr "Estatísticas"
 
