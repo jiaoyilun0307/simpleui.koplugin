@@ -11593,3 +11593,15 @@ msgstr "When a module changes width, the next module of its row adjusts so the r
 
 msgid "When a module does not fit in its row, show it under the module of the row with the same width instead of starting a new row."
 msgstr "When a module does not fit in its row, show it under the module of the row with the same width instead of starting a new row."
+
+msgid "Flash on every page turn"
+msgstr "[待翻译] Flash on every page turn"
+
+msgid "Flash when displaying covers"
+msgstr "[待翻译] Flash when displaying covers"
+
+msgid "Use a flashing refresh on every page turn of the home screen, with or without book covers, to reduce ghosting."
+msgstr "Use a flashing refresh on every page turn of the home screen, with or without book covers, to reduce ghosting."
+
+msgid "Use a flashing refresh when turning to or from a page with book covers, to reduce ghosting. Shared with the file browser setting of the same name."
+msgstr "Use a flashing refresh when turning to or from a page with book covers, to reduce ghosting. Shared with the file browser setting of the same name."
