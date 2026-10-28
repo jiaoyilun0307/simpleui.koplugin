@@ -20,7 +20,7 @@ The bubble has a fixed size, so the critter and the decorations never move. You 
 
 ## Bundled critters
 
-Suey (the default, a cat), Chonk (a cat with heart-shaped sunglasses and a tiara), Tulu (a tiny winged tentacle-faced sea monster), Frankie (a stitched-together patchwork monster), Vlad (a pale, pointy-eared little vampire in a red-lined cape), Sholmes (a deerstalker-wearing detective in a long brown coat) and Argos (a loyal floppy-eared dog with a red collar). Each has twelve moods: `neutral`, `happy`, `party`, `sleepy`, `cheer`, `love`, `sad`, `surprised`, `curious`, `grumpy`, `shy`, `playful`.
+Suey (the default, a cat), Chonk (a cat with heart-shaped sunglasses and a tiara), Tulu (a tiny winged tentacle-faced sea monster), Frankie (a stitched-together patchwork monster), Vlad (a pale, pointy-eared little vampire in a red-lined cape), Sholmes (a deerstalker-wearing detective in a long brown coat), Argos (a loyal floppy-eared dog with a red collar) and Hazel (a messy-haired little witch in a crooked pointed hat and a gingham dress). Each has twelve moods: `neutral`, `happy`, `party`, `sleepy`, `cheer`, `love`, `sad`, `surprised`, `curious`, `grumpy`, `shy`, `playful`.
 
 ## Custom critters and decorations
 
@@ -30,7 +30,7 @@ Everything below lives in `<KOReader settings dir>/simpleui/sui_critters/`. The 
 - **Your own decorations** — `.png` (or `.svg`) files in `sui_critters/decor/`. Loose files stand on the floor of the row; put them in `decor/wall/` to hang them at mid-height or in `decor/ceiling/` to hang them from the top. Pixel-art decorations are enlarged by the same factor as the critter.
 - **Your own phrases** — put a `phrases.lua` in the same folder, returning a list of `{ text = "...", sub = "...", mood = "happy", period = "morning", min_streak = 3, min_books = 1 }`. Only `text` is required.
   - `sub` is the smaller second line (up to two lines in the bubble).
-  - `mood` is one of `neutral`, `happy`, `party`, `sleepy`.
+  - `mood` is one of the twelve moods listed above (`neutral`, `happy`, `party`, `sleepy`, `cheer`, `love`, `sad`, `surprised`, `curious`, `grumpy`, `shy`, `playful`); any other value shows `neutral`.
   - `period` is one of `morning`, `afternoon`, `evening`, `night`.
   - `text` and `sub` may use `{streak}`, `{books}`, `{pages}`, `{minutes}`, `{goal}`, `{weekday}` and `{name}` (the name you gave the critter). A phrase is skipped while one of its placeholders has no value.
   - Set **Phrases** on the module to *Included and mine* or *Mine only*.

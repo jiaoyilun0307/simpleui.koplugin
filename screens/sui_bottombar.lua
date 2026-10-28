@@ -317,6 +317,8 @@ function M.patchDimmedIcon(btn)
     local orig_lw_pt = lw.paintTo
     local UI_core    = require("infra/sui_core")
     lw.paintTo = function(self_lw, bb, x, y)
+        -- Set by Button:hide(); the disabled path below paints on its own.
+        if self_lw.hide then return end
         if not btn.enabled then
             local sz = self_lw:getSize()
             local w, h = sz.w, sz.h
@@ -359,7 +361,10 @@ function M.resizePaginationButtons(widget, icon_size)
             if btn then
                 btn.icon_width  = icon_size
                 btn.icon_height = icon_size
+                -- init() rebuilds the label and frame, dropping Button:hide().
+                local was_hidden = btn.hidden
                 btn:init()
+                if was_hidden then btn.hidden = false; btn:hide() end
                 M.patchDimmedIcon(btn)
             end
         end
@@ -1351,6 +1356,8 @@ local function _executeInPlace(action_id, plugin, fm)
             if entry.widget == hs_inst then hs_idx = i; break end
         end
         if hs_idx and hs_idx > 1 then
+            -- The action may act on the file list.
+            require("infra/sui_patches").materializeLazyListing()
             local entry = table.remove(stack, hs_idx)
             table.insert(stack, 1, entry)
         end
