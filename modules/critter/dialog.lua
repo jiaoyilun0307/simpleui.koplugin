@@ -9,6 +9,8 @@
 --   accept  true when the answer accepts the challenge on offer (talk.lua)
 --   recommend  true when the answer asks for a book suggestion (talk.lua); its
 --           reply is then what the critter says when it finds none
+--   play    true when the answer starts a game (talk.lua); it has no reply
+--   quote   true when the answer asks for a quote (talk.lua); it has no reply
 --   reply   { mood, text(f), sub?(f), by_tier? }: what the critter says back,
 --           shown as a phrase of the bubble. `by_tier[tier]` replaces the
 --           fields it sets for a critter in that mood tier (`sub = false`
@@ -31,7 +33,7 @@
 --   - `delta` runs from -2 to +3: +2/+3 warm or engaged, +1 playful, 0 neutral,
 --     -1 a brush-off. A declined answer costs mood but gets a gracious reply.
 --   - Lines stay short (about 42 characters, 32 for `sub`) and free of puns that
---     only work in English. Translations follow the pt-PT rules in CLAUDE.md.
+--     only work in English.
 
 local Deck = require("infra/sui_deck")
 local _    = require("infra/sui_i18n").translate
@@ -77,6 +79,15 @@ local LATER_REPLY = {
         grumpy  = { mood = "grumpy", text = function() return _("Fine. The books can wait. So can I.") end },
         happy   = { mood = "cheer",  text = function() return _("No rush. The shelf isn't going anywhere.") end },
         radiant = { mood = "love",   text = function() return _("Whenever you're ready.") end },
+    },
+}
+
+-- What the critter says when the user turns a game or a quote down.
+local NOT_NOW_REPLY = {
+    mood = "shy",
+    text = function() return _("Okay. Another time.") end,
+    by_tier = {
+        grumpy = { mood = "grumpy", text = function() return _("Fine. More room for me.") end },
     },
 }
 
@@ -603,6 +614,57 @@ Dialog.EXCHANGES = {
             } },
       } },
 
+    -- Affection: the answers are pats, and the reply shows the critter's reaction.
+    { id = "pet",
+      when   = function() return true end,
+      opener = function() return _("It's quiet on the shelf. Pat me?") end,
+      options = {
+          { id = "pat", delta = 2,
+            text  = function() return _("A gentle pat") end,
+            reply = {
+                mood = "love",
+                text = function() return _("Oh. That's nice.") end,
+                sub  = function() return _("I'll pretend I didn't need it.") end,
+                by_tier = {
+                    grumpy  = { mood = "grumpy", text = function() return _("Hm. Fine. That's enough.") end, sub = false },
+                    radiant = { mood = "love",   text = function() return _("Best part of my day.") end, sub = false },
+                },
+            } },
+          { id = "scratch", delta = 2,
+            text  = function() return _("Scratch its head") end,
+            reply = {
+                mood = "shy",
+                text = function() return _("Right there. A little to the left.") end,
+                sub  = function() return _("Perfect.") end,
+                by_tier = {
+                    grumpy  = { mood = "grumpy", text = function() return _("Left. No, not that left.") end, sub = false },
+                    radiant = { mood = "love",   text = function() return _("Don't ever stop.") end, sub = false },
+                },
+            } },
+          { id = "tickle", delta = 1,
+            when  = function(_f, tier) return tier ~= "grumpy" end,
+            text  = function() return _("Tickle it") end,
+            reply = {
+                mood = "playful",
+                text = function() return _("Hehe! Stop! Don't stop!") end,
+                sub  = function() return _("Okay. Stop.") end,
+                by_tier = {
+                    meh   = { mood = "surprised", text = function() return _("Hey! I was resting.") end,
+                              sub = function() return _("…Do it again.") end },
+                    happy = { mood = "party", text = function() return _("Ha! You'll pay for this!") end, sub = false },
+                },
+            } },
+          { id = "leave", delta = 0,
+            text  = function() return _("Let it be") end,
+            reply = {
+                mood = "shy",
+                text = function() return _("Okay. I'll be here.") end,
+                by_tier = {
+                    grumpy = { mood = "grumpy", text = function() return _("Good. I like the quiet.") end },
+                },
+            } },
+      } },
+
     -- Book suggestion: "Yes, pick one" has the conversation suggest an unopened
     -- book (talk.lua); its reply is what the critter says when there is none.
     { id = "read_next",
@@ -615,6 +677,29 @@ Dialog.EXCHANGES = {
           { id = "later", delta = 0,
             text  = notNow,
             reply = LATER_REPLY },
+      } },
+
+    -- Games and quotes: "Let's play" opens the choice of games and "Yes, please"
+    -- reads a quote (talk.lua).
+    { id = "play",
+      when   = function() return true end,
+      opener = function() return _("Want to play something?") end,
+      options = {
+          { id = "yes", delta = 1, play = true,
+            text = function() return _("Let's play") end },
+          { id = "later", delta = 0,
+            text  = notNow,
+            reply = NOT_NOW_REPLY },
+      } },
+    { id = "read_quote",
+      when   = function() return true end,
+      opener = function() return _("Shall I read you something?") end,
+      options = {
+          { id = "yes", delta = 1, quote = true,
+            text = function() return _("Yes, please") end },
+          { id = "later", delta = 0,
+            text  = notNow,
+            reply = NOT_NOW_REPLY },
       } },
 
     -- Challenges (challenge.lua): the opener is the offer or the progress, ready
@@ -704,7 +789,7 @@ end
 
 --- An exchange for the facts `f` and the mood tier `tier`, or nil when none
 --- fits. Returns { id, opener, options } with 2 or 3 options dealt at random
---- ({ id, text, delta, recommend, accept, reply = function(tier) -> { text, sub, mood } }), all
+--- ({ id, text, delta, recommend, play, quote, accept, reply = function(tier) -> { text, sub, mood } }), all
 --- texts written for `f`. Exchanges are dealt from a deck, so none comes
 --- round before the others have been seen.
 function Dialog.pick(f, tier)
@@ -730,6 +815,8 @@ function Dialog.pick(f, tier)
             text  = option.text(f),
             delta = option.delta,
             recommend = option.recommend,
+            play  = option.play,
+            quote = option.quote,
             accept = option.accept,
             reply = function(reply_tier) return renderReply(option.reply, f, reply_tier) end,
         }

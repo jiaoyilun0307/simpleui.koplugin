@@ -91,6 +91,9 @@ end
 local function _SH()
     return package.loaded["modules/module_books_shared"] or require("modules/module_books_shared")
 end
+local function _CritterRow()
+    return package.loaded["modules/critter/panel_row"] or require("modules/critter/panel_row")
+end
 
 local QSBar = {}
 local _showQSBarSettingsWindow
@@ -774,6 +777,15 @@ local function buildClassicPanel(touch_menu)
         VerticalSpan:new{ width = Screen:scaleBySize(16) },
     }
 
+    local critter = _CritterRow().build(touch_menu, refs, inner_w)
+    if critter then
+        table.insert(panel, CenterContainer:new{
+            dimen = Geom:new{ w = panel_w, h = critter:getSize().h },
+            critter,
+        })
+        table.insert(panel, VerticalSpan:new{ width = Screen:scaleBySize(10) })
+    end
+
     local sliders = buildSliders(touch_menu, refs, inner_w)
     if sliders then
         table.insert(panel, VerticalSpan:new{ width = Screen:scaleBySize(10) })
@@ -1095,6 +1107,14 @@ local function buildBookPanel(touch_menu, ui)
         VerticalSpan:new{ width = m.pad },
         LeftContainer:new{ dimen = Geom:new{ w = m.inner_w, h = body:getSize().h }, body },
     }
+    local critter = _CritterRow().build(touch_menu, refs, m.inner_w)
+    if critter then
+        table.insert(content, VerticalSpan:new{ width = m.block_gap })
+        table.insert(content, LeftContainer:new{
+            dimen = Geom:new{ w = m.inner_w, h = critter:getSize().h },
+            critter,
+        })
+    end
     local sliders = showBookSliders() and buildSliders(touch_menu, refs, m.inner_w)
     if sliders then
         table.insert(content, VerticalSpan:new{ width = m.block_gap })
@@ -1187,6 +1207,7 @@ local function patchTouchMenu()
         -- Not our panel tab — delegate normally.
         if not (self.item_table and self.item_table._sui_qs_panel) then
             self._sui_qs_refs = nil
+            _CritterRow().release(self)
             return orig_updateItems(self, target_page, target_item_id)
         end
 
@@ -1418,18 +1439,9 @@ _showQSBarSettingsWindow = function(touch_menu)
         }
     end
 
-    local function titleFn(ctx)
-        local cur = ctx.current()
-        local id  = cur and cur.id or "__root__"
-        if id == "nested_menu" then return cur.params.title or "" end
-        if id == "arrange"     then return cur.params.title or _("Arrange Items") end
-        if id == "item_picker" then return cur.params and cur.params.title or _("Add Item") end
-        return _("Quick Settings Bar")
-    end
-
     local win = SUIWindow:new{
         name           = "sui_win_context",
-        title          = titleFn,
+        title          = SUIWindow.makeSettingsTitle(_("Quick Settings Bar")),
         screens        = SUIWindow.makeSettingsScreens(buildRoot),
         navpager_mode  = _Config().isNavpagerEnabled(),
         position       = "bottom",
@@ -1626,6 +1638,10 @@ function QSBar.makeMenuItems(ctx_menu)
             help_text    = _("Show the frontlight and warmth sliders below the book details in the Book layout."),
             enabled_func = function() return is_book_layout() and Device:hasFrontlight() end,
         }),
+        {
+            text                = _("Tiny Critter"),
+            sub_item_table_func = function() return _CritterRow().getMenuItems(refresh, ctx_menu) end,
+        },
     }
 
     -- Appearance: labels and buttons.

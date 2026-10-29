@@ -14,8 +14,9 @@
 --
 --   TalkWindow.open{
 --       opener       = "Line of the critter", -- nil leaves the module's bubble as it is
+--       opener_lines = 3,                     -- most lines the opener takes, optional
 --       options      = { { text = "...", on_pick = function() end }, ... },
---       other        = { text = "...", on_pick = function() end },  -- last row
+--       other        = { text = "...", on_pick = function() end },  -- last row, optional
 --       anchor       = Geom,                  -- rectangle of the module's bubble
 --       side         = "left" | "right",      -- where the critter stands
 --       critter_rect = Geom,                  -- rectangle of the critter
@@ -56,10 +57,7 @@ local function ceilTo(value, unit)
     return math.ceil(value / unit) * unit
 end
 
--- Paints `rects` (relative to x, y) in `color`.
-local function paintRects(bb, rects, x, y, color)
-    for _i, r in ipairs(rects) do bb:paintRect(x + r.x, y + r.y, r.w, r.h, color) end
-end
+local paintRects = Bubble.paintRects
 
 -- Paints the frame of the w x h box at x, y: in the pixel style the stepped
 -- `shape` (nil for a box too small for its unit: a plain framed rectangle), in
@@ -97,16 +95,7 @@ end
 -- light or a dark row; text that needs more than `lines` lines is cut with an
 -- ellipsis.
 local function textBox(text, face, bold, width, color, lines)
-    local args = { text = text, face = face, bold = bold, width = width, fgcolor = color, alignment = "left" }
-    local box = UI.makeTextBox(args, true)
-    local probe = UI.makeTextBox({ text = "Xg", face = face, bold = bold, width = width, fgcolor = color }, true)
-    local max_h = lines * probe:getSize().h
-    probe:free()
-    if box:getSize().h <= max_h then return box end
-    box:free()
-    args.height = max_h
-    args.height_overflow_show_ellipsis = true
-    return UI.makeTextBox(args, true)
+    return Bubble.textBox(text, face, bold, width, lines, color, true)
 end
 
 -- Function that paints the tail of the bubble, nil when it has none. The tail
@@ -157,7 +146,7 @@ local function layout(opts)
     -- Bubble: the opening line, as the module's bubble shows its text. Without
     -- one the module's bubble stays and the window does not draw its own.
     l.opener    = opts.opener and textBox(opts.opener, faces.message, faces.message_bold, text_w,
-                                          COLOR.text_primary, OPENER_LINES)
+                                          COLOR.text_primary, opts.opener_lines or OPENER_LINES)
     l.content_h = l.opener and l.opener:getSize().h or 0
     l.bubble_y  = opts.anchor.y
     l.bubble_h  = l.opener and fit(math.max(opts.anchor.h, l.content_h + 2 * inset)) or opts.anchor.h

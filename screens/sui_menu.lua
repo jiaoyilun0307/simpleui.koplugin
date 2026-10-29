@@ -1850,8 +1850,6 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
     --   ctx.refresh   — zero-arg function to refresh the page after a change
     -- -----------------------------------------------------------------------
 
-    local MAX_QA_ITEMS = 6  -- max actions per QA slot (used by makeQAMenu)
-
     local HOMESCREEN_CTX = {
         pfx     = "simpleui_hs_",
         pfx_qa  = "simpleui_hs_qa_",
@@ -1886,6 +1884,7 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
         local items_key  = ctx.pfx_qa .. slot_n .. "_items"
         local labels_key = ctx.pfx_qa .. slot_n .. "_labels"
         local slot_label = _("Quick Actions Row")
+        local MAX_QA_ITEMS = require("modules/module_quick_actions").maxItems(slot_n, ctx.pfx)
         local function getItems() return SUISettings:readSetting(items_key) or {} end
         local function isSelected(id)
             for _i, v in ipairs(getItems()) do if v == id then return true end end
@@ -3360,6 +3359,11 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
         }
     end
 
+    -- Settings > Tiny Critter: the critter and its behaviour, the same on every screen.
+    plugin.makeCritterMenuItems = function(ctx_menu)
+        return require("modules/critter/menu").getItems(ctx_menu, refreshHomescreen)
+    end
+
     plugin.makeStyleMenuItems = function(ctx_menu)
         -- Name of the UI font in use, or "Default".
         local function uiFontValue()
@@ -4305,6 +4309,10 @@ SimpleUIPlugin.addToMainMenu = function(self, menu_items)
             {
                 text = _("Style"),
                 sub_item_table_func = function() return plugin.makeStyleMenuItems(nil) end,
+            },
+            {
+                text = _("Tiny Critter"),
+                sub_item_table_func = function() return plugin.makeCritterMenuItems(nil) end,
             },
             -- ── Quick Actions ────────────────────────────────────────────────
             -- Global custom quick actions (not homescreen-specific).
