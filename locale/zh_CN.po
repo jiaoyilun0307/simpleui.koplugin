@@ -13405,3 +13405,45 @@ msgstr "Your streak vanished. Like my reflection."
 
 msgid "…what remains is a good book."
 msgstr "…what remains is a good book."
+
+msgid "%d hidden"
+msgstr "%d hidden"
+
+msgid "File Manager"
+msgstr "File Manager"
+
+msgid "Hide Menu Items"
+msgstr "Hide Menu Items"
+
+msgid "Make sure you can still open Simple UI settings, e.g. with a quick action."
+msgstr "Make sure you can still open Simple UI settings, e.g. with a quick action."
+
+msgid "Open a book once to list the Reader menu"
+msgstr "Open a book once to list the Reader menu"
+
+msgid "Open the File Manager once to list its menu"
+msgstr "Open the File Manager once to list its menu"
+
+msgid "Pages turned"
+msgstr "[待翻译] Pages turned"
+
+msgid "Show All Items"
+msgstr "Show All Items"
+
+msgid "Show all hidden menu items again?"
+msgstr "Show all hidden menu items again?"
+
+msgid "Show this menu"
+msgstr "[待翻译] Show this menu"
+
+msgid "This item can't be hidden"
+msgstr "This item can't be hidden"
+
+msgid "Total pages turned"
+msgstr "[待翻译] Total pages turned"
+
+msgid "today"
+msgstr "today"
+
+msgid "total pages turned"
+msgstr "total pages turned"
