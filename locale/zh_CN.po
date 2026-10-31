@@ -13447,3 +13447,15 @@ msgstr "today"
 
 msgid "total pages turned"
 msgstr "total pages turned"
+
+msgid "%d page"
+msgstr "%d page"
+
+msgid "Books and pages"
+msgstr "[待翻译] Books and pages"
+
+msgid "No reading in this year"
+msgstr "[待翻译] No reading in this year"
+
+msgid "The statistics could not be read"
+msgstr "[待翻译] The statistics could not be read"
