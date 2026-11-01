@@ -13459,3 +13459,6 @@ msgstr "[待翻译] No reading in this year"
 
 msgid "The statistics could not be read"
 msgstr "[待翻译] The statistics could not be read"
+
+msgid "Replaces the folder covers"
+msgstr "[待翻译] Replaces the folder covers"
