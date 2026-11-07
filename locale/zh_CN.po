@@ -13462,3 +13462,15 @@ msgstr "[待翻译] The statistics could not be read"
 
 msgid "Replaces the folder covers"
 msgstr "[待翻译] Replaces the folder covers"
+
+msgid "Sort A to Z"
+msgstr "Sort A to Z"
+
+msgid "Sort A to Z (natural)"
+msgstr "Sort A to Z (natural)"
+
+msgid "Sort Z to A"
+msgstr "Sort Z to A"
+
+msgid "Sort Z to A (natural)"
+msgstr "Sort Z to A (natural)"
