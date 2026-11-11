@@ -14918,3 +14918,231 @@ msgstr "Sort Z to A"
 
 msgid "Sort Z to A (natural)"
 msgstr "Sort Z to A (natural)"
+
+msgid "%1 cover found"
+msgstr "%1 cover found"
+
+msgid "A connected collection adds and removes books as they change in the folder. A fixed collection keeps only the books found now."
+msgstr "A connected collection adds and removes books as they change in the folder. A fixed collection keeps only the books found now."
+
+msgid "Alphabetical"
+msgstr "[待翻译] Alphabetical"
+
+msgid "Apply File Manager Layout to Reader"
+msgstr "Apply File Manager Layout to Reader"
+
+msgid "Argos"
+msgstr "[待翻译] Argos"
+
+msgid "Artwork is subject to Apple's terms of use"
+msgstr "Artwork is subject to Apple's terms of use"
+
+msgid "Book count"
+msgstr "[待翻译] Book count"
+
+msgid "Book cover"
+msgstr "[待翻译] Book cover"
+
+msgid "Book file"
+msgstr "[待翻译] Book file"
+
+msgid "Book stack"
+msgstr "[待翻译] Book stack"
+
+msgid "Bookcase"
+msgstr "[待翻译] Bookcase"
+
+msgid "Candle shelf"
+msgstr "[待翻译] Candle shelf"
+
+msgid "Cat pot"
+msgstr "[待翻译] Cat pot"
+
+msgid "Chonk"
+msgstr "[待翻译] Chonk"
+
+msgid "Choose cover image"
+msgstr "[待翻译] Choose cover image"
+
+msgid "Choose from device"
+msgstr "[待翻译] Choose from device"
+
+msgid "Coffee"
+msgstr "[待翻译] Coffee"
+
+msgid "Collection \\"%1\\" created with %2 book."
+msgstr "Collection \\"%1\\" created with %2 book."
+
+msgid "Connected"
+msgstr "[待翻译] Connected"
+
+msgid "Connected folders: %1"
+msgstr "Connected folders: %1"
+
+msgid "Corkboard"
+msgstr "[待翻译] Corkboard"
+
+msgid "Could not change the cover."
+msgstr "Could not change the cover."
+
+msgid "Could not reach the cover services. Check your connection."
+msgstr "Could not reach the cover services. Check your connection."
+
+msgid "Custom image"
+msgstr "[待翻译] Custom image"
+
+msgid "Dimensions"
+msgstr "[待翻译] Dimensions"
+
+msgid "Disconnect folder"
+msgstr "[待翻译] Disconnect folder"
+
+msgid "Disconnect folders"
+msgstr "[待翻译] Disconnect folders"
+
+msgid "Downloading covers %1/%2"
+msgstr "Downloading covers %1/%2"
+
+msgid "File"
+msgstr "[待翻译] File"
+
+msgid "File size"
+msgstr "[待翻译] File size"
+
+msgid "Finished last"
+msgstr "[待翻译] Finished last"
+
+msgid "Fixed"
+msgstr "固定"
+
+msgid "Folders and files mixed"
+msgstr "[待翻译] Folders and files mixed"
+
+msgid "Frankie"
+msgstr "[待翻译] Frankie"
+
+msgid "Hanging plant"
+msgstr "[待翻译] Hanging plant"
+
+msgid "Hazel"
+msgstr "[待翻译] Hazel"
+
+msgid "Hide and show the Reader menu items shared with the File Manager as they are in the File Manager?"
+msgstr "Hide and show the Reader menu items shared with the File Manager as they are in the File Manager?"
+
+msgid "ISBN %1"
+msgstr "ISBN %1"
+
+msgid "Include Apple Books"
+msgstr "Include Apple Books"
+
+msgid "Include subfolders"
+msgstr "[待翻译] Include subfolders"
+
+msgid "Keywords"
+msgstr "[待翻译] Keywords"
+
+msgid "Lamp"
+msgstr "[待翻译] Lamp"
+
+msgid "Last read"
+msgstr "[待翻译] Last read"
+
+msgid "Metadata"
+msgstr "[待翻译] Metadata"
+
+msgid "Modified"
+msgstr "[待翻译] Modified"
+
+msgid "Natural"
+msgstr "[待翻译] Natural"
+
+msgid "No cover"
+msgstr "[待翻译] No cover"
+
+msgid "No covers found."
+msgstr "No covers found."
+
+msgid "Picture"
+msgstr "[待翻译] Picture"
+
+msgid "Pillow"
+msgstr "[待翻译] Pillow"
+
+msgid "Plant"
+msgstr "[待翻译] Plant"
+
+msgid "Plant shelf"
+msgstr "[待翻译] Plant shelf"
+
+msgid "Press any key to cancel"
+msgstr "[待翻译] Press any key to cancel"
+
+msgid "Rating"
+msgstr "[待翻译] Rating"
+
+msgid "Restore original cover"
+msgstr "[待翻译] Restore original cover"
+
+msgid "Restore the book's original cover?"
+msgstr "Restore the book's original cover?"
+
+msgid "Reverse sorting"
+msgstr "[待翻译] Reverse sorting"
+
+msgid "Scan folder on showing collection"
+msgstr "[待翻译] Scan folder on showing collection"
+
+msgid "Search cancelled"
+msgstr "[待翻译] Search cancelled"
+
+msgid "Search covers"
+msgstr "[待翻译] Search covers"
+
+msgid "Search online"
+msgstr "[待翻译] Search online"
+
+msgid "Searching %1"
+msgstr "Searching %1"
+
+msgid "Sholmes"
+msgstr "[待翻译] Sholmes"
+
+msgid "Show %1 cover"
+msgstr "Show %1 cover"
+
+msgid "Sort by: %1"
+msgstr "Sort by: %1"
+
+msgid "Suey"
+msgstr "[待翻译] Suey"
+
+msgid "Tap to cancel"
+msgstr "[待翻译] Tap to cancel"
+
+msgid "Title, author or ISBN"
+msgstr "Title, author or ISBN"
+
+msgid "Tulu"
+msgstr "[待翻译] Tulu"
+
+msgid "Undo last change"
+msgstr "[待翻译] Undo last change"
+
+msgid "Unopened first"
+msgstr "[待翻译] Unopened first"
+
+msgid "Unopened last"
+msgstr "[待翻译] Unopened last"
+
+msgid "Use this cover"
+msgstr "[待翻译] Use this cover"
+
+msgid "Vlad"
+msgstr "[待翻译] Vlad"
+
+msgid "Window"
+msgstr "[待翻译] Window"
+
+msgid "number of books"
+msgstr "number of books"
