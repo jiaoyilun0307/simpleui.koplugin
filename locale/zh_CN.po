@@ -15171,3 +15171,6 @@ msgstr "[待翻译] Window"
 
 msgid "number of books"
 msgstr "number of books"
+
+msgid "Collection \\"%1\\" created with %2 book."
+msgstr "Collection \\"%1\\" created with %2 book."
