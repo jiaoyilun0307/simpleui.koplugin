@@ -15174,3 +15174,6 @@ msgstr "number of books"
 
 msgid "Collection \\"%1\\" created with %2 book."
 msgstr "Collection \\"%1\\" created with %2 book."
+
+msgid "Collection \\"%1\\" created with %2 book."
+msgstr "Collection \\"%1\\" created with %2 book."
