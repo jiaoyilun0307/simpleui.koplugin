@@ -15183,3 +15183,18 @@ msgstr "Collection \\"%1\\" created with %2 book."
 
 msgid "Collection \\"%1\\" created with %2 book."
 msgstr "Collection \\"%1\\" created with %2 book."
+
+msgid "At least one page must stay visible."
+msgstr "At least one page must stay visible."
+
+msgid "Collection \\"%1\\" created with %2 book."
+msgstr "Collection \\"%1\\" created with %2 book."
+
+msgid "Hidden books"
+msgstr "[待翻译] Hidden books"
+
+msgid "Hide from history"
+msgstr "[待翻译] Hide from history"
+
+msgid "Show in history"
+msgstr "[待翻译] Show in history"
