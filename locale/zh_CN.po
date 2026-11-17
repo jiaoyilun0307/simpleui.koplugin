@@ -15198,3 +15198,198 @@ msgstr "[待翻译] Hide from history"
 
 msgid "Show in history"
 msgstr "[待翻译] Show in history"
+
+msgid "%1 % of 1 page"
+msgstr "%1 % of 1 page"
+
+msgid "%1 book"
+msgstr "%1 book"
+
+msgid "%1 folder"
+msgstr "%1 folder"
+
+msgid "%1 · %2"
+msgstr "%1 · %2"
+
+msgid "%1, %2 to read"
+msgstr "%1, %2 to read"
+
+msgid "1 page"
+msgstr "1 page"
+
+msgid "All Books"
+msgstr "All Books"
+
+msgid "Also used by the Collections module on the Home Screen."
+msgstr "Also used by the Collections module on the Home Screen."
+
+msgid "Badges"
+msgstr "[待翻译] Badges"
+
+msgid "Book Covers"
+msgstr "Book Covers"
+
+msgid "Books with Description"
+msgstr "Books with Description"
+
+msgid "Browse by Author, Series and Tags"
+msgstr "Browse by Author, Series and Tags"
+
+msgid "Browsing"
+msgstr "[待翻译] Browsing"
+
+msgid "Browsing, covers and folders"
+msgstr "Browsing, covers and folders"
+
+msgid "Captions"
+msgstr "[待翻译] Captions"
+
+msgid "Collection \\"%1\\" created with %2 book."
+msgstr "Collection \\"%1\\" created with %2 book."
+
+msgid "Colors, fonts and icons"
+msgstr "Colors, fonts and icons"
+
+msgid "Covers in List View"
+msgstr "Covers in List View"
+
+msgid "Custom Covers"
+msgstr "Custom Covers"
+
+msgid "Dots"
+msgstr "[待翻译] Dots"
+
+msgid "Fades finished books in the file browser. Other lists show them as usual."
+msgstr "Fades finished books in the file browser. Other lists show them as usual."
+
+msgid "Fades finished books towards white.\n50% is the default."
+msgstr "Fades finished books towards white.\n50% is the default."
+
+msgid "File Properties in List"
+msgstr "File Properties in List"
+
+msgid "Finished – 1 page"
+msgstr "Finished – 1 page"
+
+msgid "Flat View"
+msgstr "Flat View"
+
+msgid "Flat view"
+msgstr "[待翻译] Flat view"
+
+msgid "Folders and Files Mixed"
+msgstr "Folders and Files Mixed"
+
+msgid "Group by Series"
+msgstr "Group by Series"
+
+msgid "Hints"
+msgstr "[待翻译] Hints"
+
+msgid "Items per Page"
+msgstr "Items per Page"
+
+msgid "Items per page"
+msgstr "[待翻译] Items per page"
+
+msgid "Landscape Mosaic Mode"
+msgstr "Landscape Mosaic Mode"
+
+msgid "List Progress Bar Style"
+msgstr "List Progress Bar Style"
+
+msgid "List View"
+msgstr "List View"
+
+msgid "Look of the progress bars on the Home Screen. Library list progress bars set to \\"Style\\" follow it."
+msgstr "Look of the progress bars on the Home Screen. Library list progress bars set to \\"Style\\" follow it."
+
+msgid "Marks the books that have been opened with a folded corner."
+msgstr "Marks the books that have been opened with a folded corner."
+
+msgid "Mosaic View"
+msgstr "Mosaic View"
+
+msgid "On Hold (List View)"
+msgstr "On Hold (List View)"
+
+msgid "On hold"
+msgstr "[待翻译] On hold"
+
+msgid "On hold – 1 page"
+msgstr "On hold – 1 page"
+
+msgid "One Cover"
+msgstr "One Cover"
+
+msgid "Opened Books in Collections"
+msgstr "Opened Books in Collections"
+
+msgid "Opened Books in History"
+msgstr "Opened Books in History"
+
+msgid "Opened Books in Library"
+msgstr "Opened Books in Library"
+
+msgid "Pages Left to Read"
+msgstr "Pages Left to Read"
+
+msgid "Pages Read Instead of %"
+msgstr "Pages Read Instead of %"
+
+msgid "Placeholder Cover for Empty Folders"
+msgstr "Placeholder Cover for Empty Folders"
+
+msgid "Portrait List Mode"
+msgstr "Portrait List Mode"
+
+msgid "Portrait Mosaic Mode"
+msgstr "Portrait Mosaic Mode"
+
+msgid "Progress Bar in List"
+msgstr "Progress Bar in List"
+
+msgid "Progress Bar in Mosaic"
+msgstr "Progress Bar in Mosaic"
+
+msgid "Progress and Details"
+msgstr "Progress and Details"
+
+msgid "Progress in List"
+msgstr "Progress in List"
+
+msgid "Reverse Sorting"
+msgstr "Reverse Sorting"
+
+msgid "Series in List"
+msgstr "Series in List"
+
+msgid "Several Covers"
+msgstr "Several Covers"
+
+msgid "Shadow"
+msgstr "[待翻译] Shadow"
+
+msgid "Show Uncategorized Books"
+msgstr "Show Uncategorized Books"
+
+msgid "Show all books here"
+msgstr "[待翻译] Show all books here"
+
+msgid "Shows the file type and size of each book."
+msgstr "Shows the file type and size of each book."
+
+msgid "Shows the series name and number of each book."
+msgstr "Shows the series name and number of each book."
+
+msgid "Uniform Aspect Ratio (2:3)"
+msgstr "Uniform Aspect Ratio (2:3)"
+
+msgid "View"
+msgstr "[待翻译] View"
+
+msgid "View and sort"
+msgstr "[待翻译] View and sort"
+
+msgid "Views"
+msgstr "[待翻译] Views"
