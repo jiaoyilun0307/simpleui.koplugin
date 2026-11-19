@@ -15399,3 +15399,27 @@ msgstr "Collection \\"%1\\" created with %2 book."
 
 msgid "Look of the progress bars on the Home Screen. Library list progress bars set to \\"Style\\" follow it."
 msgstr "Look of the progress bars on the Home Screen. Library list progress bars set to \\"Style\\" follow it."
+
+msgid "Collection \\"%1\\" created with %2 book."
+msgstr "Collection \\"%1\\" created with %2 book."
+
+msgid "Date Format"
+msgstr "Date Format"
+
+msgid "Edit Card"
+msgstr "Edit Card"
+
+msgid "Look of the progress bars on the Home Screen. Library list progress bars set to \\"Style\\" follow it."
+msgstr "Look of the progress bars on the Home Screen. Library list progress bars set to \\"Style\\" follow it."
+
+msgid "{day}/{month_num}/{year}"
+msgstr "{day}/{month_num}/{year}"
+
+msgid "{weekday_short}, {day} {month_short}"
+msgstr "{weekday_short}, {day} {month_short}"
+
+msgid "{weekday}, {day} {month}"
+msgstr "{weekday}, {day} {month}"
+
+msgid "{weekday}, {day} {month} {year}"
+msgstr "{weekday}, {day} {month} {year}"
