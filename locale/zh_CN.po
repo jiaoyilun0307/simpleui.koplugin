@@ -15429,3 +15429,9 @@ msgstr "Collection \\"%1\\" created with %2 book."
 
 msgid "Look of the progress bars on the Home Screen. Library list progress bars set to \\"Style\\" follow it."
 msgstr "Look of the progress bars on the Home Screen. Library list progress bars set to \\"Style\\" follow it."
+
+msgid "Collection \\"%1\\" created with %2 book."
+msgstr "Collection \\"%1\\" created with %2 book."
+
+msgid "Look of the progress bars on the Home Screen. Library list progress bars set to \\"Style\\" follow it."
+msgstr "Look of the progress bars on the Home Screen. Library list progress bars set to \\"Style\\" follow it."
