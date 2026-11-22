@@ -398,16 +398,30 @@ local function _isValidDateStr(s)
     return month ~= nil
 end
 
--- Applies `mutate(summary)` to the sidecar summary of `filepath` and flushes
--- it, unless `mutate` returns false (nothing to change). The stats provider
--- is then told the book changed, so the counts, the ledger and the screens
+-- Settings object of `filepath`: the reader's live one when the book is open
+-- there (newer than the sidecar on disk, and written back on close), else one
+-- opened from the sidecar. Returns it and whether it is the live one, or nil.
+local function _openBookSettings(filepath)
+    local ReaderUI = package.loaded["apps/reader/readerui"]
+    local ui       = ReaderUI and ReaderUI.instance
+    if ui and ui.doc_settings and ui.document and ui.document.file == filepath then
+        return ui.doc_settings, true
+    end
+    local ok_ds, DocSettings = pcall(require, "docsettings")
+    if not ok_ds then return nil end
+    local ok_open, ds = pcall(DocSettings.open, DocSettings, filepath)
+    if not ok_open or not ds then return nil end
+    return ds, false
+end
+
+-- Applies `mutate(summary)` to the summary of `filepath` and flushes it,
+-- unless `mutate` returns false (nothing to change). The stats provider is
+-- then told the book changed, so the counts, the ledger and the screens
 -- follow the edit.
 local function _updateSummary(filepath, mutate)
     if not filepath then return false end
-    local ok_ds, DocSettings = pcall(require, "docsettings")
-    if not ok_ds then return false end
-    local ok_open, ds = pcall(DocSettings.open, DocSettings, filepath)
-    if not ok_open or not ds then return false end
+    local ds, live = _openBookSettings(filepath)
+    if not ds then return false end
 
     local summary = ds:readSetting("summary") or {}
     if mutate(summary) ~= false then
@@ -416,7 +430,9 @@ local function _updateSummary(filepath, mutate)
     end
 
     local SP = package.loaded["modules/module_stats_provider"]
-    if SP and SP.bookChanged then SP.bookChanged(filepath) end
+    if SP and SP.bookChanged then
+        SP.bookChanged(filepath, { doc_settings = live and ds or nil })
+    end
     return true
 end
 
@@ -442,6 +458,25 @@ local function _writeSummaryExclude(filepath, excluded)
     return _updateSummary(filepath, function(summary)
         summary.exclude_from_goals = excluded and true or nil
     end)
+end
+
+-- Sets the book's status to "reading" the way KOReader's status buttons do,
+-- so it leaves the finished books.
+local function _markBookReading(filepath)
+    if not filepath then return false end
+    local ds, live = _openBookSettings(filepath)
+    if not ds then return false end
+
+    local summary = ds:readSetting("summary") or {}
+    summary.status = "reading"
+    require("apps/filemanager/filemanagerutil").saveSummary(ds, summary)
+    require("ui/widget/booklist").setBookInfoCacheProperty(filepath, "status", "reading")
+
+    local SP = package.loaded["modules/module_stats_provider"]
+    if SP and SP.bookChanged then
+        SP.bookChanged(filepath, { doc_settings = live and ds or nil, status_changed = true })
+    end
+    return true
 end
 
 -- Removes keys from the summary (used by the Reset button to revert to the
@@ -725,30 +760,85 @@ function StatsWindows.showFinishedBooksDialog(opts)
         })
     end
 
+    -- Action sheet of a book tracked from its file, or of one whose file is
+    -- gone: goal exclusion, toggled in place, and removal from the finished
+    -- books, confirmed once the sheet has closed.
+    local function showBookActions(book, reload)
+        local ActionSheet = require("engines/sui_action_sheet")
+        local excluded    = book.exclude_from_goals and true or false
+        local sheet, sections
+
+        local function setExcluded(value)
+            if book.filepath then
+                _writeSummaryExclude(book.filepath, value)
+            else
+                SP.setGoneBookExcluded(book.md5, value)
+            end
+            excluded = value
+            reload()
+            sheet:update{ sections = sections() }
+        end
+
+        local function remove()
+            if book.filepath then
+                if _markBookReading(book.filepath) then reload() end
+            else
+                SP.removeGoneBook(book.md5)
+                reload()
+            end
+        end
+
+        function sections()
+            return { ActionSheet.list{
+                {
+                    text     = _("Exclude from goals"),
+                    sui_icon = "goal",
+                    toggle   = excluded,
+                    callback = function() setExcluded(not excluded) end,
+                },
+                {
+                    text     = _("Remove from finished books"),
+                    sui_icon = "delete",
+                    callback = function()
+                        sheet:close()
+                        require("features/dialogs/sui_dialogs").confirm{
+                            text        = book.filepath
+                                and _("Remove this book from the finished books? Its status will be set to reading.")
+                                or  _("Remove this book from the finished books? Its file is no longer on the device."),
+                            ok_text     = _("Remove"),
+                            cancel_text = _("Cancel"),
+                            ok_callback = remove,
+                        }
+                    end,
+                },
+            } }
+        end
+
+        sheet = ActionSheet.show{
+            name     = "sui_win_finished_book",
+            sections = sections(),
+        }
+    end
+
+    -- Subtitle of a book row: completion dates first, so they stay visible
+    -- when the line is truncated, then authors and the exclusion mark.
+    local function bookSubtitle(book)
+        local parts = {}
+        parts[#parts + 1] = book_date_range[book.key]
+        if book.authors and book.authors ~= "" then parts[#parts + 1] = book.authors end
+        if book.exclude_from_goals then parts[#parts + 1] = _("Excluded") end
+        return table.concat(parts, " · ")
+    end
+
     local function buildListScreen(ctx)
         local inner_w = ctx.inner_w
         local rows = {}
         local reload = reloaderFor(ctx)
         for _i, book in ipairs(books_by_year[selected_year] or {}) do
-            local date_range = book_date_range[book.key] or "\xe2\x80\x93"
-            local sub_text
-            if book.authors and book.authors ~= "" then
-                if book.exclude_from_goals then
-                    sub_text = string.format("%s · %s", book.authors, _("Excluded"))
-                else
-                    sub_text = book.authors
-                end
-            else
-                if book.exclude_from_goals then
-                    sub_text = _("Excluded")
-                end
-            end
-
             local row = {
                 inner_w      = inner_w,
                 title        = book.title,
-                subtitle     = sub_text,
-                right_value  = date_range,
+                subtitle     = bookSubtitle(book),
                 dim_only     = book.exclude_from_goals,
                 show_chevron = book.filepath ~= nil or book.manual,
                 separator    = true,
@@ -756,18 +846,22 @@ function StatsWindows.showFinishedBooksDialog(opts)
             if book.count then
                 -- Books entered as a plain number: one row standing for all of them.
                 row.title       = _("Manual Yearly Count")
+                row.subtitle    = nil
                 row.right_value = string.format(N_("%d book", "%d books", book.count), book.count)
                 row.on_tap      = function() ManualBooks.showCountDialog(book.year, reload) end
             elseif book.manual then
                 row.on_tap = function() ManualBooks.showBookDialog(book, reload) end
-            elseif book.filepath then
-                row.on_tap = function()
-                    local d, err = _fetchBookStatsData(book)
-                    if not d then
-                        UI.Notify.toast(err or _("Unknown error."))
-                        return
+            else
+                row.on_delete = function() showBookActions(book, reload) end
+                if book.filepath then
+                    row.on_tap = function()
+                        local d, err = _fetchBookStatsData(book)
+                        if not d then
+                            UI.Notify.toast(err or _("Unknown error."))
+                            return
+                        end
+                        ctx.push("book_stats", { book = book, stats = d })
                     end
-                    ctx.push("book_stats", { book = book, stats = d })
                 end
             end
             rows[#rows + 1] = SUIWindow.ListRow(row)
@@ -1144,18 +1238,6 @@ function StatsWindows.showFinishedBooksDialog(opts)
                     SUIStyle.icon("highlights"), _("Highlights"), tostring(d.highlights), on_tap_highlights,
                     SUIStyle.icon("notes"),      _("Notes"),      tostring(d.notes),      on_tap_notes
                 ),
-                makeRowSep(),
-                makeIconRow(
-                    SUIStyle.selectionIcon(false, book.exclude_from_goals),
-                    _("Exclude from goals"),
-                    book.exclude_from_goals and _("Yes") or _("No"),
-                    function()
-                        local next_val = not book.exclude_from_goals
-                        book.exclude_from_goals = next_val and true or nil
-                        _writeSummaryExclude(fp, book.exclude_from_goals)
-                        ctx.repaint()
-                    end
-                ),
             },
         }
 
@@ -1352,11 +1434,9 @@ local function _riGetStreaks()
     do
         -- ── Day streaks ──────────────────────────────────────────────────
         -- The ledger's active dates are the days with reading time (rows with
-        -- duration > 0, so a crash/force-close leaves no gap), exactly like
-        -- module_stats_provider.lua's fetchStreak — needed so the two "current
-        -- streak" sources this window and the homescreen card both ultimately
-        -- feed into sui_streak.computeCurrentDayStreak() actually agree on the
-        -- same set of "active" dates, not just share the same walk function.
+        -- duration > 0, so a crash/force-close leaves no gap). The homescreen
+        -- card (module_stats_provider.lua's fetchStreak) reads the same ledger,
+        -- so both feed the same days into sui_streak.computeCurrentDayStreak().
         local dates = ledger:activeDates()
 
         local function parseDateYMD(s)
@@ -1396,7 +1476,7 @@ local function _riGetStreaks()
         end
 
         local today     = os.date("%Y-%m-%d")
-        local yesterday = os.date("%Y-%m-%d", os.time() - 86400)
+        local yesterday = SUIStreak.prevDay(today)
 
         local day_streaks = computeStreak(dates,
             isConsecDay,
@@ -1440,7 +1520,8 @@ local function _riGetStreaks()
         end
 
         local cur_wk  = os.date("%G-%V")
-        local last_wk = os.date("%G-%V", os.time() - 7 * 86400)
+        local now_t   = os.date("*t")
+        local last_wk = os.date("%G-%V", os.time{ year = now_t.year, month = now_t.month, day = now_t.day - 7, hour = 12 })
 
         -- Week streak entries use {first_ts, last_ts}, so indices differ.
         -- Adapt computeStreak: entries[i][1]=first_ts for is_current, [2]=last_ts for best_end.
@@ -1484,13 +1565,18 @@ end
 
 -- Returns { seconds=N, pages=N } for the reading done since midnight today.
 -- Re-fetched every time the page is built (cheap: two small aggregate queries).
+-- Local midnight `day_offset` days from today, built from the date fields so a
+-- DST change cannot shift it.
+local function _localMidnight(day_offset)
+    local t = os.date("*t")
+    return os.time{ year = t.year, month = t.month, day = t.day + day_offset, hour = 0 }
+end
+
 local function _riGetTodayStats()
     local default = { seconds = 0, pages = 0 }
     return _withStatsDb(default, function(conn)
         local s = { seconds = 0, pages = 0 }
-        local now_ts  = os.time()
-        local now_t   = os.date("*t")
-        local midnight = now_ts - (now_t.hour * 3600 + now_t.min * 60 + now_t.sec)
+        local midnight = _localMidnight(0)
         _withStmt(conn, string.format([[
                 SELECT count(DISTINCT page || '@' || id_book), sum(duration)
                 FROM page_stat_data
@@ -1511,11 +1597,8 @@ local function _riGetThisWeekStats()
     local default = { seconds = 0, pages = 0 }
     local r = _withStatsDb(default, function(conn)
         local s = { seconds = 0, pages = 0 }
-        local now_ts  = os.time()
-        local now_t   = os.date("*t", now_ts)
-        local midnight  = now_ts - (now_t.hour * 3600 + now_t.min * 60 + now_t.sec)
-        local days_since_monday = (now_t.wday + 5) % 7
-        local week_start = midnight - days_since_monday * 86400
+        local days_since_monday = (os.date("*t").wday + 5) % 7
+        local week_start = _localMidnight(-days_since_monday)
         _withStmt(conn, string.format([[
             WITH day_buckets AS (
                 SELECT sum(duration) AS sd, count(DISTINCT page || '@' || id_book) AS pg
@@ -1570,10 +1653,7 @@ local function _riGetLastWeekStats()
     local default = { total_seconds = 0, total_pages = 0, avg_seconds = 0, avg_pages = 0 }
     local r = _withStatsDb(default, function(conn)
         local res       = { total_seconds = 0, total_pages = 0, avg_seconds = 0, avg_pages = 0 }
-        local now_ts    = os.time()
-        local now_t     = os.date("*t")
-        local midnight  = now_ts - (now_t.hour * 3600 + now_t.min * 60 + now_t.sec)
-        local week_start = midnight - 6 * 86400
+        local week_start = _localMidnight(-6)
         _withStmt(conn, string.format([[
                 WITH day_buckets AS (
                     SELECT
@@ -2176,10 +2256,13 @@ function StatsWindows.showStreakManagerWindow(opts)
         -- never an arbitrary past day, so at most one cell in the whole
         -- calendar is ever tappable for this.
         local freezes_available   = freeze_mode_on and SUIStreak.getFreezesAvailable() or 0
-        local yest_t              = freeze_mode_on and os.date("*t", os.time() - 86400) or nil
-        local yest_str            = freeze_mode_on and os.date("%Y-%m-%d", os.time() - 86400) or nil
+        local today_t             = os.date("*t")
+        -- Noon of yesterday: a DST change cannot move it to another day.
+        local yest_ts             = os.time{ year = today_t.year, month = today_t.month, day = today_t.day - 1, hour = 12 }
+        local yest_t              = freeze_mode_on and os.date("*t", yest_ts) or nil
+        local yest_str            = freeze_mode_on and os.date("%Y-%m-%d", yest_ts) or nil
         local yest_active         = freeze_mode_on and _smGetRealActivityFor(yest_str) or false
-        local day_before_active   = freeze_mode_on and _smGetRealActivityFor(os.date("%Y-%m-%d", os.time() - 2 * 86400)) or false
+        local day_before_active   = freeze_mode_on and _smGetRealActivityFor(SUIStreak.prevDay(yest_str)) or false
         local yest_already_frozen = freeze_mode_on and SUIStreak.isDateFrozen(yest_str) or false
         -- gap_eligible: is yesterday specifically the one missed day (real
         -- activity the day before yesterday, none yesterday, not already
@@ -2231,7 +2314,7 @@ function StatsWindows.showStreakManagerWindow(opts)
             local Dialogs = require("features/dialogs/sui_dialogs")
             Dialogs.confirm{
                 text = string.format(_("You have %d freeze(s) available.\nUse one to cover %s?"),
-                           freezes_available, _riFmtDate(os.time() - 86400)),
+                           freezes_available, _riFmtDate(yest_ts)),
                 ok_text     = _("Use freeze"),
                 ok_callback = useFreeze,
             }
@@ -2535,8 +2618,8 @@ function StatsWindows.showBookStatsFromFile(opts)
     local ok_ds, DocSettings = pcall(require, "docsettings")
     if ok_ds and DocSettings and DocSettings.hasSidecarFile
        and DocSettings:hasSidecarFile(filepath) then
-        local ok_open, ds = pcall(function() return DocSettings:open(filepath) end)
-        if ok_open and ds then
+        local ds, live = _openBookSettings(filepath)
+        if ds then
             local doc_props = ds:readSetting("doc_props")
             if doc_props then
                 book.title   = doc_props.title
@@ -2556,7 +2639,7 @@ function StatsWindows.showBookStatsFromFile(opts)
                 end
                 book.exclude_from_goals = summary.exclude_from_goals
             end
-            pcall(function() ds:close() end)
+            if not live then pcall(function() ds:close() end) end
         end
     end
     if not book.title or book.title == "" then
