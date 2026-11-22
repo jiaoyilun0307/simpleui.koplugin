@@ -15435,3 +15435,30 @@ msgstr "Collection \\"%1\\" created with %2 book."
 
 msgid "Look of the progress bars on the Home Screen. Library list progress bars set to \\"Style\\" follow it."
 msgstr "Look of the progress bars on the Home Screen. Library list progress bars set to \\"Style\\" follow it."
+
+msgid "Also use this mode in History and Collections"
+msgstr "Also use this mode in History and Collections"
+
+msgid "Authors display mode"
+msgstr "[待翻译] Authors display mode"
+
+msgid "Collection \\"%1\\" created with %2 book."
+msgstr "Collection \\"%1\\" created with %2 book."
+
+msgid "Look of the progress bars on the Home Screen. Library list progress bars set to \\"Style\\" follow it."
+msgstr "Look of the progress bars on the Home Screen. Library list progress bars set to \\"Style\\" follow it."
+
+msgid "Remove from finished books"
+msgstr "[待翻译] Remove from finished books"
+
+msgid "Remove this book from the finished books? Its file is no longer on the device."
+msgstr "Remove this book from the finished books? Its file is no longer on the device."
+
+msgid "Remove this book from the finished books? Its status will be set to reading."
+msgstr "Remove this book from the finished books? Its status will be set to reading."
+
+msgid "Series display mode"
+msgstr "[待翻译] Series display mode"
+
+msgid "Tags display mode"
+msgstr "[待翻译] Tags display mode"
