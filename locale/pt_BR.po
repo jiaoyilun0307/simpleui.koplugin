@@ -2444,6 +2444,10 @@ msgstr "Maré da aurora. Bom dia."
 msgid "Day %d, here we come!"
 msgstr "Dia %d, lá vamos nós!"
 
+#: features/sui_quickactions.lua:969
+msgid "Day Mode"
+msgstr "Modo Diurno"
+
 #: modules/critter/dialog.lua:486
 msgid "Day one with you. My favourite."
 msgstr "Dia um com você. O meu preferido."
@@ -11179,9 +11183,21 @@ msgstr "Formato da Data"
 msgid "Edit Card"
 msgstr "Editar Cartão"
 
+#: screens/sui_stats_windows.lua:1726
+msgid "{day2} {month_short} '{year2}"
+msgstr "{day2} {month_short} '{year2}"
+
 #: modules/module_clock.lua:42
 msgid "{day}/{month_num}/{year}"
 msgstr "{day}/{month_num}/{year}"
+
+#: engines/sui_window.lua:3094
+msgid "{month} {year}"
+msgstr "{month} de {year}"
+
+#: screens/sui_heatmap_popup.lua:45
+msgid "{start_day2} {start_month_short} – {end_day2} {end_month_short} {end_year}"
+msgstr "{start_day2} {start_month_short} – {end_day2} {end_month_short} {end_year}"
 
 #: modules/module_clock.lua:41
 msgid "{weekday_short}, {day} {month_short}"

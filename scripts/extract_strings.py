@@ -125,7 +125,8 @@ def generate_pot(regular_strings, plural_strings):
     # Regular strings
     for string in sorted(regular_strings.keys()):
         locations = regular_strings[string]
-        for file_path, line_num in locations:
+        # A string matched twice on one line is listed once.
+        for file_path, line_num in dict.fromkeys(locations):
             normalized_path = file_path.replace('\\', '/')
             lines.append(f'#: {normalized_path}:{line_num}')
         lines.append(f'msgid "{string}"')
@@ -134,7 +135,7 @@ def generate_pot(regular_strings, plural_strings):
 
     # Plural strings
     for (singular, plural), locations in sorted(plural_strings.items()):
-        for file_path, line_num in locations:
+        for file_path, line_num in dict.fromkeys(locations):
             normalized_path = file_path.replace('\\', '/')
             lines.append(f'#: {normalized_path}:{line_num}')
         lines.append(f'msgid "{singular}"')
@@ -158,7 +159,7 @@ def main():
     pot_content = generate_pot(regular_strings, plural_strings)
 
     pot_path = PLUGIN_ROOT / 'locale' / 'simpleui.pot'
-    pot_path.write_text(pot_content, encoding='utf-8')
+    pot_path.write_text(pot_content, encoding='utf-8', newline='\n')
 
     print(f"{total_strings} strings written to {pot_path}")
 
