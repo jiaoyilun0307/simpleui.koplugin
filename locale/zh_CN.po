@@ -16022,3 +16022,15 @@ msgstr "[待翻译] Series display mode"
 
 msgid "Tags display mode"
 msgstr "[待翻译] Tags display mode"
+
+msgid "Day Mode"
+msgstr "Day Mode"
+
+msgid "{day2} {month_short} '{year2}"
+msgstr "{day2} {month_short} '{year2}"
+
+msgid "{month} {year}"
+msgstr "{month} {year}"
+
+msgid "{start_day2} {start_month_short} – {end_day2} {end_month_short} {end_year}"
+msgstr "{start_day2} {start_month_short} – {end_day2} {end_month_short} {end_year}"
