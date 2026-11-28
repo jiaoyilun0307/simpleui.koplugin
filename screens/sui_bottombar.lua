@@ -945,7 +945,7 @@ function M.registerTouchZones(plugin, fm_self)
         "num_tabs=", tostring(num_tabs))
 
     -- Unregister all possible zone ids from any previous registration.
-    if fm_self.unregisterTouchZones then
+    if fm_self.unRegisterTouchZones then
         local old_zones = {}
         for i = 1, Config.MAX_TABS do
             old_zones[#old_zones + 1] = { id = "navbar_pos_" .. i }
@@ -954,25 +954,23 @@ function M.registerTouchZones(plugin, fm_self)
                                "navbar_hold_start", "navbar_hold_settings" }) do
             old_zones[#old_zones + 1] = { id = id }
         end
-        fm_self:unregisterTouchZones(old_zones)
+        fm_self:unRegisterTouchZones(old_zones)
     end
 
     local zones = {}
-    -- fm_self is either the real FileManager instance (no _pfx — the literal
-    -- "simpleui_hs_" default covers it, same as before) or a ScreenWidget
-    -- instance (built-in Homescreen or a Custom Screen — see
-    -- engines/sui_screen_engine.lua), which always has its own self._pfx.
-    -- The footer_tap zone id registered by that engine is self._pfx ..
-    -- "footer_tap", so the override reference here must track the same
-    -- prefix or it silently stops matching for every screen but the
-    -- built-in Homescreen.
     local _OVERRIDES = {
         "tap_left_bottom_corner", "tap_right_bottom_corner",
         "TapBook", "TapColl", "TapQA", "TapGoal", "TapSelect", "TapStatCard",
-        -- Homescreen/Custom Screen footer zone covers the same strip;
-        -- navbar tabs must win.
-        (fm_self and fm_self._pfx or "simpleui_hs_") .. "footer_tap",
     }
+    -- On a ScreenWidget (built-in Homescreen or a Custom Screen, each with its
+    -- own _pfx), tabs also win over the screen's footer zone, which covers the
+    -- same strip.
+    local tab_overrides = _OVERRIDES
+    local pfx = fm_self and fm_self._pfx
+    if pfx then
+        tab_overrides = { pfx .. "footer_tap" }
+        for _, id in ipairs(_OVERRIDES) do tab_overrides[#tab_overrides + 1] = id end
+    end
 
     -- Helper: find and call a page-navigation method on the topmost pageable widget.
     local UI_mod = require("infra/sui_core")
@@ -1043,7 +1041,7 @@ function M.registerTouchZones(plugin, fm_self)
         zones[#zones + 1] = {
             id          = "navbar_pos_prev",
             ges         = "tap",
-            overrides   = _OVERRIDES,
+            overrides   = tab_overrides,
             screen_zone = {
                 ratio_x = side_m    / screen_w,
                 ratio_y = bar_y     / screen_h,
@@ -1068,7 +1066,7 @@ function M.registerTouchZones(plugin, fm_self)
             zones[#zones + 1] = {
                 id          = "navbar_pos_" .. i,
                 ges         = "tap",
-                overrides   = _OVERRIDES,
+                overrides   = tab_overrides,
                 screen_zone = {
                     ratio_x = x_start    / screen_w,
                     ratio_y = bar_y      / screen_h,
@@ -1103,7 +1101,7 @@ function M.registerTouchZones(plugin, fm_self)
         zones[#zones + 1] = {
             id          = "navbar_pos_next",
             ges         = "tap",
-            overrides   = _OVERRIDES,
+            overrides   = tab_overrides,
             screen_zone = {
                 ratio_x = next_x              / screen_w,
                 ratio_y = bar_y               / screen_h,
@@ -1135,7 +1133,7 @@ function M.registerTouchZones(plugin, fm_self)
             zones[#zones + 1] = {
                 id          = "navbar_pos_" .. i,
                 ges         = "tap",
-                overrides   = _OVERRIDES,
+                overrides   = tab_overrides,
                 screen_zone = {
                     ratio_x = x_start    / screen_w,
                     ratio_y = bar_y      / screen_h,
@@ -1226,8 +1224,19 @@ function M.registerTouchZones(plugin, fm_self)
         -- Pass a shallow copy so each widget holds an independent reference.
         -- Both tables point at the same zone-definition sub-tables (handlers,
         -- screen_zone), which is intentional — only the outer list is copied.
+        -- Tab zones get the file manager's own overrides, without the id of
+        -- the screen's footer zone.
         local zones_copy = {}
-        for i = 1, #zones do zones_copy[i] = zones[i] end
+        for i = 1, #zones do
+            local z = zones[i]
+            if z.overrides == tab_overrides and tab_overrides ~= _OVERRIDES then
+                local c = {}
+                for k, v in pairs(z) do c[k] = v end
+                c.overrides = _OVERRIDES
+                z = c
+            end
+            zones_copy[i] = z
+        end
         fm_inst:registerTouchZones(zones_copy)
     end
 end

@@ -227,12 +227,21 @@ function CoverWidgets.buildProgressBadgeDesc(eff_size, status, percent_finished,
         }
     end
 
+    -- content: the end state, "reading" (icon), the rounded percentage, or "" (bare).
     local start_sz = math.max(7, math.floor(eff_size * 0.26))
-    if status == "abandoned" then
+    local content = ""
+    if status == "complete" then
+        content = "complete"
+    elseif status == "abandoned" then
+        content = "abandoned"
         text_widget = fitTextWidget("\u{EAE3}", SUIStyle.FACE_ICONS, start_sz, false)
-    elseif percent_finished ~= nil and status ~= "complete" then
-        local pct = math.floor(percent_finished * 100 + 0.5)
-        text_widget = fitTextWidget(pct .. "%", SUIStyle.FACE_REGULAR, start_sz, true)
+    elseif require("features/sui_cover_elements").getProgressContent() == "icon" then
+        content = "reading"
+        text_widget = fitTextWidget(require("infra/sui_config").nerdIconChar("nerd:EB09"),
+            SUIStyle.FACE_ICONS, start_sz, false)
+    elseif percent_finished ~= nil then
+        content = math.floor(percent_finished * 100 + 0.5)
+        text_widget = fitTextWidget(content .. "%", SUIStyle.FACE_REGULAR, start_sz, true)
     end
 
     return {
@@ -240,7 +249,7 @@ function CoverWidgets.buildProgressBadgeDesc(eff_size, status, percent_finished,
         bh               = bh,
         border           = border or SUIStyle.BADGE_BORDER_SZ,
         status           = status,
-        percent_finished = percent_finished,
+        content          = content,
         eff_size         = eff_size,
         color            = color or "dark",
         text_widget      = text_widget,
@@ -276,22 +285,13 @@ function CoverWidgets.drawProgressBadge(bb, ox, oy, desc)
         local sq_x = icon_x + math.floor((icon_w - sq) / 2)
         local sq_y = oy + fr + math.floor((rect_h - sq) / 2) + text_y_offset
         pentagonPaintCheck(bb, sq_x, sq_y, sq, text_color)
-    elseif desc.status == "abandoned" then
-        if desc.text_widget then
-            local aw_sz = desc.text_widget:getSize()
-            desc.text_widget:paintTo(bb,
-                ox + fr + math.floor((bw     - aw_sz.w) / 2),
-                oy + fr + math.floor((rect_h - aw_sz.h) / 2) + text_y_offset)
-        end
-    elseif desc.percent_finished ~= nil then
-        if desc.text_widget then
-            local tw_sz = desc.text_widget:getSize()
-            desc.text_widget:paintTo(bb,
-                ox + fr + math.floor((bw     - tw_sz.w) / 2),
-                oy + fr + math.floor((rect_h - tw_sz.h) / 2) + text_y_offset)
-        end
+    elseif desc.text_widget then
+        local tw_sz = desc.text_widget:getSize()
+        desc.text_widget:paintTo(bb,
+            ox + fr + math.floor((bw     - tw_sz.w) / 2),
+            oy + fr + math.floor((rect_h - tw_sz.h) / 2) + text_y_offset)
     end
-    -- "not started": bare pentagon, no content drawn.
+    -- No label: bare pentagon.
 end
 
 -- Outer size of the badge `desc` describes: its body plus the border all round.
@@ -301,13 +301,9 @@ function CoverWidgets.progressBadgeSize(desc)
 end
 
 -- Key of everything drawProgressBadge paints for `desc`: size, border, colour
--- and the content shown (an end state, or the rounded percentage).
+-- and the content shown.
 function CoverWidgets.progressBadgeKey(desc)
-    local content = desc.status == "complete" and "complete"
-        or desc.status == "abandoned" and "abandoned"
-        or desc.percent_finished and math.floor(desc.percent_finished * 100 + 0.5)
-        or ""
-    return table.concat({ desc.eff_size, desc.border, desc.color, content,
+    return table.concat({ desc.eff_size, desc.border, desc.color, desc.content,
         SUIStyle.isPaletteChoice(desc.color) and Accent.stamp() or "" }, "|")
 end
 

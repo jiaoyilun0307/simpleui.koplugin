@@ -22,6 +22,7 @@
 --   CE.getSizePct() / CE.setSizePct(pct)
 --   CE.getScale()                     -- size as a multiplier, trim included
 --   CE.progressMode()                 -- "banner" | "native" | "none" (library paint modes)
+--   CE.getProgressContent()           -- "percent" | "icon": what the banner shows while reading
 --   CE.makeItems{ kind, refresh }     -- Show / variant / Color rows of one badge
 --   CE.makeBadgesItems(opts)          -- the "Badges" rows: Size + one row per badge
 --   CE.makeFolderCoversItems(opts)    -- the "Folder Covers" rows: Cover Type, Book Stack, Folder Name
@@ -69,6 +70,23 @@ local ELEMENTS = {
                 }
             end,
         },
+        extra = function(opts)
+            return {
+                Config.makeRadioSubmenuItem{
+                    text         = _("Content"),
+                    enabled_func = function() return CE.progressMode() == "banner" end,
+                    options      = function()
+                        return {
+                            { value = "percent", label = _("Percentage") },
+                            { value = "icon",    label = _("Icon") },
+                        }
+                    end,
+                    get          = CE.getProgressContent,
+                    set          = function(v) CE.set("progress", "content", v) end,
+                    refresh      = opts.refresh,
+                },
+            }
+        end,
     },
     new = {
         show = true, color = "accent",
@@ -196,6 +214,11 @@ end
 function CE.progressMode()
     if not CE.isShown("progress") then return "none" end
     return CE.getVariant("progress")
+end
+
+-- What the banner shows on a book being read: its percentage, or an icon.
+function CE.getProgressContent()
+    return Config.readChoice(_key("progress", "content"), { "percent", "icon" }, "percent")
 end
 
 -- Badge size, percent of the base size; 100 until set.

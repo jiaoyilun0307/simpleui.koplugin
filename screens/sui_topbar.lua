@@ -595,8 +595,8 @@ end
 -- ---------------------------------------------------------------------------
 
 function M.registerTouchZones(plugin, fm_self)
-    if fm_self.unregisterTouchZones then
-        fm_self:unregisterTouchZones({
+    if fm_self.unRegisterTouchZones then
+        fm_self:unRegisterTouchZones({
             { id = "navbar_topbar_hold_start"    },
             { id = "navbar_topbar_hold_settings" },
             { id = "navbar_title_hold_start"     },
