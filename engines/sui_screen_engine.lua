@@ -61,6 +61,7 @@ local lfs              = require("libs/libkoreader-lfs")
 local VirtualPaths     = require("infra/sui_virtual_paths")
 local SUIWallpaper     = require("features/sui_wallpaper")
 local Backdrop         = require("infra/sui_backdrop")
+local ScreenGestures   = require("engines/sui_screen_gestures")
 
 -- ---------------------------------------------------------------------------
 -- Wallpaper background override — state and logic now live in
@@ -71,8 +72,6 @@ local Backdrop         = require("infra/sui_backdrop")
 -- ---------------------------------------------------------------------------
 
 -- Pure helper: tests whether (x, y) falls inside a ratio-defined zone.
--- Defined at module level so it is created once and never re-allocated per
--- gesture event (unlike a closure defined inside _fmGestureAction).
 local function _inZone(z, x, y, sw, sh)
     if not z then return false end
     return x >= z.ratio_x * sw and x < (z.ratio_x + z.ratio_w) * sw
@@ -647,92 +646,26 @@ end
 --
 -- Every handler is a shared ScreenWidget method. Per-instance state is limited
 -- to the gesture ranges, the touch-zone bindings and the cached gesture zones.
+--
+-- File manager gestures (KOReader's gesture actions and zones other plugins
+-- add) are not reproduced here: forwarding zones run the file manager's own
+-- touch zones, in the same relative order they have in the file manager.
 -- ---------------------------------------------------------------------------
 
--- Full-screen gesture events, in registration order. Entries flagged `strip`
--- are also registered as priority zones over the top and bottom strips.
+-- Full-screen gesture events, in registration order.
 local SCREEN_GESTURE_EVENTS = {
-    { event = "BlockNavbarTap",       ges = "tap"                            },
-    { event = "BlockNavbarHold",      ges = "hold"                           },
-    { event = "ScreenSwipe",          ges = "swipe"                          },
-    { event = "ScreenDoubleTap",      ges = "double_tap",       strip = true },
-    { event = "ScreenTwoFingerTap",   ges = "two_finger_tap",   strip = true },
-    { event = "ScreenTwoFingerSwipe", ges = "two_finger_swipe", strip = true },
-    { event = "ScreenMultiswipe",     ges = "multiswipe",       strip = true },
-    { event = "ScreenSpread",         ges = "spread",           strip = true },
-    { event = "ScreenPinch",          ges = "pinch",            strip = true },
-    { event = "ScreenRotate",         ges = "rotate",           strip = true },
-    { event = "ScreenHold",           ges = "hold",             strip = true },
+    { event = "BlockNavbarTap",  ges = "tap"   },
+    { event = "BlockNavbarHold", ges = "hold"  },
+    { event = "ScreenSwipe",     ges = "swipe" },
 }
 
--- G_defaults keys of the zones used to map a touch onto a gesture action.
+-- G_defaults keys of the zones the screen's own handlers test.
 local GESTURE_ZONE_KEYS = {
-    top_left     = "DTAP_ZONE_TOP_LEFT",
-    top_right    = "DTAP_ZONE_TOP_RIGHT",
     bottom_left  = "DTAP_ZONE_BOTTOM_LEFT",
     bottom_right = "DTAP_ZONE_BOTTOM_RIGHT",
     left_edge    = "DSWIPE_ZONE_LEFT_EDGE",
     right_edge   = "DSWIPE_ZONE_RIGHT_EDGE",
-    top_edge     = "DSWIPE_ZONE_TOP_EDGE",
-    bottom_edge  = "DSWIPE_ZONE_BOTTOM_EDGE",
-    left_side    = "DDOUBLE_TAP_ZONE_PREV_CHAPTER",
-    right_side   = "DDOUBLE_TAP_ZONE_NEXT_CHAPTER",
 }
-
--- Gesture-action names per gesture type as { zone, name } pairs. The first
--- zone containing the touch decides the action.
-local ZONE_GESTURES = {
-    tap = {
-        { "top_left",     "tap_top_left_corner"     },
-        { "top_right",    "tap_top_right_corner"    },
-        { "bottom_left",  "tap_left_bottom_corner"  },
-        { "bottom_right", "tap_right_bottom_corner" },
-    },
-    hold = {
-        { "top_left",     "hold_top_left_corner"     },
-        { "top_right",    "hold_top_right_corner"    },
-        { "bottom_left",  "hold_bottom_left_corner"  },
-        { "bottom_right", "hold_bottom_right_corner" },
-    },
-    double_tap = {
-        { "left_side",    "double_tap_left_side"           },
-        { "right_side",   "double_tap_right_side"          },
-        { "top_left",     "double_tap_top_left_corner"     },
-        { "top_right",    "double_tap_top_right_corner"    },
-        { "bottom_left",  "double_tap_bottom_left_corner"  },
-        { "bottom_right", "double_tap_bottom_right_corner" },
-    },
-    two_finger_tap = {
-        { "top_left",     "two_finger_tap_top_left_corner"     },
-        { "top_right",    "two_finger_tap_top_right_corner"    },
-        { "bottom_left",  "two_finger_tap_bottom_left_corner"  },
-        { "bottom_right", "two_finger_tap_bottom_right_corner" },
-    },
-}
-
--- One-finger swipes starting in an edge zone, keyed by swipe direction.
-local EDGE_SWIPES = {
-    { zone = "left_edge",   south = "one_finger_swipe_left_edge_down",
-                            north = "one_finger_swipe_left_edge_up" },
-    { zone = "right_edge",  south = "one_finger_swipe_right_edge_down",
-                            north = "one_finger_swipe_right_edge_up" },
-    { zone = "top_edge",    east  = "one_finger_swipe_top_edge_right",
-                            west  = "one_finger_swipe_top_edge_left" },
-    { zone = "bottom_edge", east  = "one_finger_swipe_bottom_edge_right",
-                            west  = "one_finger_swipe_bottom_edge_left" },
-}
-
-local DIAGONAL_DIRECTIONS = {
-    northeast = true, northwest = true, southeast = true, southwest = true,
-}
-
-local TWO_FINGER_SWIPES = {}
-for _, dir in ipairs({ "east", "west", "north", "south",
-                       "northeast", "northwest", "southeast", "southwest" }) do
-    TWO_FINGER_SWIPES[dir] = "two_finger_swipe_" .. dir
-end
-
-local ROTATE_GESTURES = { cw = "rotate_cw", ccw = "rotate_ccw" }
 
 local CHEVRON_BUTTONS = { "btn_first", "btn_prev", "btn_next", "btn_last" }
 
@@ -759,44 +692,6 @@ end
 local function _inNavbar(ges)
     if not (ges and ges.pos) then return false end
     return ges.pos.y >= Screen:getHeight() - Bottombar.TOTAL_H()
-end
-
--- Maps a gesture onto the name of a file-manager gesture action, or nil.
-local function _resolveGestureName(zones, ges)
-    local x, y = ges.pos.x, ges.pos.y
-    local gt, dir = ges.ges, ges.direction
-    local sw, sh = Screen:getWidth(), Screen:getHeight()
-
-    if gt == "swipe" then
-        if DIAGONAL_DIRECTIONS[dir] then
-            local distance = ges.distance
-            if distance and distance <= Screen:scaleBySize(300) then
-                return "short_diagonal_swipe"
-            end
-            return nil
-        end
-        for _, edge in ipairs(EDGE_SWIPES) do
-            if _inZone(zones[edge.zone], x, y, sw, sh) then
-                return edge[dir]
-            end
-        end
-        return nil
-    end
-
-    local zone_gestures = ZONE_GESTURES[gt]
-    if zone_gestures then
-        for _, pair in ipairs(zone_gestures) do
-            if _inZone(zones[pair[1]], x, y, sw, sh) then
-                return pair[2]
-            end
-        end
-        return nil
-    end
-
-    if gt == "two_finger_swipe" then return TWO_FINGER_SWIPES[dir] end
-    if gt == "spread"           then return "spread_gesture" end
-    if gt == "pinch"            then return "pinch_gesture" end
-    if gt == "rotate"           then return ROTATE_GESTURES[dir] end
 end
 
 local function _broadcastSend(_, event)
@@ -962,7 +857,7 @@ function ScreenWidget:init()
 
     self:_registerMenuZones()
     self:_registerFooterZones()
-    self:_registerStripZones()
+    self:_registerFMZones()
 end
 
 -- ---------------------------------------------------------------------------
@@ -1031,37 +926,72 @@ function ScreenWidget:_registerFooterZones()
     })
 end
 
--- Top and bottom strips that forward multi-touch and hold gestures to the
--- file-manager gesture actions before the full-screen events see them.
-function ScreenWidget:_registerStripZones()
-    local menu_zone = G_defaults:readSetting("DTAP_ZONE_MENU")
-    local footer_y, footer_h = _footerZoneRatios()
-    local top_zone    = { ratio_x = 0, ratio_y = 0,        ratio_w = 1,
-                          ratio_h = (menu_zone and menu_zone.h) or 0.1 }
-    local bottom_zone = { ratio_x = 0, ratio_y = footer_y, ratio_w = 1, ratio_h = footer_h }
-    local handler     = function(ges) return self:_fmGestureAction(ges) end
+-- Full-screen zones, one per gesture type, that run the file manager's own
+-- touch zones. They run before this screen's bars, menu, footer and
+-- full-screen events, as the file manager runs its own zones before its menu
+-- and children; reaching the file manager's copy of a bar zone hands the
+-- gesture back to this screen's own copy.
+function ScreenWidget:_registerFMZones()
+    local pfx       = self._pfx
+    local full      = { ratio_x = 0, ratio_y = 0, ratio_w = 1, ratio_h = 1 }
+    local overrides = {
+        pfx .. "menu_tap", pfx .. "menu_swipe",
+        "simpleui_menu_tap", "simpleui_menu_swipe",
+        pfx .. "footer_tap", pfx .. "footer_swipe",
+    }
+    local handler = function(g) return self:_runFMZones(g) end
+    local zones, ids = {}, {}
+    for _, ges in ipairs(ScreenGestures.GESTURE_TYPES) do
+        local id = ScreenGestures.zoneId(pfx, ges)
+        ids[id] = true
+        zones[#zones + 1] = {
+            id          = id,
+            ges         = ges,
+            screen_zone = full,
+            overrides   = overrides,
+            handler     = handler,
+        }
+    end
+    self._fm_zone_ids = ids
+    self:registerTouchZones(zones)
+end
 
-    local zones = {}
-    for _, def in ipairs(SCREEN_GESTURE_EVENTS) do
-        if def.strip then
-            local overrides = { def.event }
-            zones[#zones + 1] = {
-                id          = self._pfx .. "top_" .. def.ges,
-                ges         = def.ges,
-                screen_zone = top_zone,
-                overrides   = overrides,
-                handler     = handler,
-            }
-            zones[#zones + 1] = {
-                id          = self._pfx .. "bottom_" .. def.ges,
-                ges         = def.ges,
-                screen_zone = bottom_zone,
-                overrides   = overrides,
-                handler     = handler,
-            }
+-- Runs the file manager's touch zones for `ges`, with the events they emit
+-- broadcast so they reach the file manager. While touch input is disabled,
+-- only the zones marked always active run, as in the file manager. Returns
+-- true when a zone consumed the gesture.
+function ScreenWidget:_runFMZones(ges)
+    if _hasModalOnTop(self) then return false end
+    local FM = package.loaded["apps/filemanager/filemanager"]
+    local fm = FM and FM.instance
+    local fm_zones = fm and fm._ordered_touch_zones
+    if not fm_zones then return false end
+    -- The file manager replaces its zone list whenever zones change.
+    if fm_zones ~= self._fm_zones_seen then
+        self._fm_zones_seen = fm_zones
+        self._fm_types      = ScreenGestures.typeSet(fm_zones)
+    end
+    if not self._fm_types[ges.ges] then return false end
+
+    local filter
+    if InputContainer.onGesture == InputContainer._onGestureFiltered then
+        filter = function(def)
+            return InputContainer.isGestureAlwaysActive(fm, def.id, ges.multiswipe_directions)
         end
     end
-    self:registerTouchZones(zones)
+    local ok, res = _pcallBroadcasting(ScreenGestures.run, fm_zones, ges, filter)
+    if not ok then
+        logger.warn("simpleui screen gesture:", res)
+        return false
+    end
+    return res
+end
+
+-- Lets the forwarding zones through while touch input is disabled; they apply
+-- the always-active check to each file manager zone themselves.
+function ScreenWidget:isGestureAlwaysActive(id, multiswipe_directions)
+    if self._fm_zone_ids and self._fm_zone_ids[id] then return true end
+    return InputContainer.isGestureAlwaysActive(self, id, multiswipe_directions)
 end
 
 function ScreenWidget:_onMenuTap(ges)
@@ -1073,13 +1003,11 @@ end
 function ScreenWidget:_onMenuSwipe(ges)
     if _hasModalOnTop(self) then return false end
     local menu = _getFMMenu()
-    if menu and menu:onSwipeShowMenu(ges) then return true end
-    return self:_fmGestureAction(ges)
+    return menu and menu:onSwipeShowMenu(ges) or false
 end
 
 function ScreenWidget:_onFooterTap(ges)
     if _hasModalOnTop(self) then return false end
-    if self:_fmGestureAction(ges) then return true end
 
     local footer_bc = self._footer_bc
     if not footer_bc or footer_bc.dimen.h == 0 then return false end
@@ -1108,7 +1036,6 @@ end
 
 function ScreenWidget:_onFooterSwipe(ges)
     if _hasModalOnTop(self) then return false end
-    if self:_fmGestureAction(ges) then return true end
 
     local footer_bc = self._footer_bc
     if not footer_bc or footer_bc.dimen.h == 0 then return false end
@@ -1124,32 +1051,6 @@ end
 -- ---------------------------------------------------------------------------
 -- Gesture handlers
 -- ---------------------------------------------------------------------------
-
--- Forwards a gesture to the file-manager gesture actions (the same gesture
--- set as docless file-manager mode). Returns true when an action is bound to
--- the resolved gesture, nil otherwise.
-function ScreenWidget:_fmGestureAction(ges)
-    local FileManager = require("apps/filemanager/filemanager")
-    local fm_gestures = FileManager.instance and FileManager.instance.gestures
-    if not fm_gestures then return end
-    if not ges.pos then return end
-
-    if ges.ges == "multiswipe" then
-        local ok, err = _pcallBroadcasting(
-            fm_gestures.multiswipeAction, fm_gestures, ges.multiswipe_directions, ges)
-        if not ok then logger.warn("simpleui screen gesture multiswipe:", err) end
-        return true
-    end
-
-    local name = _resolveGestureName(self._gesture_zones, ges)
-    if not name then return end
-
-    -- gestureAction() is a no-op when the gesture has no action configured.
-    local configured = fm_gestures.gestures
-    local ok, err = _pcallBroadcasting(fm_gestures.gestureAction, fm_gestures, name, ges)
-    if not ok then logger.warn("simpleui screen gesture:", name, err) end
-    if configured and configured[name] ~= nil then return true end
-end
 
 -- True when the gesture starts in the left or right swipe-edge zone.
 function ScreenWidget:_isSideEdge(ges)
@@ -1210,25 +1111,12 @@ function ScreenWidget:onScreenSwipe(_args, ges)
             return true
         end
     end
-    return self:_fmGestureAction(ges)
+    return false
 end
 
--- Gestures forwarded verbatim to the file-manager gesture actions.
-local function onForwardedGesture(self, _args, ges)
-    return self:_fmGestureAction(ges)
-end
-ScreenWidget.onScreenTwoFingerSwipe = onForwardedGesture
-ScreenWidget.onScreenDoubleTap      = onForwardedGesture
-ScreenWidget.onScreenTwoFingerTap   = onForwardedGesture
-ScreenWidget.onScreenMultiswipe     = onForwardedGesture
-ScreenWidget.onScreenSpread         = onForwardedGesture
-ScreenWidget.onScreenPinch          = onForwardedGesture
-ScreenWidget.onScreenRotate         = onForwardedGesture
-
--- Forwarded file-manager corner gestures take priority over the navbar guard.
+-- Blocks taps on the navbar strip, except in the bottom corners.
 function ScreenWidget:onBlockNavbarTap(_args, ges)
     if _hasModalOnTop(self) then return false end
-    if self:_fmGestureAction(ges) then return true end
     if ges and ges.pos then
         local zones  = self._gesture_zones
         local x, y   = ges.pos.x, ges.pos.y
@@ -1239,12 +1127,6 @@ function ScreenWidget:onBlockNavbarTap(_args, ges)
         end
     end
     if _inNavbar(ges) then return true end
-end
-
-function ScreenWidget:onScreenHold(_args, ges)
-    if _hasModalOnTop(self) then return false end
-    if _inNavbar(ges) then return true end
-    return self:_fmGestureAction(ges)
 end
 
 function ScreenWidget:onBlockNavbarHold(_args, ges)
@@ -3954,6 +3836,8 @@ function ScreenWidget:onCloseWidget()
     end
     self._vspan_pool         = nil
     self._wrapper_pool       = nil
+    self._fm_zones_seen      = nil
+    self._fm_types           = nil
     self._book_mod_refresh_n = nil
     self._cover_mod_slots    = nil
     self._cached_books_state = nil
